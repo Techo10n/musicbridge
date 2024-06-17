@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -6,12 +7,32 @@ import Link from "next/link";
 
 export default function Home() {
   const [playlistLink, setPlaylistLink] = useState("");
-  const [targetService, setTargetService] = useState("spotify");
+  const [targetService, setTargetService] = useState("Spotify");
   const router = useRouter();
+  const [message, setMessage] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    router.push(`/result?link=${encodeURIComponent(playlistLink)}&service=${targetService}`);
+    setMessage('Creating playlist...');
+
+    const response = await fetch('/api/create-playlist', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        playlistLink,
+        targetService,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      router.push(`/result?link=${encodeURIComponent(data.message)}&service=${targetService}`);
+    } else {
+      const error = await response.text();
+      setMessage(`Error creating playlist: ${error}`);
+    }
   };
 
   return (
@@ -50,6 +71,7 @@ export default function Home() {
               Go
             </button>
           </form>
+          {message && <p className="mt-4 text-white">{message}</p>}
         </div>
       </div>
     </main>
