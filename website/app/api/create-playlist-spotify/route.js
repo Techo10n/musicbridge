@@ -4,17 +4,12 @@ import puppeteer from 'puppeteer';
 
 const SPOTIFY_EMAIL = 'musicbridge0@gmail.com';
 const SPOTIFY_PASSWORD = 'musicBridge11';
-const SONGS = [
-  'feel it d4vd',
-  'suki eric reprid',
-  'too many nights (feat. don toliver) metro boomin & future'
-];
 
 export async function POST(request) {
-  const { playlistLink, targetService } = await request.json();
+  const { songs } = await request.json();
 
   try {
-    const playlistURL = await createSpotifyPlaylist(playlistLink, targetService, SONGS);
+    const playlistURL = await createSpotifyPlaylist(songs);
     return NextResponse.json({ message: playlistURL }, { status: 200 });
   } catch (error) {
     if (error.timeout > 30000) {
@@ -27,13 +22,12 @@ export async function POST(request) {
   }
 }
 
-async function createSpotifyPlaylist(playlistLink, targetService, songs) {
-  const browser = await puppeteer.launch({ headless: false }); // Set to true if you don't need to see the browser
+async function createSpotifyPlaylist(songs) {
+  const browser = await puppeteer.launch({ headless: false });
   const page = await browser.newPage();
 
   // Go to Spotify login page
-  await page.goto('https://accounts.spotify.com/en/login');
-  //NextResponse.json({ message: 'Logging in...' }, { status: 201 });
+  await page.goto('https://accounts.spotify.com/en/login', {timeout: 0});
 
   // Log in
   await page.type('#login-username', SPOTIFY_EMAIL);
@@ -42,7 +36,7 @@ async function createSpotifyPlaylist(playlistLink, targetService, songs) {
   await page.waitForNavigation();
 
   // Navigate to the main Spotify web player
-  await page.goto('https://open.spotify.com/');
+  await page.goto('https://open.spotify.com/', {timeout: 0});
 
   // Create a new playlist
   await page.waitForSelector('button[aria-label="Create playlist or folder"]');
@@ -52,21 +46,20 @@ async function createSpotifyPlaylist(playlistLink, targetService, songs) {
 
   // Search and add songs
   for (let song of songs) {
+    const searchQuery = `${song.songTitle} ${song.artistName}`;
     await page.waitForSelector('input[class="encore-text encore-text-body-small FeWwGSRANj36qpOBoxdx"]');
     await page.click('input[class="encore-text encore-text-body-small FeWwGSRANj36qpOBoxdx"]');
-    await page.type('input[class="encore-text encore-text-body-small FeWwGSRANj36qpOBoxdx"]', song);
+    await page.type('input[class="encore-text encore-text-body-small FeWwGSRANj36qpOBoxdx"]', searchQuery);
 
-    await delay(1500);
+    await delay(1200);
     
     await page.waitForSelector('button[data-testid="add-to-playlist-button"]', { visible: true });
     const buttons = await page.$$('button[data-testid="add-to-playlist-button"]');
     await buttons[0].click();
 
     // Clear the search input
-    await page.waitForSelector('input[class="encore-text encore-text-body-small FeWwGSRANj36qpOBoxdx"]');
-    await page.click('input[class="encore-text encore-text-body-small FeWwGSRANj36qpOBoxdx"]');
-    await page.click('input[class="encore-text encore-text-body-small FeWwGSRANj36qpOBoxdx"]', { clickCount: 3 });
-    await page.keyboard.press('Backspace');
+    await page.waitForSelector('button[aria-label="Clear search field"]', { visible: true });
+    await page.click('button[aria-label="Clear search field"]');
   }
 
   await page.waitForSelector('button[data-testid="more-button"]');
