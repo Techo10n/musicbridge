@@ -1,15 +1,108 @@
 "use client";
 
 import { useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 export default function Home() {
+  const router = useRouter();
   const [playlistLink, setPlaylistLink] = useState("");
   const [targetService, setTargetService] = useState("Spotify");
-  const router = useRouter();
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState("");
   const [songs, setSongs] = useState([]);
+  const [accessToken, setAccessToken] = useState("");
+  const clientId = "cb9e6121711242898b38500c88a7fcd9";
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const [isFetchingToken, setIsFetchingToken] = useState(false);
+
+  useEffect(() => {
+      // Step 1: Check if there is a code
+      if (!code) {
+          // Redirect only if the code is not present
+          if (!isFetchingToken) {
+              redirectToAuthCodeFlow(clientId); // Redirect to Spotify auth page
+          }
+      } else if (!isFetchingToken) {
+          // Step 2: Fetch access token if we have a code
+          const fetchAccessToken = async () => {
+              setIsFetchingToken(true); // Prevent further fetches
+              try {
+                  const verifier = localStorage.getItem("verifier"); // Get the verifier from localStorage
+                  const accessToken = await getAccessToken(clientId, code, verifier);
+                  setAccessToken(accessToken);
+                  const profile = await fetchProfile(accessToken);
+                  console.log(profile);
+              } catch (error) {
+                  console.error("Error:", error);
+              } finally {
+                  setIsFetchingToken(false); // Reset the fetching state
+              }
+          };
+
+          fetchAccessToken(); // Call the function to fetch the access token
+      }
+  }, [code, isFetchingToken]);
+
+  async function redirectToAuthCodeFlow(clientId) {
+      const verifier = generateCodeVerifier(128);
+      const challenge = await generateCodeChallenge(verifier);
+
+      localStorage.setItem("verifier", verifier);
+
+      const params = new URLSearchParams();
+      params.append("client_id", clientId);
+      params.append("response_type", "code");
+      params.append("redirect_uri", "http://localhost:3000/");
+      params.append("scope", "playlist-modify-public playlist-modify-private playlist-modify-public playlist-read-private playlist-modify-private");
+      params.append("code_challenge_method", "S256");
+      params.append("code_challenge", challenge);
+
+      // Redirect to Spotify's authorization endpoint
+      document.location = `https://accounts.spotify.com/authorize?${params.toString()}`;
+  }
+
+  function generateCodeVerifier(length) {
+      let text = '';
+      let possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+      for (let i = 0; i < length; i++) {
+          text += possible.charAt(Math.floor(Math.random() * possible.length));
+      }
+      return text;
+  }
+
+  async function generateCodeChallenge(codeVerifier) {
+      const data = new TextEncoder().encode(codeVerifier);
+      const digest = await window.crypto.subtle.digest('SHA-256', data);
+      return btoa(String.fromCharCode.apply(null, [...new Uint8Array(digest)]))
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+  }
+
+  async function getAccessToken(clientId, code, verifier) {
+    const response = await fetch("/api/spotify/auth", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code, verifier }), // Pass the code and verifier
+    });
+
+    const data = await response.json();
+    return data.accessToken; // Return the access token
+}
+
+  async function fetchProfile(token) {
+      const result = await fetch("https://api.spotify.com/v1/me", {
+          method: "GET", headers: { Authorization: `Bearer ${token}` }
+      });
+
+      return await result.json();
+  }
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -46,9 +139,15 @@ export default function Home() {
     if (scrapeResponse.ok) {
       const data = await scrapeResponse.json();
       setSongs(data.message);
+      const songTitles = songs.map(song => song.songTitle);
+      const artistNames = songs.map(song => song.artistName);
+
+      // Log the results for debugging
+      console.log('Song Titles:', songTitles);
+      console.log('Artist Names:', artistNames);
+
       setMessage('Playlist scraped successfully');
       setMessage('Creating playlist...');
-
 
       /* Step 2: Create the user-selected-service playlist with the scraped songs
       //determine target
@@ -69,23 +168,69 @@ export default function Home() {
         */
 
       //create playlist
-      const createResponse = await fetch('api/spotify/auth', { //CURRENTLY WORKING HERE
+      const createResponse = await fetch('/api/spotify/create-playlist', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          //songs: data.message,
+          clientId,
+          accessToken,
         }),
       });
 
       if (createResponse.ok) {
-        const result = await createResponse.json();
-        router.push();
+        const playlistId = await createResponse.json();
+        setMessage('Blank playlist created successfully');
+        setMessage('Searching songs...');
+
+        //populate playlist
+        const populateResponse = await fetch('/api/spotify/search-track', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            songTitles,
+            artistNames,
+            accessToken,
+          }),
+        });
+
+        if (populateResponse.ok) {
+          const trackIds = await populateResponse.json();
+          setMessage('Songs searched successfully');
+          setMessage('Adding songs to playlist...');
+
+          //add songs to playlist
+          const addResponse = await fetch('/api/spotify/add-track', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              playlistId,
+              trackIds,
+              accessToken,
+            }),
+          });
+
+          if (addResponse.ok) {
+            setMessage('Songs added to playlist successfully');
+            router.push(`/playlist/${playlistId}`);
+          } else {
+            const error = await addResponse.text();
+            setMessage(`Error adding songs to playlist: ${error}`);
+          }
+        } else {
+          const error = await populateResponse.text();
+          setMessage(`Error populating playlist: ${error}`);
+        }
       } else {
         const error = await createResponse.text();
-        setMessage(`Error creating playlist: ${error}`);
+        setMessage(`Error creating blank playlist: ${error}`);
       }
+
     } else {
       const error = await scrapeResponse.text();
       setMessage(`Error scraping playlist: ${error}`);
