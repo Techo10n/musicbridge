@@ -13,13 +13,13 @@ export default function Home() {
 
   const getSpotifyAccessToken = async () => {
     try {
-      const tokenResponse = await fetch('/api/authenticate-spotify');
-      if (!tokenResponse.ok) {
-        throw new Error(`HTTP error! status: ${tokenResponse.status}`);
+      const response = await fetch('/api/authenticate-spotify');
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-      const tokenData = await tokenResponse.json();
-      setAccessToken(tokenData.access_token); // Set the access token
-      return tokenData.access_token;
+      const data = await response.json();
+      setAccessToken(data.access_token);
+      return data.access_token;
     } catch (error) {
       console.error("Error fetching Spotify access token:", error);
       return null;
@@ -91,7 +91,7 @@ export default function Home() {
   
       // Step 2: Get Spotify access token
       const accessToken = await getSpotifyAccessToken();
-      console.log('Access Token:', accessToken);
+      //console.log('Access Token:', accessToken); //for debugging. dont uncomment if deploying
       if (!accessToken) {
         setMessage('Failed to get Spotify access token');
         return;
