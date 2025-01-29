@@ -1,46 +1,40 @@
-import { NextResponse } from 'next/server';
-
-export async function GET() {
+export default async function handler(req, res) {
   try {
-    // Check for required environment variables
-    if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET || !process.env.SPOTIFY_REFRESH_TOKEN) {
-      return NextResponse.json(
-        { error: "Missing required environment variables" },
-        { status: 500 }
-      );
-    }
+    // Load environment variables
+    const client_id = process.env.SPOTIFY_CLIENT_ID;
+    const client_secret = process.env.SPOTIFY_CLIENT_SECRET;
+    const refresh_token = process.env.SPOTIFY_REFRESH_TOKEN;
 
-    const authString = `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`;
-    const base64Auth = Buffer.from(authString).toString("base64");
+    // Spotify token URL
+    const token_url = "https://accounts.spotify.com/api/token";
 
-    const tokenResponse = await fetch("https://accounts.spotify.com/api/token", {
+    // Encode client ID and secret
+    const credentials = Buffer.from(`${client_id}:${client_secret}`).toString("base64");
+
+    // Request a new access token using the refresh token
+    const response = await fetch(token_url, {
       method: "POST",
       headers: {
-        "Authorization": `Basic ${base64Auth}`,
         "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${credentials}`,
       },
       body: new URLSearchParams({
         grant_type: "refresh_token",
-        refresh_token: process.env.SPOTIFY_REFRESH_TOKEN,
+        refresh_token: refresh_token,
       }),
     });
 
-    const tokenData = await tokenResponse.json();
+    // Parse response
+    const data = await response.json();
 
-    if (!tokenResponse.ok) {
-      throw new Error(tokenData.error || "Failed to refresh token");
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to refresh access token");
     }
 
-    if (!tokenData.access_token) {
-      throw new Error("Access token not found in response");
-    }
-
-    return NextResponse.json({ access_token: tokenData.access_token }, { status: 200 });
+    // Return new access token
+    res.status(200).json({ access_token: data.access_token });
   } catch (error) {
     console.error("Error refreshing token:", error);
-    return NextResponse.json(
-      { error: error.message || "Internal Server Error" },
-      { status: 500 }
-    );
+    res.status(500).json({ error: "Internal Server Error" });
   }
 }

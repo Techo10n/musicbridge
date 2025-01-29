@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from 'next/navigation';
+// import { useRouter } from 'next/navigation';
 
 export default function Home() {
   const [playlistLink, setPlaylistLink] = useState("");
   const [targetService, setTargetService] = useState("Spotify");
   const [message, setMessage] = useState("");
   const [songs, setSongs] = useState([]);
-  const router = useRouter(); // Initialize useRouter
+  const [accessToken, setAccessToken] = useState(""); // Initialize accessToken state
 
   const getSpotifyAccessToken = async () => {
     try {
@@ -18,7 +18,8 @@ export default function Home() {
         throw new Error(`HTTP error! status: ${tokenResponse.status}`);
       }
       const tokenData = await tokenResponse.json();
-      return tokenData.access_token; // Return the access token
+      setAccessToken(tokenData.access_token); // Set the access token
+      return tokenData.access_token;
     } catch (error) {
       console.error("Error fetching Spotify access token:", error);
       return null;
@@ -90,6 +91,7 @@ export default function Home() {
   
       // Step 2: Get Spotify access token
       const accessToken = await getSpotifyAccessToken();
+      console.log('Access Token:', accessToken);
       if (!accessToken) {
         setMessage('Failed to get Spotify access token');
         return;
@@ -165,10 +167,7 @@ export default function Home() {
               onChange={(e) => setPlaylistLink(e.target.value)}
               placeholder="Enter playlist link"
               required
-              className="w-[400px] appearance-none border-b border-[#D7D7D7] bg-transparent px-1 py-2 leading-tight text-white focus:outline-none
-                        [&:-webkit-autofill]:bg-transparent [&:-webkit-autofill]:text-white
-                        [&:-webkit-autofill:hover]:bg-transparent [&:-webkit-autofill:focus]:bg-transparent
-                        [&:-webkit-autofill]:shadow-[inset_0_0_0px_1000px_transparent]"
+              className="w-[400px] appearance-none border-b border-[#D7D7D7] bg-transparent px-1 py-2 leading-tight text-white focus:outline-none"
             />
             <select
               name="targetService"
@@ -190,7 +189,7 @@ export default function Home() {
         </form>
           {message && <p className="mt-4 text-white text-center">{message}</p>}
           {songs.length > 0 && (
-            <div className="mt-4 w-[70%] p-4 border border-white rounded-lg flex fixed bottom-28">
+            <div className="mt-4 w-[70%] p-4 border border-white rounded-lg flex fixed bottom-28 max-h-[200px] overflow-y-auto">
               <ul className="flex flex-wrap text-white list-none p-0">
               <p className="mr-2 font-bold">Scraped Songs: </p>
                 {songs.map((song, index) => (

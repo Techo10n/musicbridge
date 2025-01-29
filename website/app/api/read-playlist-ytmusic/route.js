@@ -22,6 +22,15 @@ async function readPlaylistYTMusic(playlistUrl) {
   // Wait for the playlist to load
   await page.waitForSelector('div[class="style-scope ytmusic-section-list-renderer"]');
   // Extract the songs and artists
+  // Scroll to the bottom of the playlist to ensure everything loads
+  await page.evaluate(async () => {
+    const distance = 1000;
+    const delay = 100;
+    while (document.scrollingElement.scrollTop + window.innerHeight < document.scrollingElement.scrollHeight) {
+      document.scrollingElement.scrollBy(0, distance);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  });
   const songs = await page.evaluate(() => {
     const songElements = Array.from(document.querySelectorAll('ytmusic-responsive-list-item-renderer'));
     return songElements.map(el => {
