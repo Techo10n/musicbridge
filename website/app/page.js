@@ -10,6 +10,7 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [songs, setSongs] = useState([]);
   const [accessToken, setAccessToken] = useState(""); // Initialize accessToken state
+  const tracksNotFound = [];
 
   const getSpotifyAccessToken = async () => {
     try {
@@ -48,6 +49,7 @@ export default function Home() {
         return data.tracks.items[0].uri;
       } else {
         console.warn(`No Spotify track found for: ${songTitle} by ${artistName}`);
+        tracksNotFound.push({ songTitle, artistName });
         return null;
       }
     } catch (error) {
@@ -137,6 +139,11 @@ export default function Home() {
             <a className="underline" href={playlistUrl} target="_blank" rel="noopener noreferrer">
               {playlistUrl}
             </a>
+            <div className="mt-6">
+              Unable to Find Songs: {tracksNotFound.map((track, index) => (
+                <p key={index}>{track.songTitle} by {track.artistName}</p>
+              ))}
+            </div>
           </>
         );
         
@@ -189,14 +196,15 @@ export default function Home() {
         </form>
           {message && <p className="mt-4 text-white text-center">{message}</p>}
           {songs.length > 0 && (
-            <div className="mt-4 w-[70%] p-4 border border-white rounded-lg flex fixed bottom-28 max-h-[200px] overflow-y-auto">
-              <ul className="flex flex-wrap text-white list-none p-0">
+            <div className="mt-2 w-[70%] p-4 border border-white rounded-lg flex fixed bottom-28 max-h-[200px] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+              <ul className="flex flex-wrap text-white list-none p-0 -mt-1">
               <p className="mr-2 font-bold">Scraped Songs: </p>
                 {songs.map((song, index) => (
                   <li key={index} className="whitespace-nowrap mr-2">
                     {song.songTitle} by {song.artistName}{index !== songs.length - 1 ? ',' : ''}
                   </li>
                 ))}
+                <div className="w-full h-px my-3" />
               </ul>
             </div>
           )}
