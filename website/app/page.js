@@ -92,7 +92,7 @@ export default function Home() {
       setMessage('Playlist scraped successfully!');
   
 
-      //========================================================================SPOTIFY PLAYLIST CREATION========================================================================================
+      //========================================================================SPOTIFY PLAYLIST CREATION=======================================================================================
       if (targetService === 'Spotify') {
         // Step 2: Get Spotify access token
         const accessToken = await getSpotifyAccessToken();
