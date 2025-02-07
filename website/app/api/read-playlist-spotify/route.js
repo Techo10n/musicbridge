@@ -23,7 +23,7 @@ async function readPlaylistSpotify(playlistUrl) {
   await page.waitForSelector('div[data-testid="playlist-tracklist"]');
   // Extract the songs and artists
   const songs = await page.evaluate(() => {
-    const songElements = Array.from(document.querySelectorAll('div[data-testid="playlist-tracklist"] div[data-testid="tracklist-row'));
+    const songElements = Array.from(document.querySelectorAll('div[data-testid="playlist-tracklist"] div[data-testid="tracklist-row"]'));
     return songElements.map(el => {
       const outerText = el.outerText.split('\n').filter(line => line.trim() !== '');
       const songTitle = outerText[1];

@@ -75,7 +75,7 @@ export default function Home() {
       return;
     }
   
-    // Scrape playlist
+    // return read playlist
     const scrapeResponse = await fetch(source, {
       method: 'POST',
       headers: {
@@ -91,68 +91,78 @@ export default function Home() {
       setSongs(data.message);
       setMessage('Playlist scraped successfully!');
   
-      // Step 2: Get Spotify access token
-      const accessToken = await getSpotifyAccessToken();
-      //console.log('Access Token:', accessToken); //for debugging. dont uncomment if deploying
-      if (!accessToken) {
-        setMessage('Failed to get Spotify access token');
-        return;
-      }
-  
-      // Step 3: Map song names and artists to Spotify track URIs
-      setMessage('Searching for Spotify tracks...');
-      const trackUris = [];
-      for (const song of data.message) {
-        const uri = await searchSpotifyTrack(song.songTitle, song.artistName, accessToken);
-        if (uri) {
-          trackUris.push(uri);
+
+      //========================================================================SPOTIFY PLAYLIST CREATION========================================================================================
+      if (targetService === 'Spotify') {
+        // Step 2: Get Spotify access token
+        const accessToken = await getSpotifyAccessToken();
+        //console.log('Access Token:', accessToken); //for debugging. dont uncomment if deploying
+        if (!accessToken) {
+          setMessage('Failed to get Spotify access token');
+          return;
+        }
+    
+        // Step 3: Map song names and artists to Spotify track URIs
+        setMessage('Searching for Spotify tracks...');
+        const trackUris = [];
+        for (const song of data.message) {
+          const uri = await searchSpotifyTrack(song.songTitle, song.artistName, accessToken);
+          if (uri) {
+            trackUris.push(uri);
+          }
+        }
+    
+        if (trackUris.length === 0) {
+          setMessage('No valid Spotify tracks found');
+          return;
+        }
+    
+        // Step 4: Create the playlist
+        setMessage('Creating spotify playlist...');
+        const target = '/api/create-playlist-spotify';
+        const playlistName = "My Playlist"; // Replace with dynamic name or user input
+        const createdPlaylist = await fetch(target, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            accessToken,
+            playlistName,
+            trackUris,
+          }),
+        });
+    
+        if (createdPlaylist.ok) {
+          const data = await createdPlaylist.json();
+          const playlistUrl = `https://open.spotify.com/playlist/${data.playlistId}`;
+          setMessage(
+            <>
+              Playlist created successfully! Playlist URL:{" "}
+              <a className="underline" href={playlistUrl} target="_blank" rel="noopener noreferrer">
+                {playlistUrl}
+              </a>
+              <div className="mt-6">
+                Unable to Find Songs: {tracksNotFound.map((track, index) => (
+                  <p key={index}>{track.songTitle} by {track.artistName}</p>
+                ))}
+              </div>
+            </>
+          );
+          
+          //CURRENTLY NOT WORKING
+            //router.push(`/result?playlistUrl=${playlistUrl}&targetService=${targetService}`).catch(err => console.error('Navigation error:', err));
+
+        } else {
+          setMessage('Failed to create playlist');
         }
       }
-  
-      if (trackUris.length === 0) {
-        setMessage('No valid Spotify tracks found');
-        return;
+      //==================================================================YOUTUBE MUSIC PLAYLIST CREATION================================================================================
+      else if (targetService === 'YouTube Music') {
+        // Handle YouTube Music playlist creation
+        setMessage('YouTube Music playlist creation is not yet implemented.');
       }
-  
-      // Step 4: Create the playlist
-      setMessage('Creating playlist...');
-      const target = '/api/create-playlist-spotify';
-      const playlistName = "My Playlist"; // Replace with dynamic name or user input
-      const createdPlaylist = await fetch(target, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          accessToken,
-          playlistName,
-          trackUris,
-        }),
-      });
-  
-      if (createdPlaylist.ok) {
-        const data = await createdPlaylist.json();
-        const playlistUrl = `https://open.spotify.com/playlist/${data.playlistId}`;
-        setMessage(
-          <>
-            Playlist created successfully! Playlist URL:{" "}
-            <a className="underline" href={playlistUrl} target="_blank" rel="noopener noreferrer">
-              {playlistUrl}
-            </a>
-            <div className="mt-6">
-              Unable to Find Songs: {tracksNotFound.map((track, index) => (
-                <p key={index}>{track.songTitle} by {track.artistName}</p>
-              ))}
-            </div>
-          </>
-        );
-        
-        //CURRENTLY NOT WORKING
-          //router.push(`/result?playlistUrl=${playlistUrl}&targetService=${targetService}`).catch(err => console.error('Navigation error:', err));
-
-      } else {
-        setMessage('Failed to create playlist');
-      }
+      
     } else {
       setMessage('Failed to scrape playlist');
     }
