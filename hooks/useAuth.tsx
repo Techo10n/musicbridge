@@ -26,18 +26,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchUserProfile = useCallback(async (userId: string) => {
+  const fetchUserProfile = useCallback(async (userId: string, retries = 3) => {
+    let success = false;
     try {
       const { data, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .single();
-      if (error) throw error;
+        
+      if (error) {
+        // PGRST116 means zero rows were found. The trigger might still be running.
+        if (error.code === 'PGRST116') {
+          if (retries > 0) {
+            console.log(`Profile not found yet, retrying... (${retries} retries left)`);
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            await fetchUserProfile(userId, retries - 1);
+            return; // Skip the finally block for the current frame, the retry will handle it
+          } else {
+             // We ran out of retries and there's STILL no profile row.
+             // This user is broken (signup trigger failed). Log them out so they aren't stuck.
+             console.error('CRITICAL: User has auth session but no profile row. Logging out.');
+             await supabase.auth.signOut();
+             setUser(null);
+             setSession(null);
+          }
+        }
+        throw error;
+      }
       setUser(data as User);
+      success = true;
     } catch (err) {
       console.error('Error fetching user profile:', err);
     } finally {
+      // Only set loading to false if we succeeded or if we're totally out of retries
+      // If we are currently retrying, we returned early and this won't execute yet
       setLoading(false);
     }
   }, []);
@@ -87,20 +110,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     username: string,
     displayName: string,
   ) => {
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { username, display_name: displayName } },
+    });
     if (error) throw error;
     if (!data.user) throw new Error('Sign-up did not return a user');
-
-    const { error: profileError } = await supabase.from('users').insert({
-      id: data.user.id,
-      username,
-      display_name: displayName,
-    });
-    if (profileError) throw profileError;
+    // Profile row is created by the on_auth_user_created trigger (migration 002)
   };
 
   const setPrimaryService = async (service: MusicService) => {
-    if (!session?.user.id) return;
+    if (!session?.user.id) throw new Error('No active session — cannot set primary service');
     const { error } = await supabase
       .from('users')
       .update({ primary_service: service })

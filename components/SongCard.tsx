@@ -1,10 +1,11 @@
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SharedItem } from '../types';
 import { ServiceBadge } from './ServiceBadge';
 import { MusicService } from '../types';
 
 interface SongCardProps {
   item: SharedItem;
+  isResolving?: boolean;
   onPress: (item: SharedItem) => void;
 }
 
@@ -20,7 +21,7 @@ function timeAgo(dateString: string): string {
   return new Date(dateString).toLocaleDateString();
 }
 
-export function SongCard({ item, onPress }: SongCardProps) {
+export function SongCard({ item, isResolving, onPress }: SongCardProps) {
   const isUnread = !item.opened;
 
   return (
@@ -28,6 +29,7 @@ export function SongCard({ item, onPress }: SongCardProps) {
       style={[styles.card, isUnread && styles.cardUnread]}
       onPress={() => onPress(item)}
       activeOpacity={0.85}
+      disabled={isResolving}
     >
       {/* Cover art */}
       <Image
@@ -66,12 +68,16 @@ export function SongCard({ item, onPress }: SongCardProps) {
         )}
       </View>
 
-      {/* Service badge showing sender's service */}
-      {item.sender?.primary_service && (
-        <View style={styles.badge}>
-          <ServiceBadge service={item.sender.primary_service as MusicService} size="small" />
-        </View>
-      )}
+      {/* Service badge or Loading Spinner */}
+      <View style={styles.badgeContainer}>
+        {isResolving ? (
+          <ActivityIndicator color="#888" size="small" />
+        ) : item.sender?.primary_service ? (
+          <View style={styles.badge}>
+            <ServiceBadge service={item.sender.primary_service as MusicService} size="small" />
+          </View>
+        ) : null}
+      </View>
     </TouchableOpacity>
   );
 }
@@ -151,7 +157,10 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 2,
   },
-  badge: {
+  badgeContainer: {
     paddingTop: 2,
+  },
+  badge: {
+    // any existing badge styles, or keep empty if none
   },
 });

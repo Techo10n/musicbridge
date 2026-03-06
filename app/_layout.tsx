@@ -8,7 +8,7 @@ import { AuthProvider, useAuth } from '../hooks/useAuth';
  * Keeping this separate from AuthProvider lets us consume the context here.
  */
 function RootLayoutNav() {
-  const { session, loading } = useAuth();
+  const { session, user, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   // useRootNavigationState gives us the navigator's key once it is fully mounted.
@@ -25,11 +25,11 @@ function RootLayoutNav() {
     if (!session && !inAuthGroup) {
       // No session — always send to login
       router.replace('/(auth)/login');
-    } else if (session && (inAuthGroup || (!inAuthGroup && !inTabsGroup))) {
-      // Has session but stuck on auth screens or root — send to home feed
+    } else if (session && user?.primary_service && (inAuthGroup || (!inAuthGroup && !inTabsGroup))) {
+      // Fully registered user on wrong screen — send to home feed
       router.replace('/(tabs)/home');
     }
-  }, [navState?.key, session, loading, segments, router]);
+  }, [navState?.key, session, user, loading, segments, router]);
 
   return (
     <Stack

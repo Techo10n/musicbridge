@@ -105,19 +105,11 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
     setSharing(true);
 
     try {
-      // Resolve the track across all services concurrently
-      // Each returns null if the user isn't connected to that service or no match found
-      const [spotifyId, appleMusicId, youtubeMusicId] = await Promise.all([
-        primaryService === 'spotify'
-          ? result.id
-          : Spotify.searchTrack(user.id, result.title, result.artist),
-        primaryService === 'apple_music'
-          ? result.id
-          : AppleMusic.searchTrack(user.id, result.title, result.artist),
-        primaryService === 'youtube_music'
-          ? result.id
-          : YouTubeMusic.searchTrack(user.id, result.title, result.artist),
-      ]);
+      // The sender only provides the ID for their active primary service.
+      // Other services will be lazily resolved by the recipient using their own tokens.
+      const spotifyId = primaryService === 'spotify' ? result.id : null;
+      const appleMusicId = primaryService === 'apple_music' ? result.id : null;
+      const youtubeMusicId = primaryService === 'youtube_music' ? result.id : null;
 
       const { error } = await supabase.from('shared_items').insert({
         sender_id: user.id,

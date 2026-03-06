@@ -2,7 +2,7 @@
   "expo": {
     "name": "musicbridge",
     "slug": "musicbridge",
-    "scheme": "musicbridge",
+    "scheme": ["musicbridge", "com.googleusercontent.apps.215416693574-ul79o63f153r4eapd9n5a6067roa132b"],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

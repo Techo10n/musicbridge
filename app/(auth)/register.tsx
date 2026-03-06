@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { MusicService } from '../../types';
 
@@ -47,6 +47,7 @@ export default function Register() {
   const [error, setError] = useState<string | null>(null);
 
   const { signUp, setPrimaryService } = useAuth();
+  const router = useRouter();
 
   const handleRegister = async () => {
     if (!email.trim() || !password || !username.trim() || !displayName.trim()) {
@@ -79,7 +80,7 @@ export default function Register() {
     setError(null);
     try {
       await setPrimaryService(service);
-      // Auth state change triggers redirect to /(tabs)/home
+      router.replace('/(tabs)/home');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save service selection');
       setLoading(false);

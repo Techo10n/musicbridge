@@ -1,7 +1,9 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import { Alert } from 'react-native';
 import { supabase } from './supabase';
 import { SpotifyTrack } from '../types';
+import { cleanArtistName } from './utils';
 
 // Required for OAuth redirect to be handled by the app on iOS/Android
 WebBrowser.maybeCompleteAuthSession();
@@ -165,18 +167,37 @@ export async function searchTrack(
   artist: string,
 ): Promise<string | null> {
   const accessToken = await getSpotifyAccessToken(userId);
+  console.log(`[Spotify Search] Using Token: ${accessToken ? accessToken.substring(0, 15) + '...' : 'null'} for User: ${userId}`);
   if (!accessToken) return null;
 
+  const cleanedArtist = cleanArtistName(artist);
+
   try {
-    const q = encodeURIComponent(`track:${title} artist:${artist}`);
+    const q = encodeURIComponent(`${title} ${cleanedArtist}`);
+    console.log(`[Spotify Search] Querying: "${title} ${cleanedArtist}" (encoded: ${q})`);
+
     const res = await fetch(
       `https://api.spotify.com/v1/search?q=${q}&type=track&limit=1`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[Spotify Search] Error: ${res.status} ${res.statusText}`, errText);
+      return null;
+    }
+    
     const data = await res.json() as { tracks?: { items: SpotifyTrack[] } };
-    return data.tracks?.items[0]?.id ?? null;
-  } catch {
+    
+    if (!data.tracks?.items?.length) {
+      Alert.alert('Search failed', `Could not find: "${title} ${cleanedArtist}"`);
+      return null;
+    }
+
+    const foundTrack = data.tracks.items[0];
+    console.log(`[Spotify Search] Found: "${foundTrack.name}" by ${foundTrack.artists.map((a: any) => a.name).join(', ')}`);
+    return foundTrack.id;
+  } catch (err) {
+    console.error(`[Spotify Search] Exception:`, err);
     return null;
   }
 }
@@ -194,10 +215,15 @@ export async function searchTracks(userId: string, query: string): Promise<Spoti
       `https://api.spotify.com/v1/search?q=${q}&type=track&limit=20`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
-    if (!res.ok) return [];
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[Spotify SearchTracks] Error: ${res.status} ${res.statusText}`, errText);
+      return [];
+    }
     const data = await res.json() as { tracks?: { items: SpotifyTrack[] } };
     return data.tracks?.items ?? [];
-  } catch {
+  } catch (err) {
+    console.error(`[Spotify SearchTracks] Exception:`, err);
     return [];
   }
 }

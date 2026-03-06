@@ -24,6 +24,8 @@ export default function Home() {
 
   const [playlistModalItem, setPlaylistModalItem] = useState<SharedItem | null>(null);
 
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
   const handleSongPress = async (item: SharedItem) => {
     await markAsOpened(item.id);
 
@@ -33,35 +35,56 @@ export default function Home() {
       return;
     }
 
-    let deepLink: string | null = null;
+    setResolvingId(item.id);
 
-    switch (primaryService) {
-      case 'spotify':
-        if (item.spotify_id) deepLink = Spotify.getSpotifyDeepLink(item.spotify_id);
-        break;
-      case 'apple_music':
-        if (item.apple_music_id) deepLink = AppleMusic.getAppleMusicDeepLink(item.apple_music_id);
-        break;
-      case 'youtube_music':
-        if (item.youtube_music_id) deepLink = YouTubeMusic.getYouTubeMusicDeepLink(item.youtube_music_id);
-        break;
-    }
+    try {
+      let deepLink: string | null = null;
 
-    if (deepLink) {
-      const canOpen = await Linking.canOpenURL(deepLink);
-      if (canOpen) {
-        await Linking.openURL(deepLink);
+      switch (primaryService) {
+        case 'spotify': {
+          let sid = item.spotify_id;
+          if (!sid && item.title && item.artist) {
+            sid = await Spotify.searchTrack(user!.id, item.title, item.artist);
+          }
+          if (sid) deepLink = Spotify.getSpotifyDeepLink(sid);
+          break;
+        }
+        case 'apple_music': {
+          let amID = item.apple_music_id;
+          if (!amID && item.title && item.artist) {
+            amID = await AppleMusic.searchTrack(user!.id, item.title, item.artist);
+          }
+          if (amID) deepLink = AppleMusic.getAppleMusicDeepLink(amID);
+          break;
+        }
+        case 'youtube_music': {
+          let ymID = item.youtube_music_id;
+          if (!ymID && item.title && item.artist) {
+            ymID = await YouTubeMusic.searchTrack(user!.id, item.title, item.artist);
+          }
+          if (ymID) deepLink = YouTubeMusic.getYouTubeMusicDeepLink(ymID);
+          break;
+        }
+      }
+
+      if (deepLink) {
+        const canOpen = await Linking.canOpenURL(deepLink);
+        if (canOpen) {
+          await Linking.openURL(deepLink);
+        } else {
+          Alert.alert(
+            'App not found',
+            `Could not open ${primaryService.replace('_', ' ')}. Make sure it's installed.`,
+          );
+        }
       } else {
         Alert.alert(
-          'App not found',
-          `Could not open ${primaryService.replace('_', ' ')}. Make sure it's installed.`,
+          'Not available',
+          `Could not find this song on your ${primaryService.replace('_', ' ')} account.`,
         );
       }
-    } else {
-      Alert.alert(
-        'Not available',
-        `This song isn't linked to your ${primaryService.replace('_', ' ')} account. The sender may not have been connected.`,
-      );
+    } finally {
+      setResolvingId(null);
     }
   };
 
@@ -74,7 +97,13 @@ export default function Home() {
     if (item.type === 'playlist') {
       return <PlaylistCard item={item} onPress={handlePlaylistPress} />;
     }
-    return <SongCard item={item} onPress={handleSongPress} />;
+    return (
+      <SongCard 
+        item={item} 
+        isResolving={resolvingId === item.id}
+        onPress={handleSongPress} 
+      />
+    );
   };
 
   return (

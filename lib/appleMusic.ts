@@ -1,6 +1,7 @@
 import * as WebBrowser from 'expo-web-browser';
 import { supabase } from './supabase';
 import { AppleMusicTrack } from '../types';
+import { cleanArtistName } from './utils';
 
 /**
  * Apple Music integration via MusicKit.
@@ -111,8 +112,10 @@ export async function searchTrack(
   const userToken = await getUserToken(userId);
   if (!userToken || !APPLE_DEVELOPER_TOKEN) return null;
 
+  const cleanedArtist = cleanArtistName(artist);
+
   try {
-    const term = encodeURIComponent(`${title} ${artist}`);
+    const term = encodeURIComponent(`${title} ${cleanedArtist}`);
     const res = await fetch(
       `${APPLE_MUSIC_API}/catalog/us/search?term=${term}&types=songs&limit=1`,
       { headers: authHeaders(userToken) },

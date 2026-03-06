@@ -1,5 +1,5 @@
-import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
 import { supabase } from './supabase';
 import { YouTubeTrack } from '../types';
 
@@ -24,54 +24,54 @@ const SCOPES = ['https://www.googleapis.com/auth/youtube'];
  * Returns true on success.
  */
 export async function connectYouTubeMusic(userId: string): Promise<boolean> {
-  try {
-    const redirectUri = AuthSession.makeRedirectUri({
-      scheme: 'musicbridge',
-      path: 'youtube-callback',
-    });
+  if (!GOOGLE_CLIENT_ID) throw new Error('EXPO_PUBLIC_GOOGLE_CLIENT_ID is not set');
 
-    const request = new AuthSession.AuthRequest({
-      clientId: GOOGLE_CLIENT_ID,
-      scopes: SCOPES,
-      redirectUri,
-      usePKCE: true,
-      // Google requires this for mobile apps
-      extraParams: { access_type: 'offline', prompt: 'consent' },
-    });
+  // For iOS/Android Client IDs, Google enforces a strict reverse DNS format for the redirect URI
+  // e.g. com.googleusercontent.apps.1234567890-abcdefg:/oauth2redirect/google
+  // We extract the prefix from the full client ID and build that native redirect URI.
+  const clientIdPrefix = GOOGLE_CLIENT_ID.split('.apps.googleusercontent.com')[0];
+  const redirectUri = `com.googleusercontent.apps.${clientIdPrefix}:/oauth2redirect/google`;
 
-    const result = await request.promptAsync(DISCOVERY);
+  const request = new AuthSession.AuthRequest({
+    clientId: GOOGLE_CLIENT_ID,
+    scopes: SCOPES,
+    redirectUri,
+    usePKCE: true,
+    extraParams: { access_type: 'offline', prompt: 'consent' },
+  });
 
-    if (result.type !== 'success') return false;
+  const result = await request.promptAsync(DISCOVERY);
 
-    const tokenResponse = await AuthSession.exchangeCodeAsync(
-      {
-        clientId: GOOGLE_CLIENT_ID,
-        code: result.params.code,
-        redirectUri,
-        extraParams: { code_verifier: request.codeVerifier ?? '' },
-      },
-      DISCOVERY,
-    );
-
-    const expiry = new Date(
-      Date.now() + (tokenResponse.expiresIn ?? 3600) * 1000,
-    ).toISOString();
-
-    const { error } = await supabase
-      .from('users')
-      .update({
-        youtube_access_token: tokenResponse.accessToken,
-        youtube_refresh_token: tokenResponse.refreshToken,
-        youtube_token_expiry: expiry,
-      })
-      .eq('id', userId);
-
-    if (error) throw error;
-    return true;
-  } catch (err) {
-    console.error('[YouTube] connectYouTubeMusic error:', err);
-    return false;
+  if (result.type === 'cancel' || result.type === 'dismiss') return false;
+  if (result.type !== 'success') {
+    throw new Error(`OAuth failed: ${result.type}`);
   }
+
+  const tokenResponse = await AuthSession.exchangeCodeAsync(
+    {
+      clientId: GOOGLE_CLIENT_ID,
+      code: result.params.code,
+      redirectUri,
+      extraParams: { code_verifier: request.codeVerifier ?? '' },
+    },
+    DISCOVERY,
+  );
+
+  const expiry = new Date(
+    Date.now() + (tokenResponse.expiresIn ?? 3600) * 1000,
+  ).toISOString();
+
+  const { error } = await supabase
+    .from('users')
+    .update({
+      youtube_access_token: tokenResponse.accessToken,
+      youtube_refresh_token: tokenResponse.refreshToken,
+      youtube_token_expiry: expiry,
+    })
+    .eq('id', userId);
+
+  if (error) throw error;
+  return true;
 }
 
 /**
@@ -151,8 +151,9 @@ export async function getYouTubeAccessToken(userId: string): Promise<string | nu
 // ─── Search ───────────────────────────────────────────────────────────────────
 
 /**
- * Searches YouTube for a track by title + artist.
- * Returns the YouTube video ID, or null.
+ * Searches for a track by title + artist.
+ * Prefers YouTube Music "Artist - Topic" channels (official audio),
+ * falling back to the top result filtered by Music topic.
  */
 export async function searchTrack(
   userId: string,
@@ -163,21 +164,31 @@ export async function searchTrack(
   if (!accessToken) return null;
 
   try {
-    const q = encodeURIComponent(`${title} ${artist} official audio`);
+    const q = encodeURIComponent(`${title} ${artist}`);
+    // topicId=/m/04rlf restricts results to the Music freebase topic,
+    // filtering out karaoke, covers, and non-music videos.
     const res = await fetch(
-      `${YOUTUBE_API}/search?q=${q}&type=video&part=id&maxResults=1&videoCategoryId=10`,
+      `${YOUTUBE_API}/search?q=${q}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10&topicId=/m/04rlf`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (!res.ok) return null;
     const data = await res.json() as { items?: YouTubeTrack[] };
-    return data.items?.[0]?.id.videoId ?? null;
+    const items = data.items ?? [];
+
+    // YouTube Music auto-generates "Artist - Topic" channels for official audio.
+    // Prefer those results over music videos or lyric videos.
+    const topicResult = items.find((item) =>
+      item.snippet?.channelTitle?.endsWith('- Topic'),
+    );
+    return topicResult?.id.videoId ?? items[0]?.id.videoId ?? null;
   } catch {
     return null;
   }
 }
 
 /**
- * Searches YouTube Music with a free-form query (returns video results).
+ * Searches for tracks with a free-form query.
+ * Filtered to Music topic content, sorted by Topic channels first.
  */
 export async function searchTracks(userId: string, query: string): Promise<YouTubeTrack[]> {
   const accessToken = await getYouTubeAccessToken(userId);
@@ -186,12 +197,17 @@ export async function searchTracks(userId: string, query: string): Promise<YouTu
   try {
     const q = encodeURIComponent(query);
     const res = await fetch(
-      `${YOUTUBE_API}/search?q=${q}&type=video&part=snippet,id&maxResults=20&videoCategoryId=10`,
+      `${YOUTUBE_API}/search?q=${q}&type=video&part=snippet,id&maxResults=25&videoCategoryId=10&topicId=/m/04rlf`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (!res.ok) return [];
     const data = await res.json() as { items?: YouTubeTrack[] };
-    return data.items ?? [];
+    const items = data.items ?? [];
+
+    // Surface "Artist - Topic" (official audio) results first
+    const topicItems = items.filter((i) => i.snippet?.channelTitle?.endsWith('- Topic'));
+    const rest = items.filter((i) => !i.snippet?.channelTitle?.endsWith('- Topic'));
+    return [...topicItems, ...rest];
   } catch {
     return [];
   }

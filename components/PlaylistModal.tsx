@@ -36,21 +36,43 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
     setAdding(true);
     try {
-      // Collect the track IDs for the user's primary service
-      const trackIds = item.tracks
-        .map((t: Track) => {
-          switch (primaryService) {
-            case 'spotify': return t.spotify_id;
-            case 'apple_music': return t.apple_music_id;
-            case 'youtube_music': return t.youtube_music_id;
-          }
-        })
-        .filter((id): id is string => id !== null && id !== undefined);
+      // We map tracks to Promises because some may need to lazily fetch their ID
+      const trackIdPromises = item.tracks.map(async (t: Track) => {
+        let id: string | null | undefined;
+        
+        switch (primaryService) {
+          case 'spotify':
+            id = t.spotify_id;
+            if (!id && t.title && t.artist) {
+              id = await Spotify.searchTrack(user.id, t.title, t.artist);
+            }
+            break;
+          case 'apple_music':
+            id = t.apple_music_id;
+            if (!id && t.title && t.artist) {
+              id = await AppleMusic.searchTrack(user.id, t.title, t.artist);
+            }
+            break;
+          case 'youtube_music':
+            id = t.youtube_music_id;
+            if (!id && t.title && t.artist) {
+              id = await YouTubeMusic.searchTrack(user.id, t.title, t.artist);
+            }
+            break;
+        }
+        return id;
+      });
+
+      // Wait for all missing IDs to resolve
+      const resolvedIds = await Promise.all(trackIdPromises);
+      
+      // Filter out any that still couldn't be found
+      const trackIds = resolvedIds.filter((id): id is string => id !== null && id !== undefined);
 
       if (trackIds.length === 0) {
         Alert.alert(
           'Not Available',
-          `None of these tracks are resolved for ${serviceName(primaryService)}. The sender may not have been connected to that service.`,
+          `None of these tracks could be found on ${serviceName(primaryService)}.`,
         );
         return;
       }
