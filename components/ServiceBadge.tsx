@@ -33,9 +33,6 @@ export function serviceName(service: MusicService): string {
   return SERVICE_CONFIG[service].label;
 }
 
-export function serviceColor(service: MusicService): string {
-  return SERVICE_CONFIG[service].color;
-}
 
 const styles = StyleSheet.create({
   badge: {

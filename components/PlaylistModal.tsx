@@ -16,6 +16,7 @@ import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
 import { useAuth } from '../hooks/useAuth';
+import { withTimeout } from '../lib/utils';
 
 interface PlaylistModalProps {
   item: SharedItem | null;
@@ -36,8 +37,8 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
     setAdding(true);
     try {
-      // We map tracks to Promises because some may need to lazily fetch their ID
-      const trackIdPromises = item.tracks.map(async (t: Track) => {
+      // Create an array of functions that will return the promises when called
+      const trackIdTasks = item.tracks.map((t: Track) => async () => {
         let id: string | null | undefined;
         
         switch (primaryService) {
@@ -63,9 +64,22 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
         return id;
       });
 
-      // Wait for all missing IDs to resolve
-      const resolvedIds = await Promise.all(trackIdPromises);
+      // Execute in chunks to avoid rate limits (429 errors from Spotify/Apple APIs)
+      const resolvedIds: (string | null | undefined)[] = [];
+      const CHUNK_SIZE = 3;
       
+      for (let i = 0; i < trackIdTasks.length; i += CHUNK_SIZE) {
+        const chunk = trackIdTasks.slice(i, i + CHUNK_SIZE);
+        // Timeout bumped to 60s because 429's backoff might take 5-10 seconds
+        const results = await withTimeout(Promise.all(chunk.map(fn => fn())), 60_000);
+        resolvedIds.push(...results);
+        
+        // Add a small delay between chunks if there are more to process
+        if (i + CHUNK_SIZE < trackIdTasks.length) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
       // Filter out any that still couldn't be found
       const trackIds = resolvedIds.filter((id): id is string => id !== null && id !== undefined);
 
@@ -81,13 +95,13 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
       switch (primaryService) {
         case 'spotify':
-          playlistId = await Spotify.createPlaylist(user.id, item.title, trackIds);
+          playlistId = await withTimeout(Spotify.createPlaylist(user.id, item.title, trackIds), 30_000);
           break;
         case 'apple_music':
-          playlistId = await AppleMusic.createPlaylist(user.id, item.title, trackIds);
+          playlistId = await withTimeout(AppleMusic.createPlaylist(user.id, item.title, trackIds), 30_000);
           break;
         case 'youtube_music':
-          playlistId = await YouTubeMusic.createPlaylist(user.id, item.title, trackIds);
+          playlistId = await withTimeout(YouTubeMusic.createPlaylist(user.id, item.title, trackIds), 30_000);
           break;
       }
 
@@ -97,8 +111,19 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       } else {
         Alert.alert('Error', `Failed to create playlist. Make sure you're connected to ${serviceName(primaryService)}.`);
       }
-    } catch (err) {
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } catch (err: any) {
+      // Catch specific multi-hour rate limit errors thrown when Spotify Development app quotas are exhausted
+      if (err?.message === 'spotify_rate_limit_exceeded') {
+        Alert.alert(
+          'Spotify Rate Limit Reached',
+          'Because your Spotify App is in "Development Mode" (in the Developer Dashboard), Spotify limits how many searches you can perform in a day. You have hit this limit by processing large playlists. Please wait 12 hours or create a new Spotify App in the Dashboard to reset this limit.'
+        );
+      } else {
+        const msg = err?.message === 'timeout'
+          ? 'Request timed out. Check your connection and try again.'
+          : 'Something went wrong. Please try again.';
+        Alert.alert('Error', msg);
+      }
       console.error('[PlaylistModal] addToService error:', err);
     } finally {
       setAdding(false);

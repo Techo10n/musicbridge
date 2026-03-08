@@ -27,14 +27,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [loading, setLoading] = useState(true);
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 3) => {
-    let success = false;
     try {
       const { data, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .single();
-        
+
       if (error) {
         // PGRST116 means zero rows were found. The trigger might still be running.
         if (error.code === 'PGRST116') {
@@ -42,7 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
             console.log(`Profile not found yet, retrying... (${retries} retries left)`);
             await new Promise((resolve) => setTimeout(resolve, 500));
             await fetchUserProfile(userId, retries - 1);
-            return; // Skip the finally block for the current frame, the retry will handle it
+            return;
           } else {
              // We ran out of retries and there's STILL no profile row.
              // This user is broken (signup trigger failed). Log them out so they aren't stuck.
@@ -55,12 +54,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         throw error;
       }
       setUser(data as User);
-      success = true;
     } catch (err) {
       console.error('Error fetching user profile:', err);
     } finally {
-      // Only set loading to false if we succeeded or if we're totally out of retries
-      // If we are currently retrying, we returned early and this won't execute yet
       setLoading(false);
     }
   }, []);
@@ -98,8 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    await supabase.auth.signOut({ scope: 'local' });
     setUser(null);
   };
 

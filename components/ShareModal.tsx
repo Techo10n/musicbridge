@@ -103,6 +103,8 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
     if (!user || !recipient || !primaryService) return;
 
     setSharing(true);
+    const abort = new AbortController();
+    const timeoutId = setTimeout(() => abort.abort(), 15_000);
 
     try {
       // The sender only provides the ID for their active primary service.
@@ -122,17 +124,21 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
         apple_music_id: appleMusicId,
         youtube_music_id: youtubeMusicId,
         message: message.trim() || null,
-      });
+      }).abortSignal(abort.signal);
 
       if (error) throw error;
 
       Alert.alert('Sent!', `Shared "${result.title}" with ${recipient.display_name}.`);
       onShared();
       handleClose();
-    } catch (err) {
-      Alert.alert('Error', 'Failed to share. Please try again.');
+    } catch (err: any) {
+      const msg = abort.signal.aborted
+        ? 'Share timed out. Check your connection and try again.'
+        : 'Failed to share. Please try again.';
+      Alert.alert('Error', msg);
       console.error('[ShareModal] share error:', err);
     } finally {
+      clearTimeout(timeoutId);
       setSharing(false);
     }
   };

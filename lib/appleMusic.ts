@@ -1,6 +1,6 @@
 import * as WebBrowser from 'expo-web-browser';
 import { supabase } from './supabase';
-import { AppleMusicTrack } from '../types';
+import { AppleMusicTrack, AppleMusicPlaylist, LibraryPlaylist, LibraryTrack, MusicService } from '../types';
 import { cleanArtistName } from './utils';
 
 /**
@@ -202,13 +202,104 @@ export async function createPlaylist(
  * Returns a deep link that opens the track in the Apple Music app.
  * The storefront ID is embedded in the catalog track ID URL.
  */
-export function getAppleMusicDeepLink(trackId: string): string {
+export function getAppleMusicDeepLink(trackId: string): string[] {
   // Opens the Apple Music app directly on iOS
-  return `music://music.apple.com/us/album/${trackId}`;
+  return [
+    `music://music.apple.com/us/album/${trackId}`,
+    `https://music.apple.com/us/album/${trackId}`
+  ];
 }
 
-export function getAppleMusicPlaylistDeepLink(playlistId: string): string {
-  return `music://music.apple.com/library/playlist/${playlistId}`;
+export function getAppleMusicPlaylistDeepLink(playlistId: string): string[] {
+  return [
+    `music://music.apple.com/library/playlist/${playlistId}`,
+    `https://music.apple.com/library/playlist/${playlistId}`
+  ];
+}
+
+// ─── Library ──────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the user's Apple Music library playlists.
+ */
+export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[]> {
+  const userToken = await getUserToken(userId);
+  if (!userToken || !APPLE_DEVELOPER_TOKEN) return [];
+
+  try {
+    const res = await fetch(`${APPLE_MUSIC_API}/me/library/playlists?limit=100`, {
+      headers: authHeaders(userToken),
+    });
+    if (!res.ok) return [];
+    const data = await res.json() as { data: AppleMusicPlaylist[] };
+    return data.data.map((p) => ({
+      id: p.id,
+      name: p.attributes.name,
+      // Apple Music doesn't always return artwork for library playlists
+      coverUrl: p.attributes.artwork?.url
+        ? resolveArtworkUrl(p.attributes.artwork.url, 300)
+        : '',
+      trackCount: 0, // not returned in list view; populated when tracks are fetched
+      service: 'apple_music' as MusicService,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Returns tracks in an Apple Music library playlist.
+ */
+export async function getPlaylistTracks(userId: string, playlistId: string): Promise<LibraryTrack[]> {
+  const userToken = await getUserToken(userId);
+  if (!userToken || !APPLE_DEVELOPER_TOKEN) return [];
+
+  try {
+    const res = await fetch(
+      `${APPLE_MUSIC_API}/me/library/playlists/${playlistId}/tracks?limit=100`,
+      { headers: authHeaders(userToken) },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { data: AppleMusicTrack[] };
+    return data.data.map((t) => ({
+      id: t.id,
+      title: t.attributes.name,
+      artist: t.attributes.artistName,
+      coverUrl: t.attributes.artwork
+        ? resolveArtworkUrl(t.attributes.artwork.url, 150)
+        : '',
+      service: 'apple_music' as MusicService,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Returns the user's Apple Music library songs (saved songs), up to 100.
+ */
+export async function getSavedSongs(userId: string): Promise<LibraryTrack[]> {
+  const userToken = await getUserToken(userId);
+  if (!userToken || !APPLE_DEVELOPER_TOKEN) return [];
+
+  try {
+    const res = await fetch(`${APPLE_MUSIC_API}/me/library/songs?limit=100`, {
+      headers: authHeaders(userToken),
+    });
+    if (!res.ok) return [];
+    const data = await res.json() as { data: AppleMusicTrack[] };
+    return data.data.map((t) => ({
+      id: t.id,
+      title: t.attributes.name,
+      artist: t.attributes.artistName,
+      coverUrl: t.attributes.artwork
+        ? resolveArtworkUrl(t.attributes.artwork.url, 150)
+        : '',
+      service: 'apple_music' as MusicService,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**

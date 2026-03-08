@@ -67,6 +67,30 @@ export interface SharedItem {
   sender?: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'>;
 }
 
+// ─── Library types ────────────────────────────────────────────────────────────
+
+export interface LibraryPlaylist {
+  id: string;
+  name: string;
+  coverUrl: string;
+  trackCount: number;
+  service: MusicService;
+}
+
+export interface LibraryTrack {
+  id: string;
+  title: string;
+  artist: string;
+  coverUrl: string;
+  service: MusicService;
+}
+
+export interface LibraryArtist {
+  id: string;
+  name: string;
+  imageUrl: string;
+}
+
 // ─── Spotify API shapes ───────────────────────────────────────────────────────
 
 export interface SpotifyTrack {
@@ -126,6 +150,7 @@ export interface YouTubeTrack {
   snippet: {
     title: string;
     channelTitle: string;
+    description?: string;
     thumbnails: {
       default: { url: string };
       medium: { url: string };

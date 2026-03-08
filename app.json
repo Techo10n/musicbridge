@@ -2,7 +2,10 @@
   "expo": {
     "name": "musicbridge",
     "slug": "musicbridge",
-    "scheme": ["musicbridge", "com.googleusercontent.apps.215416693574-ul79o63f153r4eapd9n5a6067roa132b"],
+    "scheme": [
+      "musicbridge",
+      "com.googleusercontent.apps.215416693574-ul79o63f153r4eapd9n5a6067roa132b"
+    ],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,7 +17,16 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.musicbridge.app"
+      "bundleIdentifier": "com.musicbridge.app",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "spotify",
+          "vnd.youtube",
+          "vnd.youtube.music",
+          "youtube",
+          "youtubemusic"
+        ]
+      }
     },
     "android": {
       "package": "com.musicbridge.app",
@@ -30,7 +42,9 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-secure-store",
+      "expo-web-browser"
     ]
   }
 }

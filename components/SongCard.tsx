@@ -1,7 +1,6 @@
 import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SharedItem } from '../types';
+import { SharedItem, MusicService } from '../types';
 import { ServiceBadge } from './ServiceBadge';
-import { MusicService } from '../types';
 
 interface SongCardProps {
   item: SharedItem;

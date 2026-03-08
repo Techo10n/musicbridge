@@ -1,7 +1,7 @@
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import { supabase } from './supabase';
-import { YouTubeTrack } from '../types';
+import { YouTubeTrack, LibraryPlaylist, LibraryTrack, MusicService } from '../types';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -164,9 +164,12 @@ export async function searchTrack(
   if (!accessToken) return null;
 
   try {
+    // We don't append "audio" to the query anymore because it breaks exact title
+    // matching for short song titles like "About You". Instead we just rely on the API filters.
     const q = encodeURIComponent(`${title} ${artist}`);
-    // topicId=/m/04rlf restricts results to the Music freebase topic,
-    // filtering out karaoke, covers, and non-music videos.
+    
+    // topicId=/m/04rlf restricts results to the Music freebase topic.
+    // videoCategoryId=10 restricts to the Music category.
     const res = await fetch(
       `${YOUTUBE_API}/search?q=${q}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10&topicId=/m/04rlf`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -176,11 +179,36 @@ export async function searchTrack(
     const items = data.items ?? [];
 
     // YouTube Music auto-generates "Artist - Topic" channels for official audio.
-    // Prefer those results over music videos or lyric videos.
-    const topicResult = items.find((item) =>
-      item.snippet?.channelTitle?.endsWith('- Topic'),
-    );
-    return topicResult?.id.videoId ?? items[0]?.id.videoId ?? null;
+    // Prefer these results over music videos or lyric videos, as these trigger "Song" mode cleanly.
+    let bestMatch = items.find((item) => {
+      const channel = item.snippet?.channelTitle?.toLowerCase() ?? '';
+      const videoTitle = item.snippet?.title?.toLowerCase() ?? '';
+      const desc = item.snippet?.description?.toLowerCase() ?? '';
+      
+      // "Provided to YouTube by" is the standard watermark for official audio distributions
+      return channel.endsWith(' - topic') 
+          || channel === 'topic'
+          || videoTitle.includes('official audio') 
+          || desc.includes('provided to youtube');
+    });
+
+    // If we didn't find an official Topic/Audio video, try to find a video that at least
+    // ISN'T explicitly labeled as a Music Video, Lyric Video, or Live performance.
+    if (!bestMatch) {
+      bestMatch = items.find((item) => {
+        const title = item.snippet?.title?.toLowerCase() ?? '';
+        return !title.includes('music video') 
+            && !title.includes('lyric') 
+            && !title.includes('live')
+            && !title.includes('official video');
+      });
+    }
+
+    if (bestMatch) {
+      return bestMatch.id.videoId;
+    }
+
+    return items[0]?.id.videoId ?? null;
   } catch {
     return null;
   }
@@ -271,11 +299,123 @@ export async function createPlaylist(
 
 // ─── Deep links ───────────────────────────────────────────────────────────────
 
-export function getYouTubeMusicDeepLink(videoId: string): string {
-  // Opens in YouTube Music app on Android; falls back to YouTube app / browser
-  return `vnd.youtube://${videoId}`;
+export function getYouTubeMusicDeepLink(videoId: string): string[] {
+  // Try iOS YouTube Music first, then fallback to Android/vanilla YouTube scheme.
+  // We append &vType=audio as an undocumented parameter that frequently forces the
+  // YTM app to open the "Song" tab instead of the "Video" tab on load.
+  return [
+    `youtubemusic://watch?v=${videoId}&vType=audio`,
+    `vnd.youtube://${videoId}`,
+    `https://music.youtube.com/watch?v=${videoId}&vType=audio`
+  ];
 }
 
-export function getYouTubeMusicPlaylistDeepLink(playlistId: string): string {
-  return `vnd.youtube://www.youtube.com/playlist?list=${playlistId}`;
+export function getYouTubeMusicPlaylistDeepLink(playlistId: string): string[] {
+  return [
+    `youtubemusic://playlist?list=${playlistId}`,
+    `vnd.youtube://www.youtube.com/playlist?list=${playlistId}`,
+    `https://music.youtube.com/playlist?list=${playlistId}`
+  ];
+}
+
+// ─── Library ──────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the authenticated user's YouTube playlists.
+ */
+export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[]> {
+  const accessToken = await getYouTubeAccessToken(userId);
+  if (!accessToken) return [];
+
+  try {
+    const res = await fetch(
+      `${YOUTUBE_API}/playlists?part=snippet,contentDetails&mine=true&maxResults=50`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      items: Array<{
+        id: string;
+        snippet: {
+          title: string;
+          thumbnails: { medium?: { url: string }; default?: { url: string } };
+        };
+        contentDetails: { itemCount: number };
+      }>;
+    };
+    return data.items.map((p) => ({
+      id: p.id,
+      name: p.snippet.title,
+      coverUrl: p.snippet.thumbnails.medium?.url ?? p.snippet.thumbnails.default?.url ?? '',
+      trackCount: p.contentDetails.itemCount,
+      service: 'youtube_music' as MusicService,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Returns tracks in a YouTube playlist, paginating through all pages.
+ * Strips " - Topic" suffix from channel names so artist names are clean for cross-service search.
+ */
+export async function getPlaylistTracks(userId: string, playlistId: string): Promise<LibraryTrack[]> {
+  const accessToken = await getYouTubeAccessToken(userId);
+  if (!accessToken) return [];
+
+  const tracks: LibraryTrack[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    try {
+      const params = new URLSearchParams({
+        part: 'snippet',
+        playlistId,
+        maxResults: '50',
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const res = await fetch(`${YOUTUBE_API}/playlistItems?${params}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) break;
+      const data = await res.json() as {
+        nextPageToken?: string;
+        items: Array<{
+          snippet: {
+            title: string;
+            videoOwnerChannelTitle?: string;
+            resourceId: { videoId: string };
+            thumbnails: { medium?: { url: string } };
+          };
+        }>;
+      };
+      for (const item of data.items) {
+        // Skip deleted or private videos
+        if (
+          item.snippet.title === 'Deleted video' ||
+          item.snippet.title === 'Private video'
+        ) continue;
+        tracks.push({
+          id: item.snippet.resourceId.videoId,
+          title: item.snippet.title,
+          // Strip " - Topic" so artist names match correctly when searching other services
+          artist: (item.snippet.videoOwnerChannelTitle ?? '').replace(' - Topic', ''),
+          coverUrl: item.snippet.thumbnails.medium?.url ?? '',
+          service: 'youtube_music',
+        });
+      }
+      pageToken = data.nextPageToken;
+    } catch {
+      break;
+    }
+  } while (pageToken);
+
+  return tracks;
+}
+
+/**
+ * Returns the user's liked videos. YouTube exposes this as a special playlist with id "LL".
+ */
+export async function getLikedVideos(userId: string): Promise<LibraryTrack[]> {
+  return getPlaylistTracks(userId, 'LL');
 }

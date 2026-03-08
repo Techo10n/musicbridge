@@ -26,7 +26,6 @@ export default function Friends() {
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
   const [shareRecipient, setShareRecipient] = useState<User | null>(null);
-  const [shareDone, setShareDone] = useState(0); // counter to trigger refresh if needed
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) {
@@ -193,7 +192,6 @@ export default function Friends() {
         recipient={shareRecipient}
         onClose={() => setShareRecipient(null)}
         onShared={() => {
-          setShareDone((n) => n + 1);
           setShareRecipient(null);
         }}
       />

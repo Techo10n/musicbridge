@@ -17,10 +17,11 @@ import { SharedItem, MusicService } from '../../types';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
+import { withTimeout } from '../../lib/utils';
 
 export default function Home() {
   const { user } = useAuth();
-  const { items, loading, refreshing, refresh, markAsOpened } = useSharedItems();
+  const { items, loading, refreshing, refresh, markAsOpened, unreadCount } = useSharedItems();
 
   const [playlistModalItem, setPlaylistModalItem] = useState<SharedItem | null>(null);
 
@@ -38,40 +39,52 @@ export default function Home() {
     setResolvingId(item.id);
 
     try {
-      let deepLink: string | null = null;
+      let deepLinks: string[] = [];
 
       switch (primaryService) {
         case 'spotify': {
           let sid = item.spotify_id;
           if (!sid && item.title && item.artist) {
-            sid = await Spotify.searchTrack(user!.id, item.title, item.artist);
+            sid = await withTimeout(Spotify.searchTrack(user!.id, item.title, item.artist), 10_000);
           }
-          if (sid) deepLink = Spotify.getSpotifyDeepLink(sid);
+          if (sid) deepLinks = Spotify.getSpotifyDeepLink(sid);
           break;
         }
         case 'apple_music': {
           let amID = item.apple_music_id;
           if (!amID && item.title && item.artist) {
-            amID = await AppleMusic.searchTrack(user!.id, item.title, item.artist);
+            amID = await withTimeout(AppleMusic.searchTrack(user!.id, item.title, item.artist), 10_000);
           }
-          if (amID) deepLink = AppleMusic.getAppleMusicDeepLink(amID);
+          if (amID) deepLinks = AppleMusic.getAppleMusicDeepLink(amID);
           break;
         }
         case 'youtube_music': {
           let ymID = item.youtube_music_id;
           if (!ymID && item.title && item.artist) {
-            ymID = await YouTubeMusic.searchTrack(user!.id, item.title, item.artist);
+            ymID = await withTimeout(YouTubeMusic.searchTrack(user!.id, item.title, item.artist), 10_000);
           }
-          if (ymID) deepLink = YouTubeMusic.getYouTubeMusicDeepLink(ymID);
+          // Returns an array of fallbacks (e.g. youtubemusic://, then vnd.youtube://)
+          if (ymID) deepLinks = YouTubeMusic.getYouTubeMusicDeepLink(ymID);
           break;
         }
       }
 
-      if (deepLink) {
-        const canOpen = await Linking.canOpenURL(deepLink);
-        if (canOpen) {
-          await Linking.openURL(deepLink);
-        } else {
+      if (deepLinks.length > 0) {
+        let opened = false;
+        for (const link of deepLinks) {
+          try {
+            // In Expo Go on iOS, canOpenURL restricts custom schemes.
+            // Bypassing it and directly trying openURL works natively.
+            await Linking.openURL(link);
+            opened = true;
+            break;
+          } catch (e) {
+            console.log(`[Home] Could not open link: ${link}`);
+            // Continue trying the next link in the fallback array
+          }
+        }
+        
+        if (!opened) {
           Alert.alert(
             'App not found',
             `Could not open ${primaryService.replace('_', ' ')}. Make sure it's installed.`,
@@ -83,6 +96,12 @@ export default function Home() {
           `Could not find this song on your ${primaryService.replace('_', ' ')} account.`,
         );
       }
+    } catch (err: any) {
+      const msg = err?.message === 'timeout'
+        ? 'Request timed out. Check your connection.'
+        : 'Something went wrong. Please try again.';
+      Alert.alert('Error', msg);
+      console.error('[Home] handleSongPress error:', err);
     } finally {
       setResolvingId(null);
     }
@@ -112,9 +131,7 @@ export default function Home() {
       <View style={styles.header}>
         <Text style={styles.logo}>musicbridge</Text>
         <Text style={styles.subtitle}>
-          {items.filter((i) => !i.opened).length > 0
-            ? `${items.filter((i) => !i.opened).length} new`
-            : 'All caught up'}
+          {unreadCount > 0 ? `${unreadCount} new` : 'All caught up'}
         </Text>
       </View>
 
