@@ -36,6 +36,27 @@ export function useSharedItems() {
     fetchItems();
   }, [fetchItems]);
 
+  // Real-time: re-fetch whenever a new shared_item lands in our inbox
+  useEffect(() => {
+    if (!session?.user.id) return;
+
+    const channel = supabase
+      .channel(`shared_items:${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'shared_items',
+          filter: `recipient_id=eq.${session.user.id}`,
+        },
+        () => { fetchItems(); },
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [session?.user.id, fetchItems]);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     await fetchItems();

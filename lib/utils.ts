@@ -20,3 +20,24 @@ export function cleanArtistName(artist: string): string {
     .replace(/Official$/i, '')
     .trim();
 }
+
+/**
+ * Strips common parenthetical suffixes from track titles before cross-service
+ * searching. Removes remaster, deluxe, feat., radio edit, and similar tags
+ * that platforms add inconsistently, which would otherwise cause mismatches.
+ *
+ * Examples:
+ *   "Hotel California (2013 Remaster)"  → "Hotel California"
+ *   "Blinding Lights (feat. The Weeknd)" → "Blinding Lights"
+ *   "Bohemian Rhapsody [Radio Edit]"    → "Bohemian Rhapsody"
+ */
+export function cleanTitle(title: string): string {
+  if (!title) return '';
+  return title
+    .replace(
+      /[\(\[](remaster(ed)?|\d{4} remaster|remastered \d{4}|deluxe|anniversary|expanded|bonus track|radio edit|single version|album version|feat\.[^\)\]]*|ft\.[^\)\]]*)[\)\]]/gi,
+      '',
+    )
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}

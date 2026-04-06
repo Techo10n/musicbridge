@@ -1,7 +1,7 @@
 import * as WebBrowser from 'expo-web-browser';
 import { supabase } from './supabase';
 import { AppleMusicTrack, AppleMusicPlaylist, LibraryPlaylist, LibraryTrack, MusicService } from '../types';
-import { cleanArtistName } from './utils';
+import { cleanArtistName, cleanTitle } from './utils';
 
 /**
  * Apple Music integration via MusicKit.
@@ -29,6 +29,22 @@ import { cleanArtistName } from './utils';
 const APPLE_MUSIC_AUTH_URL = process.env.EXPO_PUBLIC_APPLE_MUSIC_AUTH_URL ?? '';
 const APPLE_DEVELOPER_TOKEN = process.env.EXPO_PUBLIC_APPLE_DEVELOPER_TOKEN ?? '';
 const APPLE_MUSIC_API = 'https://api.music.apple.com/v1';
+
+/**
+ * Derives a two-letter Apple Music storefront ID from the device locale.
+ * Apple Music storefronts use the same ISO 3166-1 alpha-2 country codes as
+ * locale region subtags (e.g. "en-GB" → "gb", "fr-FR" → "fr").
+ * Falls back to "us" if the locale has no region component.
+ */
+function getStorefront(): string {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale; // e.g. "en-US", "fr-FR"
+    const region = locale.split('-')[1];
+    return region ? region.toLowerCase() : 'us';
+  } catch {
+    return 'us';
+  }
+}
 
 // ─── OAuth ────────────────────────────────────────────────────────────────────
 
@@ -112,12 +128,14 @@ export async function searchTrack(
   const userToken = await getUserToken(userId);
   if (!userToken || !APPLE_DEVELOPER_TOKEN) return null;
 
+  const cleanedTitle = cleanTitle(title);
   const cleanedArtist = cleanArtistName(artist);
 
   try {
-    const term = encodeURIComponent(`${title} ${cleanedArtist}`);
+    const term = encodeURIComponent(`${cleanedTitle} ${cleanedArtist}`);
+    const storefront = getStorefront();
     const res = await fetch(
-      `${APPLE_MUSIC_API}/catalog/us/search?term=${term}&types=songs&limit=1`,
+      `${APPLE_MUSIC_API}/catalog/${storefront}/search?term=${term}&types=songs&limit=1`,
       { headers: authHeaders(userToken) },
     );
     if (!res.ok) return null;
@@ -139,8 +157,9 @@ export async function searchTracks(userId: string, query: string): Promise<Apple
 
   try {
     const term = encodeURIComponent(query);
+    const storefront = getStorefront();
     const res = await fetch(
-      `${APPLE_MUSIC_API}/catalog/us/search?term=${term}&types=songs&limit=20`,
+      `${APPLE_MUSIC_API}/catalog/${storefront}/search?term=${term}&types=songs&limit=20`,
       { headers: authHeaders(userToken) },
     );
     if (!res.ok) return [];

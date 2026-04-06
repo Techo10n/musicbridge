@@ -581,14 +581,18 @@ musicbridge/
 │   ├── spotify.ts              — Spotify OAuth, token refresh, search, playlist CRUD, library
 │   ├── appleMusic.ts           — Apple Music auth, search, playlist CRUD, library
 │   ├── youtubeMusic.ts         — Google/YouTube OAuth, search, playlist CRUD, library
-│   └── utils.ts                — withTimeout(), cleanArtistName()
+│   └── utils.ts                — withTimeout(), cleanArtistName(), cleanTitle()
 │
 ├── types/
 │   └── index.ts                — All TypeScript types (User, SharedItem, Track, LibraryPlaylist, etc.)
 │
 ├── supabase/
+│   ├── functions/
+│   │   └── convert-playlist/
+│   │       └── index.ts        — Edge Function: server-side playlist conversion with progress updates
 │   └── migrations/
-│       └── 001_initial.sql     — Full PostgreSQL schema with RLS policies and indexes
+│       ├── 001_initial.sql     — Full PostgreSQL schema with RLS policies and indexes
+│       └── 003_conversion_progress.sql — Adds conversion_status + tracks_processed to shared_items
 │
 ├── assets/                     — App icons and images
 ├── .env.example                — Required environment variable names (no values)
@@ -719,9 +723,9 @@ Apple Music user tokens do not have an OAuth refresh mechanism implemented.
 | `searchTracks` | `GET /v1/search?type=track` | Free-form search (up to 10 results) |
 | `getSpotifyUserId` | `GET /v1/me` | Fetch Spotify user ID for playlist creation |
 | `createPlaylist` | `POST /v1/users/{id}/playlists`, `POST /v1/playlists/{id}/tracks` | Create playlist and add tracks |
-| `getUserPlaylists` | `GET /v1/me/playlists?limit=50` | Library: user's playlists |
+| `getUserPlaylists` | `GET /v1/me/playlists?limit=50` (paginated, all pages) | Library: all user playlists |
 | `getPlaylistTracks` | `GET /v1/playlists/{id}/tracks` | Paginated playlist track fetch (100/page) |
-| `getSavedTracks` | `GET /v1/me/tracks?limit=50` | Library: liked songs |
+| `getSavedTracks` | `GET /v1/me/tracks?limit=50` (paginated, all pages) | Library: all liked songs |
 | `getFollowedArtists` | `GET /v1/me/following?type=artist` | Library: followed artists |
 
 **Rate Limit Handling**: `searchTrack` retries up to 3 times on 429 responses, respecting the `Retry-After` header. If the wait exceeds 15 seconds (indicating developer-mode quota exhaustion), it throws `spotify_rate_limit_exceeded`.
@@ -730,9 +734,13 @@ Apple Music user tokens do not have an OAuth refresh mechanism implemented.
 
 ---
 
-## Apple Music (`lib/appleMusic.ts`)
+## Apple Music (`lib/appleMusic.ts`) — DEFERRED
 
-**APIs Used**: Apple Music API (`https://api.music.apple.com/v1`), MusicKit JS (for auth)
+> **Status: Integration deferred.** The Apple Music API requires an active Apple Developer Program membership ($99/year) to generate the required Developer Token JWT. This integration will be revisited once the app has demonstrated user interest or secured funding to cover the membership cost.
+>
+> The code in `lib/appleMusic.ts` is retained but non-functional without valid credentials. Apple Music users cannot currently connect their account or receive converted playlists. The `convert-playlist` Edge Function explicitly rejects requests from Apple Music users with an explanatory error.
+
+**APIs Used** (when enabled): Apple Music API (`https://api.music.apple.com/v1`), MusicKit JS (for auth)
 
 Every request requires two headers:
 - `Authorization: Bearer <APPLE_DEVELOPER_TOKEN>` — server-signed JWT
@@ -741,14 +749,14 @@ Every request requires two headers:
 | Function | Endpoint | Purpose |
 |---|---|---|
 | `connectAppleMusic` | Hosted MusicKit page + deep link callback | Open MusicKit auth session |
-| `searchTrack` | `GET /v1/catalog/us/search?types=songs` | Single-track match for conversion |
-| `searchTracks` | `GET /v1/catalog/us/search?types=songs` | Free-form search (up to 20 results) |
+| `searchTrack` | `GET /v1/catalog/{storefront}/search?types=songs` | Single-track match for conversion |
+| `searchTracks` | `GET /v1/catalog/{storefront}/search?types=songs` | Free-form search (up to 20 results) |
 | `createPlaylist` | `POST /v1/me/library/playlists` | Create playlist with tracks in one request |
 | `getUserPlaylists` | `GET /v1/me/library/playlists?limit=100` | Library: user's playlists |
 | `getPlaylistTracks` | `GET /v1/me/library/playlists/{id}/tracks` | Playlist track fetch (up to 100) |
 | `getSavedSongs` | `GET /v1/me/library/songs?limit=100` | Library: saved songs |
 
-**Artwork URLs**: Apple Music returns artwork URLs with `{w}` and `{h} ` placeholders. `resolveArtworkUrl(url, size)` replaces these with a concrete pixel value.
+**Artwork URLs**: Apple Music returns artwork URLs with `{w}` and `{h}` placeholders. `resolveArtworkUrl(url, size)` replaces these with a concrete pixel value.
 
 **Deep Links**: `music://music.apple.com/us/album/<id>`, with HTTPS fallback.
 
@@ -765,9 +773,13 @@ Every request requires two headers:
 | `searchTrack` | `GET /search?type=video&videoCategoryId=10&topicId=/m/04rlf` | Single-track match for conversion |
 | `searchTracks` | `GET /search?type=video&videoCategoryId=10` | Free-form search (up to 25 results) |
 | `createPlaylist` | `POST /playlists`, `POST /playlistItems` (per video) | Create playlist then add videos one by one |
-| `getUserPlaylists` | `GET /playlists?mine=true&maxResults=50` | Library: user's playlists |
-| `getPlaylistTracks` | `GET /playlistItems?playlistId=<id>` | Paginated playlist items |
-| `getLikedVideos` | Calls `getPlaylistTracks` with playlist ID `"LL"` | Library: liked videos (YouTube special playlist) |
+| `getUserPlaylists` | `GET /playlists?mine=true` + `GET /playlistItems?maxResults=1` per playlist + `GET /videos?id=...` batch | Library: user's playlists, filtered to music-only (first video must be categoryId=10) |
+| `getPlaylistTracks` | `GET /playlistItems?playlistId=<id>` + `GET /videos?id=...` batch | Paginated playlist items, filtered to Music category (categoryId=10) |
+| `getLikedMusic` | `GET /playlistItems?playlistId=LM` + `GET /videos?id=...` batch | Library: YouTube Music "Liked Music" playlist (playlist ID `LM`), filtered to categoryId=10 |
+
+**Music-only filtering**: All library data (playlists, playlist tracks, liked music) is restricted to `videoCategoryId=10` (Music). For playlist tracks (including "Liked Music"), items are fetched then batch-checked against `/videos?id=...` to verify category. For user playlists, the first video of each playlist is batch-checked; playlists whose first video isn't music are excluded.
+
+**Liked Music vs Liked Videos**: The library uses the YouTube Music "Liked Music" playlist (`LM`), not the YouTube "Liked Videos" playlist (`LL`). `LM` only contains tracks liked within YouTube Music, avoiding non-music videos that appear in `LL`.
 
 **Search Heuristic**: For track matching, results are filtered to the Music topic (`topicId=/m/04rlf`, `videoCategoryId=10`). The code prefers "Artist - Topic" channel results (YouTube Music official audio), then results without "music video", "lyric", "live", or "official video" in the title. This reduces mismatches on music videos and live recordings.
 
@@ -945,13 +957,53 @@ See section 22 (Streaming Service Integrations) for the full list of external AP
 
 ---
 
-# 26. Background Jobs / Workers
+# 26. Edge Functions / Background Processing
 
-**MusicBridge does not currently use any background jobs or asynchronous workers.**
+## `convert-playlist` (`supabase/functions/convert-playlist/index.ts`)
 
-Playlist conversion, track matching, and playlist creation all execute synchronously on the client device in response to user actions. There is no job queue, message broker, or scheduled task infrastructure.
+Playlist conversion runs as a **Supabase Edge Function** (Deno runtime), invoked by the client via:
 
-This is noted in section 15 (Current Limitations) as a scalability concern for large playlists.
+```typescript
+supabase.functions.invoke('convert-playlist', { body: { sharedItemId } })
+```
+
+The client's JWT is forwarded automatically, so all Supabase queries inside the function run under the recipient's identity and pass RLS.
+
+### What the function does
+
+1. Validates the request — confirms the caller is the recipient of the shared item.
+2. Fetches recipient tokens from `public.users` and refreshes them if expired.
+3. Sets `conversion_status = 'processing'` on the `shared_items` row, which fires a Supabase Realtime event that the client is subscribed to.
+4. Iterates through all tracks: checks for a pre-stored service ID; if absent, searches the destination service. After each track, updates `tracks_processed` (fires another Realtime event, advancing the client's progress bar).
+5. Creates the playlist on the destination service.
+6. Sets `conversion_status = 'done'` and writes the new playlist ID to `spotify_playlist_id` or `youtube_music_playlist_id`.
+
+### Required Supabase secrets
+
+Set via `supabase secrets set`:
+
+| Secret | Value |
+|---|---|
+| `SPOTIFY_CLIENT_ID` | Same as `EXPO_PUBLIC_SPOTIFY_CLIENT_ID` |
+| `GOOGLE_CLIENT_ID` | Same as `EXPO_PUBLIC_GOOGLE_CLIENT_ID` |
+
+(`SUPABASE_URL` and `SUPABASE_ANON_KEY` are injected automatically by Supabase.)
+
+### Client-side progress UI
+
+`PlaylistModal.tsx` subscribes to a Supabase Realtime channel (`postgres_changes` on the specific `shared_items` row) before invoking the function. As the function writes progress updates, the modal renders a live progress bar:
+
+```
+Finding tracks… 8 of 24
+[████████░░░░░░░░░░░░]
+This may take a minute for large playlists
+```
+
+On completion, the footer transitions to a done state showing how many tracks were matched. On failure, an error message with a Retry button is shown.
+
+### Apple Music
+
+The function returns HTTP 400 with `{ error: 'Apple Music playlist conversion is not yet supported.' }` if the recipient's primary service is `apple_music`. See section 22 for why Apple Music is deferred.
 
 ---
 
@@ -1004,32 +1056,32 @@ No CI/CD pipeline is configured in the repository.
 
 The following limitations are directly observable in the current codebase:
 
-### 1. Playlist Conversion is Synchronous and Client-Side
-Playlist conversion runs entirely on the recipient's device with no background processing. Large playlists (100+ tracks) can cause the UI to block for minutes. A 60-second timeout per chunk of 3 tracks partially mitigates this but does not fully solve it.
+### 1. ~~Playlist Conversion is Synchronous and Client-Side~~ (fixed)
+Playlist conversion now runs in the `convert-playlist` Supabase Edge Function. The UI shows a live progress bar via Supabase Realtime. The client is no longer blocked during conversion.
 
 ### 2. Spotify Developer Mode Rate Limits
-`searchTrack` in `lib/spotify.ts` includes explicit comments and error handling for Spotify's development-mode quota. When a Spotify app is in "Development Mode," Spotify enforces a daily search quota. Converting large playlists can exhaust this quota, requiring a 12-hour wait or a new Spotify app registration.
+Spotify enforces a daily search quota for apps in "Development Mode." The Edge Function handles 429 responses with backoff (up to 15 seconds), after which it aborts and returns `spotify_rate_limit_exceeded`. The client displays an explanatory message. Resolution requires requesting a Spotify quota extension or moving the app out of Development Mode.
 
-### 3. Track Matching Uses Title + Artist Only
-The current matching strategy concatenates `title + cleanArtistName(artist)` and takes the first result. There is no ISRC matching, duration comparison, or fuzzy matching. Tracks with common titles or unusual metadata may match incorrectly or fail to match.
+### 3. Track Matching — Improved, Not Complete
+Track matching now uses: (1) `cleanTitle()` to strip remaster/deluxe/feat. suffixes, (2) `cleanArtistName()` to strip YouTube Topic/VEVO suffixes, (3) Spotify field filters (`track:... artist:...`) with a plain-query fallback, (4) YouTube Music topic-channel heuristics. ISRC matching and duration-based filtering are not yet implemented.
 
-### 4. Apple Music Developer Token Exposed Client-Side
-The Apple Music Developer Token (a signed JWT) is stored as `EXPO_PUBLIC_APPLE_DEVELOPER_TOKEN`, making it visible in the app bundle. The `.env.example` acknowledges this and flags it as insecure for production.
+### 4. Apple Music Integration Deferred
+Apple Music requires an Apple Developer Program membership ($99/year) to generate a valid Developer Token JWT. This integration is deferred pending proof of user interest or available funding. See section 22 for full details. Apple Music users will see an error when attempting playlist conversion.
 
 ### 5. Apple Music Playlist Track Count Not Available in List View
-In `getUserPlaylists()` for Apple Music (`lib/appleMusic.ts`), `trackCount` is set to `0` for all playlists because the Apple Music library playlists list endpoint does not return item counts. The count is only available after fetching the tracks for a specific playlist.
+An API limitation: the Apple Music library playlists list endpoint does not return item counts. `trackCount` is set to `0` in list view; the real count is only available after fetching a playlist's tracks. (Deferred alongside the broader Apple Music integration.)
 
 ### 6. YouTube Music Playlist Creation is Sequential
-YouTube Music playlist creation adds each video one at a time via individual `POST /playlistItems` requests (no batch endpoint available). This is slow for large playlists and has no rate-limit handling.
+YouTube Data API v3 has no batch endpoint for `playlistItems`. Each video is added in a separate `POST` request. For a 50-track playlist this means 50 sequential requests, which is slow. Rate-limit handling is not implemented for this specific path.
 
 ### 7. Apple Music Followed Artists Not Implemented
-`useLibrary.ts` returns an empty array for `followedArtists` when the primary service is `apple_music` or `youtube_music`. Only Spotify exposes a followed-artists API that is currently integrated.
+Apple Music's API has no equivalent to Spotify's "followed artists" endpoint. `useLibrary.ts` returns an empty array for `followedArtists` on Apple Music and YouTube Music. (Apple Music is deferred; YouTube Music does not expose this concept through the YouTube Data API.)
 
 ### 8. Track IDs Not Pre-Resolved Cross-Service at Share Time
-When a sender shares a song or playlist, only their own service's track ID is stored. IDs for other services are left `null` and resolved lazily by each recipient. This means every recipient performs their own search, which multiplies API usage and conversion time.
+When a sender shares a song or playlist, only their own service's track ID is stored. IDs for other services are resolved lazily by each recipient's Edge Function invocation. This means every recipient independently re-searches for the same tracks.
 
-### 9. No Real-Time Updates
-The home feed and friends list do not use Supabase real-time subscriptions. Users must manually pull-to-refresh to see new shared items or friend requests.
+### 9. ~~No Real-Time Updates~~ (fixed)
+`useSharedItems` subscribes to a Supabase Realtime channel (`postgres_changes` on `INSERT` filtered to `recipient_id`) and re-fetches automatically. The friends list still requires manual pull-to-refresh.
 
-### 10. Search is Hardcoded to US Storefront for Apple Music
-`searchTrack` and `searchTracks` in `lib/appleMusic.ts` use the US catalog endpoint (`/v1/catalog/us/search`). Users in other regions may receive incorrect or no results for regionally restricted content.
+### 10. ~~Apple Music Search Hardcoded to US Storefront~~ (fixed — deferred with Apple Music)
+`lib/appleMusic.ts` now derives the storefront from the device locale via `Intl.DateTimeFormat`. Moot while Apple Music is deferred, but ready for when the integration resumes.

@@ -23,13 +23,20 @@ export function useLibrary() {
 
       switch (service) {
         case 'spotify': {
-          const [p, t, a] = await Promise.all([
+          const [p, count, a] = await Promise.all([
             Spotify.getUserPlaylists(user.id),
-            Spotify.getSavedTracks(user.id),
+            Spotify.getSavedTracksCount(user.id),
             Spotify.getFollowedArtists(user.id),
           ]);
-          setPlaylists(p);
-          setSavedTracks(t);
+          const likedSongs: LibraryPlaylist = {
+            id: '__liked_songs__',
+            name: 'Liked Songs',
+            coverUrl: '',
+            trackCount: count,
+            service: 'spotify',
+          };
+          setPlaylists([likedSongs, ...p]);
+          setSavedTracks([]);
           setFollowedArtists(a);
           break;
         }
@@ -46,7 +53,7 @@ export function useLibrary() {
         case 'youtube_music': {
           const [p, t] = await Promise.all([
             YouTubeMusic.getUserPlaylists(user.id),
-            YouTubeMusic.getLikedVideos(user.id),
+            YouTubeMusic.getLikedMusic(user.id),
           ]);
           setPlaylists(p);
           setSavedTracks(t);
@@ -69,6 +76,7 @@ export function useLibrary() {
 
       switch (service) {
         case 'spotify':
+          if (playlistId === '__liked_songs__') return Spotify.getSavedTracks(user.id);
           return Spotify.getPlaylistTracks(user.id, playlistId);
         case 'apple_music':
           return AppleMusic.getPlaylistTracks(user.id, playlistId);

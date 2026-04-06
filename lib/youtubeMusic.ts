@@ -26,11 +26,11 @@ const SCOPES = ['https://www.googleapis.com/auth/youtube'];
 export async function connectYouTubeMusic(userId: string): Promise<boolean> {
   if (!GOOGLE_CLIENT_ID) throw new Error('EXPO_PUBLIC_GOOGLE_CLIENT_ID is not set');
 
-  // For iOS/Android Client IDs, Google enforces a strict reverse DNS format for the redirect URI
-  // e.g. com.googleusercontent.apps.1234567890-abcdefg:/oauth2redirect/google
-  // We extract the prefix from the full client ID and build that native redirect URI.
-  const clientIdPrefix = GOOGLE_CLIENT_ID.split('.apps.googleusercontent.com')[0];
-  const redirectUri = `com.googleusercontent.apps.${clientIdPrefix}:/oauth2redirect/google`;
+  const redirectUri = AuthSession.makeRedirectUri({
+    scheme: 'https',
+    host: 'auth.expo.io',
+    path: '@techolon/musicbridge',
+  });
 
   const request = new AuthSession.AuthRequest({
     clientId: GOOGLE_CLIENT_ID,
@@ -321,7 +321,36 @@ export function getYouTubeMusicPlaylistDeepLink(playlistId: string): string[] {
 // ─── Library ──────────────────────────────────────────────────────────────────
 
 /**
- * Returns the authenticated user's YouTube playlists.
+ * Batch-checks a list of video IDs and returns the subset that belong to
+ * videoCategoryId=10 (Music). Processes in groups of 50 (API max).
+ */
+async function getMusicVideoIds(accessToken: string, videoIds: string[]): Promise<Set<string>> {
+  const musicIds = new Set<string>();
+  for (let i = 0; i < videoIds.length; i += 50) {
+    const batch = videoIds.slice(i, i + 50);
+    const params = new URLSearchParams({ part: 'snippet', id: batch.join(',') });
+    try {
+      const res = await fetch(`${YOUTUBE_API}/videos?${params}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) continue;
+      const data = await res.json() as {
+        items: Array<{ id: string; snippet: { categoryId: string } }>;
+      };
+      for (const item of data.items) {
+        if (item.snippet.categoryId === '10') musicIds.add(item.id);
+      }
+    } catch {
+      // skip batch on error
+    }
+  }
+  return musicIds;
+}
+
+/**
+ * Returns the authenticated user's YouTube playlists, filtered to playlists
+ * whose first video belongs to the Music category (videoCategoryId=10).
+ * Playlists that are empty or whose first video cannot be checked are included.
  */
 export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[]> {
   const accessToken = await getYouTubeAccessToken(userId);
@@ -343,13 +372,47 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
         contentDetails: { itemCount: number };
       }>;
     };
-    return data.items.map((p) => ({
+
+    const playlists: LibraryPlaylist[] = data.items.map((p) => ({
       id: p.id,
       name: p.snippet.title,
       coverUrl: p.snippet.thumbnails.medium?.url ?? p.snippet.thumbnails.default?.url ?? '',
       trackCount: p.contentDetails.itemCount,
       service: 'youtube_music' as MusicService,
     }));
+
+    // Fetch the first video ID from each playlist in parallel, then batch-check
+    // video categories to filter out non-music playlists.
+    const firstVideoIds = await Promise.all(
+      playlists.map(async (p) => {
+        try {
+          const params = new URLSearchParams({
+            part: 'snippet',
+            playlistId: p.id,
+            maxResults: '1',
+          });
+          const r = await fetch(`${YOUTUBE_API}/playlistItems?${params}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (!r.ok) return null;
+          const d = await r.json() as {
+            items?: Array<{ snippet: { resourceId: { videoId: string } } }>;
+          };
+          return d.items?.[0]?.snippet?.resourceId?.videoId ?? null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    const nonNullIds = firstVideoIds.filter((id): id is string => id !== null);
+    const musicIds = await getMusicVideoIds(accessToken, nonNullIds);
+
+    return playlists.filter((_, i) => {
+      const vid = firstVideoIds[i];
+      // Keep if empty/undetermined (vid is null) or confirmed music
+      return vid === null || musicIds.has(vid);
+    });
   } catch {
     return [];
   }
@@ -357,13 +420,14 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
 
 /**
  * Returns tracks in a YouTube playlist, paginating through all pages.
+ * Filters out non-music videos (videoCategoryId != 10) via a batch /videos check.
  * Strips " - Topic" suffix from channel names so artist names are clean for cross-service search.
  */
 export async function getPlaylistTracks(userId: string, playlistId: string): Promise<LibraryTrack[]> {
   const accessToken = await getYouTubeAccessToken(userId);
   if (!accessToken) return [];
 
-  const tracks: LibraryTrack[] = [];
+  const rawTracks: LibraryTrack[] = [];
   let pageToken: string | undefined;
 
   do {
@@ -395,7 +459,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
           item.snippet.title === 'Deleted video' ||
           item.snippet.title === 'Private video'
         ) continue;
-        tracks.push({
+        rawTracks.push({
           id: item.snippet.resourceId.videoId,
           title: item.snippet.title,
           // Strip " - Topic" so artist names match correctly when searching other services
@@ -410,12 +474,17 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
     }
   } while (pageToken);
 
-  return tracks;
+  // Batch-check video categories; keep only Music (categoryId=10)
+  const allIds = rawTracks.map((t) => t.id);
+  const musicIds = await getMusicVideoIds(accessToken, allIds);
+  return rawTracks.filter((t) => musicIds.has(t.id));
 }
 
 /**
- * Returns the user's liked videos. YouTube exposes this as a special playlist with id "LL".
+ * Returns the user's YouTube Music "Liked Music" playlist (special playlist ID "LM").
+ * Unlike "Liked Videos" (LL), this playlist only contains tracks liked within YouTube Music.
+ * getPlaylistTracks already filters to videoCategoryId=10, so non-music items are excluded.
  */
-export async function getLikedVideos(userId: string): Promise<LibraryTrack[]> {
-  return getPlaylistTracks(userId, 'LL');
+export async function getLikedMusic(userId: string): Promise<LibraryTrack[]> {
+  return getPlaylistTracks(userId, 'LM');
 }

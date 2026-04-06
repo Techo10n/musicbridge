@@ -64,14 +64,31 @@ export function LibraryPlaylistDetailModal({
   useEffect(() => {
     if (!visible || !playlist || !user?.primary_service) return;
 
+    // Use pre-loaded tracks if provided (avoids re-fetching large lists like Liked Songs)
     let cancelled = false;
 
     (async () => {
       setLoadingTracks(true);
       setTracks([]);
       try {
-        let result: LibraryTrack[] = [];
         const service = user.primary_service;
+        if (service === 'spotify' && playlist.id === '__liked_songs__') {
+          let firstPage = true;
+          await Spotify.streamSavedTracks(
+            user.id,
+            (page) => {
+              if (cancelled) return;
+              setTracks((prev) => [...prev, ...page]);
+              if (firstPage) {
+                setLoadingTracks(false); // show FlatList after first 50 tracks arrive
+                firstPage = false;
+              }
+            },
+            () => cancelled,
+          );
+          return;
+        }
+        let result: LibraryTrack[] = [];
         if (service === 'spotify') {
           result = await withTimeout(Spotify.getPlaylistTracks(user.id, playlist.id), 20_000);
         } else if (service === 'apple_music') {
@@ -235,7 +252,11 @@ export function LibraryPlaylistDetailModal({
             <Image source={{ uri: playlist.coverUrl }} style={styles.cover} />
           ) : (
             <View style={[styles.cover, styles.coverPlaceholder]}>
-              <Ionicons name="musical-notes" size={28} color="#555" />
+              <Ionicons
+                name={playlist.id === '__liked_songs__' ? 'heart' : 'musical-notes'}
+                size={28}
+                color={playlist.id === '__liked_songs__' ? '#1DB954' : '#555'}
+              />
             </View>
           )}
           <View style={styles.headerInfo}>

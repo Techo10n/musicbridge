@@ -196,7 +196,7 @@ export default function LibraryScreen() {
             <RefreshControl
               refreshing={loading}
               onRefresh={handleRefresh}
-              tintColor="#555"
+              tintColor="#fff"
             />
           }
         >
@@ -214,11 +214,11 @@ export default function LibraryScreen() {
             </View>
           )}
 
-          {/* Saved / Liked songs section */}
-          {savedTracks.length > 0 && (
+          {/* Saved / Liked songs section — hidden for Spotify (shown as "Liked Songs" playlist above) */}
+          {savedTracks.length > 0 && user.primary_service !== 'spotify' && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>
-                {user.primary_service === 'youtube_music' ? 'Liked Videos' : 'Saved Songs'}
+                {user.primary_service === 'youtube_music' ? 'Liked Music' : 'Saved Songs'}
               </Text>
               <FlatList
                 data={savedTracks}

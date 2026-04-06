@@ -1,3 +1,5 @@
+import 'react-native-get-random-values';
+import 'react-native-url-polyfill/auto';
 import { useEffect } from 'react';
 import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';

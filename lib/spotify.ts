@@ -3,7 +3,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { Alert } from 'react-native';
 import { supabase } from './supabase';
 import { SpotifyTrack, LibraryPlaylist, LibraryTrack, LibraryArtist, MusicService } from '../types';
-import { cleanArtistName } from './utils';
+import { cleanArtistName, cleanTitle } from './utils';
 
 // Required for OAuth redirect to be handled by the app on iOS/Android
 WebBrowser.maybeCompleteAuthSession();
@@ -34,8 +34,7 @@ export async function connectSpotify(userId: string): Promise<boolean> {
   try {
     const redirectUri = AuthSession.makeRedirectUri({
       scheme: 'musicbridge',
-      path: 'spotify-callback',
-      preferLocalhost: true,
+      path: 'callback',
     });
 
     // AuthRequest handles PKCE code_verifier/code_challenge generation
@@ -134,7 +133,11 @@ export async function getSpotifyAccessToken(userId: string): Promise<string | nu
       body: body.toString(),
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '(unreadable)');
+      console.error(`[Spotify] token refresh failed: ${response.status} ${errText}`);
+      return null;
+    }
 
     const token = await response.json() as {
       access_token: string;
@@ -172,11 +175,12 @@ export async function searchTrack(
   const accessToken = await getSpotifyAccessToken(userId);
   if (!accessToken) return null;
 
+  const cleanedTitle = cleanTitle(title);
   const cleanedArtist = cleanArtistName(artist);
 
-  try {
-    const q = encodeURIComponent(`${title} ${cleanedArtist}`);
-
+  // Helper: run the actual search with a given query string, respecting rate limits.
+  const doSearch = async (rawQuery: string): Promise<string | null> => {
+    const q = encodeURIComponent(rawQuery);
     let retries = 0;
     const MAX_RETRIES = 3;
 
@@ -187,14 +191,13 @@ export async function searchTrack(
       );
 
       if (res.status === 429) {
-        // Rate limited - back off
         const retryAfter = res.headers.get('Retry-After');
         const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : 2000 * (retries + 1);
-        
+
         // If Spotify bans us for hours (which happens in Developer Mode when spamming), abort!
         if (waitTime > 15000) {
-           console.error(`[Spotify Search] CRITICAL RATE LIMIT: Spotify requested we wait ${waitTime}ms. Aborting.`);
-           throw new Error('spotify_rate_limit_exceeded');
+          console.error(`[Spotify Search] CRITICAL RATE LIMIT: Spotify requested we wait ${waitTime}ms. Aborting.`);
+          throw new Error('spotify_rate_limit_exceeded');
         }
 
         console.warn(`[Spotify Search] Rate limited (429). Retrying in ${waitTime}ms (Attempt ${retries + 1}/${MAX_RETRIES}).`);
@@ -208,17 +211,23 @@ export async function searchTrack(
         console.error(`[Spotify Search] Error: ${res.status} ${res.statusText}`, errText);
         return null;
       }
-      
-      const data = await res.json() as { tracks?: { items: SpotifyTrack[] } };
-      
-      if (!data.tracks?.items?.length) {
-        return null;
-      }
 
-      return data.tracks.items[0].id;
+      const data = await res.json() as { tracks?: { items: SpotifyTrack[] } };
+      return data.tracks?.items[0]?.id ?? null;
     }
-    
+
     return null; // Exceeded retries
+  };
+
+  try {
+    // First attempt: Spotify field filters with cleaned title/artist.
+    const fieldResult = await doSearch(`track:${cleanedTitle} artist:${cleanedArtist}`);
+    if (fieldResult) return fieldResult;
+
+    // Fallback: plain keyword search in case the field filter was too strict
+    // (e.g. title contains punctuation or the artist name differs slightly).
+    console.warn(`[Spotify Search] Field filter returned no results for "${cleanedTitle}" — falling back to plain query.`);
+    return await doSearch(`${cleanedTitle} ${cleanedArtist}`);
   } catch (err) {
     console.error(`[Spotify Search] Exception:`, err);
     return null;
@@ -350,35 +359,45 @@ export function getSpotifyPlaylistDeepLink(playlistId: string): string[] {
 // ─── Library ──────────────────────────────────────────────────────────────────
 
 /**
- * Returns the current user's Spotify playlists (owned + followed).
+ * Returns all of the current user's Spotify playlists (owned + followed), paginated.
  */
 export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[]> {
   const accessToken = await getSpotifyAccessToken(userId);
   if (!accessToken) return [];
 
-  try {
-    const res = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as {
-      items: Array<{
-        id: string;
-        name: string;
-        images: Array<{ url: string }>;
-        tracks: { total: number };
-      }>;
-    };
-    return data.items.map((p) => ({
-      id: p.id,
-      name: p.name,
-      coverUrl: p.images[0]?.url ?? '',
-      trackCount: p.tracks.total,
-      service: 'spotify' as MusicService,
-    }));
-  } catch {
-    return [];
+  const playlists: LibraryPlaylist[] = [];
+  let url: string | null = 'https://api.spotify.com/v1/me/playlists?limit=50';
+
+  while (url) {
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) break;
+      const data = await res.json() as {
+        next: string | null;
+        items: Array<{
+          id: string;
+          name: string;
+          images: Array<{ url: string }>;
+          tracks: { total: number };
+        } | null>;
+      };
+      for (const p of data.items) {
+        if (!p) continue;
+        playlists.push({
+          id: p.id,
+          name: p.name,
+          coverUrl: p.images[0]?.url ?? '',
+          trackCount: p.tracks.total,
+          service: 'spotify' as MusicService,
+        });
+      }
+      url = data.next;
+    } catch {
+      break;
+    }
   }
+
+  return playlists;
 }
 
 /**
@@ -420,28 +439,81 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
 }
 
 /**
- * Returns the user's Spotify saved (liked) tracks, up to 50.
- * Requires the user-library-read scope.
+ * Returns the total number of the user's saved tracks without fetching them all.
+ * Used to populate the "Liked Songs" playlist entry count cheaply.
  */
-export async function getSavedTracks(userId: string): Promise<LibraryTrack[]> {
+export async function getSavedTracksCount(userId: string): Promise<number> {
   const accessToken = await getSpotifyAccessToken(userId);
-  if (!accessToken) return [];
+  if (!accessToken) return 0;
+  let retries = 0;
+  while (retries < 3) {
+    try {
+      const res = await fetch('https://api.spotify.com/v1/me/tracks?limit=1', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.status === 429) {
+        const wait = parseInt(res.headers.get('Retry-After') ?? '2', 10) * 1000;
+        await new Promise((r) => setTimeout(r, wait));
+        retries++;
+        continue;
+      }
+      if (!res.ok) return 0;
+      const data = await res.json() as { total: number };
+      return data.total ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
+}
 
-  try {
-    const res = await fetch('https://api.spotify.com/v1/me/tracks?limit=50', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as { items: Array<{ track: SpotifyTrack }> };
-    return data.items.map((item) => ({
-      id: item.track.id,
-      title: item.track.name,
-      artist: item.track.artists.map((a) => a.name).join(', '),
-      coverUrl: item.track.album.images[0]?.url ?? '',
-      service: 'spotify' as MusicService,
-    }));
-  } catch {
-    return [];
+/**
+ * Streams the user's saved tracks page by page, calling onPage after each page.
+ * The caller sees the first 50 tracks almost immediately; the rest accumulate.
+ * Respects Spotify's Retry-After header on 429 responses.
+ */
+export async function streamSavedTracks(
+  userId: string,
+  onPage: (tracks: LibraryTrack[]) => void,
+  isCancelled: () => boolean,
+): Promise<void> {
+  const accessToken = await getSpotifyAccessToken(userId);
+  if (!accessToken) return;
+
+  let url: string | null = 'https://api.spotify.com/v1/me/tracks?limit=50';
+
+  while (url && !isCancelled()) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+
+    if (res.status === 429) {
+      const retryAfter = res.headers.get('Retry-After');
+      const wait = retryAfter ? parseInt(retryAfter, 10) * 1000 : 2000;
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+
+    if (!res.ok) break;
+
+    let data: { next: string | null; items: Array<{ track: SpotifyTrack }> };
+    try {
+      data = await res.json();
+    } catch {
+      break;
+    }
+
+    const page: LibraryTrack[] = [];
+    for (const item of data.items) {
+      if (!item.track) continue;
+      page.push({
+        id: item.track.id,
+        title: item.track.name,
+        artist: item.track.artists.map((a) => a.name).join(', '),
+        coverUrl: item.track.album.images[0]?.url ?? '',
+        service: 'spotify' as MusicService,
+      });
+    }
+    if (!isCancelled()) onPage(page);
+    url = data.next;
   }
 }
 

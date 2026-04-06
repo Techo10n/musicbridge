@@ -19,6 +19,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.musicbridge.app",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "LSApplicationQueriesSchemes": [
           "spotify",
           "vnd.youtube",
@@ -42,9 +43,23 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router",
+      [
+        "expo-router",
+        {
+          "origin": "musicbridge://"
+        }
+      ],
       "expo-secure-store",
       "expo-web-browser"
-    ]
+    ],
+    "extra": {
+      "router": {
+        "origin": "musicbridge://"
+      },
+      "eas": {
+        "projectId": "a417b41a-56d9-4a34-8e13-f96072339330"
+      }
+    },
+    "owner": "techolon"
   }
 }
