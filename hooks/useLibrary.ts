@@ -76,7 +76,11 @@ export function useLibrary() {
 
       switch (service) {
         case 'spotify':
-          if (playlistId === '__liked_songs__') return Spotify.getSavedTracks(user.id);
+          if (playlistId === '__liked_songs__') {
+            const tracks: LibraryTrack[] = [];
+            await Spotify.streamSavedTracks(user.id, (page) => tracks.push(...page), () => false);
+            return tracks;
+          }
           return Spotify.getPlaylistTracks(user.id, playlistId);
         case 'apple_music':
           return AppleMusic.getPlaylistTracks(user.id, playlistId);

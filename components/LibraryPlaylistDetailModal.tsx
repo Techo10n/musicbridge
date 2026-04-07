@@ -53,6 +53,7 @@ export function LibraryPlaylistDetailModal({
 
   const [tracks, setTracks] = useState<LibraryTrack[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
+  const [streamingMore, setStreamingMore] = useState(false);
   const [sharing, setSharing] = useState(false);
 
   // Inline friend picker state (avoids stacked Modal limitation on iOS)
@@ -69,10 +70,12 @@ export function LibraryPlaylistDetailModal({
 
     (async () => {
       setLoadingTracks(true);
+      setStreamingMore(false);
       setTracks([]);
       try {
         const service = user.primary_service;
         if (service === 'spotify' && playlist.id === '__liked_songs__') {
+          setStreamingMore(true);
           let firstPage = true;
           await Spotify.streamSavedTracks(
             user.id,
@@ -86,6 +89,7 @@ export function LibraryPlaylistDetailModal({
             },
             () => cancelled,
           );
+          if (!cancelled) setStreamingMore(false);
           return;
         }
         let result: LibraryTrack[] = [];
@@ -288,7 +292,15 @@ export function LibraryPlaylistDetailModal({
             ListEmptyComponent={
               <Text style={styles.emptyText}>No tracks found in this playlist</Text>
             }
-            ListFooterComponent={<View style={{ height: 20 }} />}
+            ListFooterComponent={
+              streamingMore ? (
+                <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                  <ActivityIndicator color="#555" size="small" />
+                </View>
+              ) : (
+                <View style={{ height: 20 }} />
+              )
+            }
           />
         )}
 
