@@ -2,7 +2,17 @@ import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Alert } from 'react-native';
 import { supabase } from './supabase';
-import { SpotifyTrack, LibraryPlaylist, LibraryTrack, LibraryArtist, MusicService } from '../types';
+import {
+  SpotifyTrack,
+  SpotifyArtist,
+  LibraryPlaylist,
+  LibraryTrack,
+  LibraryArtist,
+  TopTrack,
+  TopArtist,
+  RecentTrack,
+  MusicService,
+} from '../types';
 import { cleanArtistName, cleanTitle } from './utils';
 
 // Required for OAuth redirect to be handled by the app on iOS/Android
@@ -22,6 +32,8 @@ const SCOPES = [
   'playlist-read-private',
   'user-library-read',
   'user-follow-read',
+  'user-top-read',
+  'user-read-recently-played',
 ];
 
 // ─── OAuth ────────────────────────────────────────────────────────────────────
@@ -539,6 +551,102 @@ export async function getFollowedArtists(userId: string): Promise<LibraryArtist[
       id: a.id,
       name: a.name,
       imageUrl: a.images[0]?.url ?? '',
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ─── Profile stats ────────────────────────────────────────────────────────────
+
+/**
+ * Returns the user's top tracks on Spotify.
+ * Requires user-top-read scope.
+ * timeRange: 'short_term' (4 weeks) | 'medium_term' (6 months) | 'long_term' (all time)
+ */
+export async function getTopTracks(
+  userId: string,
+  limit = 5,
+  timeRange: 'short_term' | 'medium_term' | 'long_term' = 'medium_term',
+): Promise<TopTrack[]> {
+  const accessToken = await getSpotifyAccessToken(userId);
+  if (!accessToken) return [];
+
+  try {
+    const res = await fetch(
+      `https://api.spotify.com/v1/me/top/tracks?limit=${limit}&time_range=${timeRange}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { items: SpotifyTrack[] };
+    return data.items.map((t) => ({
+      id: t.id,
+      title: t.name,
+      artist: t.artists.map((a) => a.name).join(', '),
+      coverUrl: t.album.images[0]?.url ?? '',
+      popularity: t.popularity ?? 0,
+      service: 'spotify' as MusicService,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Returns the user's top artists on Spotify, including genre data.
+ * Requires user-top-read scope.
+ */
+export async function getTopArtists(
+  userId: string,
+  limit = 5,
+  timeRange: 'short_term' | 'medium_term' | 'long_term' = 'medium_term',
+): Promise<TopArtist[]> {
+  const accessToken = await getSpotifyAccessToken(userId);
+  if (!accessToken) return [];
+
+  try {
+    const res = await fetch(
+      `https://api.spotify.com/v1/me/top/artists?limit=${limit}&time_range=${timeRange}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { items: SpotifyArtist[] };
+    return data.items.map((a) => ({
+      id: a.id,
+      name: a.name,
+      imageUrl: a.images[0]?.url ?? '',
+      genres: a.genres,
+      service: 'spotify' as MusicService,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Returns the user's recently played tracks on Spotify.
+ * Requires user-read-recently-played scope.
+ */
+export async function getRecentlyPlayed(userId: string, limit = 20): Promise<RecentTrack[]> {
+  const accessToken = await getSpotifyAccessToken(userId);
+  if (!accessToken) return [];
+
+  try {
+    const res = await fetch(
+      `https://api.spotify.com/v1/me/player/recently-played?limit=${limit}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      items: Array<{ track: SpotifyTrack; played_at: string }>;
+    };
+    return data.items.map((item) => ({
+      id: item.track.id,
+      title: item.track.name,
+      artist: item.track.artists.map((a) => a.name).join(', '),
+      coverUrl: item.track.album.images[0]?.url ?? '',
+      playedAt: item.played_at,
+      service: 'spotify' as MusicService,
     }));
   } catch {
     return [];

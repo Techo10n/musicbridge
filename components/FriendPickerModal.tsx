@@ -8,39 +8,28 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useAuth } from '../hooks/useAuth';
-import { useFriends } from '../hooks/useFriends';
-import { Friendship, User } from '../types';
+import { Image } from 'expo-image';
+import { useFollows } from '../hooks/useFollows';
+import { User } from '../types';
 
 interface FriendPickerModalProps {
   visible: boolean;
   title?: string;
   onClose: () => void;
-  onSelect: (friend: User, message: string) => void;
-}
-
-function resolveFriend(friendship: Friendship, currentUserId: string): User | null {
-  if (friendship.requester_id === currentUserId) {
-    return (friendship.addressee as User) ?? null;
-  }
-  return (friendship.requester as User) ?? null;
+  onSelect: (user: User, message: string) => void;
 }
 
 export function FriendPickerModal({
   visible,
-  title = 'Send to Friend',
+  title = 'Send to Someone',
   onClose,
   onSelect,
 }: FriendPickerModalProps) {
   const [message, setMessage] = useState('');
-  const { user } = useAuth();
-  const { friends } = useFriends();
+  const { mutualFollows: following } = useFollows();
 
-  const handleSelect = (friendship: Friendship) => {
-    if (!user) return;
-    const friend = resolveFriend(friendship, user.id);
-    if (!friend) return;
-    onSelect(friend, message.trim());
+  const handleSelect = (user: User) => {
+    onSelect(user, message.trim());
     setMessage('');
     onClose();
   };
@@ -76,35 +65,38 @@ export function FriendPickerModal({
           />
         </View>
 
-        <Text style={styles.sectionLabel}>Choose a friend</Text>
+        <Text style={styles.sectionLabel}>Mutual follows</Text>
 
         <FlatList
-          data={friends}
-          keyExtractor={(f) => f.id}
+          data={following}
+          keyExtractor={(u) => u.id}
           style={styles.list}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           ListEmptyComponent={
             <Text style={styles.emptyText}>
-              No friends yet. Add some from the Friends tab!
+              You can only share with mutual followers. Follow someone and have them follow you back.
             </Text>
           }
-          renderItem={({ item: friendship }) => {
-            if (!user) return null;
-            const friend = resolveFriend(friendship, user.id);
-            if (!friend) return null;
-            const initials = (friend.display_name[0] ?? friend.username[0] ?? '?').toUpperCase();
+          renderItem={({ item: user }) => {
+            const initials = (user.display_name[0] ?? user.username[0] ?? '?').toUpperCase();
             return (
               <TouchableOpacity
-                style={styles.friendRow}
-                onPress={() => handleSelect(friendship)}
+                style={styles.userRow}
+                onPress={() => handleSelect(user)}
                 activeOpacity={0.8}
               >
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initials}</Text>
+                <View style={styles.avatarContainer}>
+                  {user.avatar_url ? (
+                    <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} />
+                  ) : (
+                    <View style={styles.avatarFallback}>
+                      <Text style={styles.avatarText}>{initials}</Text>
+                    </View>
+                  )}
                 </View>
-                <View style={styles.friendInfo}>
-                  <Text style={styles.friendName}>{friend.display_name}</Text>
-                  <Text style={styles.friendUsername}>@{friend.username}</Text>
+                <View style={styles.userInfo}>
+                  <Text style={styles.userName}>{user.display_name}</Text>
+                  <Text style={styles.userUsername}>@{user.username}</Text>
                 </View>
               </TouchableOpacity>
             );
@@ -180,15 +172,27 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 60,
     paddingHorizontal: 32,
+    lineHeight: 20,
   },
-  friendRow: {
+  userRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 12,
   },
-  avatar: {
+  avatarContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  avatarFallback: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -201,16 +205,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  friendInfo: {
+  userInfo: {
     flex: 1,
   },
-  friendName: {
+  userName: {
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 2,
   },
-  friendUsername: {
+  userUsername: {
     color: '#666',
     fontSize: 13,
   },

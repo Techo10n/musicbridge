@@ -10,18 +10,18 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFriends } from '../../hooks/useFriends';
+import { useFollows } from '../../hooks/useFollows';
 import { FriendListItem } from '../../components/FriendListItem';
 import { ShareModal } from '../../components/ShareModal';
-import { Friendship, User } from '../../types';
+import { User } from '../../types';
 
-type Tab = 'friends' | 'pending';
+type Tab = 'following' | 'followers';
 
-export default function Friends() {
-  const { friends, pendingRequests, loading, sendFriendRequest, respondToRequest, searchUsers } =
-    useFriends();
+export default function People() {
+  const { following, followers, mutualFollows, loading, followUser, unfollowUser, isFollowing, searchUsers } =
+    useFollows();
 
-  const [activeTab, setActiveTab] = useState<Tab>('friends');
+  const [activeTab, setActiveTab] = useState<Tab>('following');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
@@ -41,66 +41,42 @@ export default function Friends() {
     }
   }, [searchQuery, searchUsers]);
 
-  const handleSendRequest = async (user: User) => {
+  const handleFollow = async (userId: string) => {
     try {
-      await sendFriendRequest(user.id);
-      Alert.alert('Request sent', `Friend request sent to @${user.username}`);
-      setSearchQuery('');
-      setSearchResults([]);
+      await followUser(userId);
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not send request');
+      Alert.alert('Error', err instanceof Error ? err.message : 'Could not follow user');
     }
   };
 
-  const handleAccept = async (friendshipId: string) => {
+  const handleUnfollow = async (userId: string) => {
     try {
-      await respondToRequest(friendshipId, 'accepted');
-    } catch {
-      Alert.alert('Error', 'Could not accept request');
+      await unfollowUser(userId);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Could not unfollow user');
     }
   };
 
-  const handleDecline = async (friendshipId: string) => {
-    try {
-      await respondToRequest(friendshipId, 'declined');
-    } catch {
-      Alert.alert('Error', 'Could not decline request');
-    }
-  };
-
-  const renderSearchResult = ({ item }: { item: User }) => (
-    <View style={styles.searchResultRow}>
-      <View style={styles.searchResultInfo}>
-        <Text style={styles.searchResultName}>{item.display_name}</Text>
-        <Text style={styles.searchResultUsername}>@{item.username}</Text>
-      </View>
-      <TouchableOpacity
-        style={styles.addButton}
-        onPress={() => handleSendRequest(item)}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.addButtonText}>+ Add</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const listData = activeTab === 'friends' ? friends : pendingRequests;
+  const listData = activeTab === 'following' ? following : followers;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Friends</Text>
+        <Text style={styles.title}>People</Text>
       </View>
 
       {/* Search bar */}
       <View style={styles.searchRow}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search by username…"
+          placeholder="Find people by username…"
           placeholderTextColor="#555"
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={(t) => {
+            setSearchQuery(t);
+            if (!t.trim()) setSearchResults([]);
+          }}
           onSubmitEditing={handleSearch}
           returnKeyType="search"
           autoCapitalize="none"
@@ -123,38 +99,42 @@ export default function Friends() {
       {/* Search results */}
       {searchResults.length > 0 && (
         <View style={styles.searchResultsContainer}>
-          <FlatList
-            data={searchResults}
-            renderItem={renderSearchResult}
-            keyExtractor={(u) => u.id}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-          />
+          {searchResults.map((u) => (
+            <View key={u.id}>
+              <FriendListItem
+                user={u}
+                isFollowing={isFollowing(u.id)}
+                onFollow={handleFollow}
+                onUnfollow={handleUnfollow}
+              />
+            </View>
+          ))}
         </View>
       )}
 
       {/* Tab bar */}
       <View style={styles.tabBar}>
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'friends' && styles.tabActive]}
-          onPress={() => setActiveTab('friends')}
+          style={[styles.tab, activeTab === 'following' && styles.tabActive]}
+          onPress={() => setActiveTab('following')}
           activeOpacity={0.8}
         >
-          <Text style={[styles.tabText, activeTab === 'friends' && styles.tabTextActive]}>
-            Friends {friends.length > 0 && `(${friends.length})`}
+          <Text style={[styles.tabText, activeTab === 'following' && styles.tabTextActive]}>
+            Following{following.length > 0 ? ` ${following.length}` : ''}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'pending' && styles.tabActive]}
-          onPress={() => setActiveTab('pending')}
+          style={[styles.tab, activeTab === 'followers' && styles.tabActive]}
+          onPress={() => setActiveTab('followers')}
           activeOpacity={0.8}
         >
-          <Text style={[styles.tabText, activeTab === 'pending' && styles.tabTextActive]}>
-            Pending {pendingRequests.length > 0 && `(${pendingRequests.length})`}
+          <Text style={[styles.tabText, activeTab === 'followers' && styles.tabTextActive]}>
+            Followers{followers.length > 0 ? ` ${followers.length}` : ''}
           </Text>
         </TouchableOpacity>
       </View>
 
-      {/* Friend / pending list */}
+      {/* List */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator color="#fff" />
@@ -162,25 +142,26 @@ export default function Friends() {
       ) : (
         <FlatList
           data={listData}
-          renderItem={({ item }: { item: Friendship }) => (
+          renderItem={({ item }) => (
             <FriendListItem
-              friendship={item}
-              mode={activeTab === 'friends' ? 'friend' : 'pending'}
-              onShare={(friend) => setShareRecipient(friend)}
-              onAccept={handleAccept}
-              onDecline={handleDecline}
+              user={item}
+              isFollowing={isFollowing(item.id)}
+              onFollow={handleFollow}
+              onUnfollow={handleUnfollow}
+              onShare={(u) => setShareRecipient(u)}
+              showShare={mutualFollows.some((m) => m.id === item.id)}
             />
           )}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(u) => u.id}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={styles.emptyText}>
-                {activeTab === 'friends'
-                  ? 'No friends yet — search for users above'
-                  : 'No pending requests'}
+                {activeTab === 'following'
+                  ? 'Not following anyone yet — search for users above'
+                  : 'Nobody following you yet'}
               </Text>
             </View>
           }
@@ -191,9 +172,7 @@ export default function Friends() {
         visible={shareRecipient !== null}
         recipient={shareRecipient}
         onClose={() => setShareRecipient(null)}
-        onShared={() => {
-          setShareRecipient(null);
-        }}
+        onShared={() => setShareRecipient(null)}
       />
     </SafeAreaView>
   );
@@ -253,37 +232,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 12,
     overflow: 'hidden',
-  },
-  searchResultRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 10,
-  },
-  searchResultInfo: {
-    flex: 1,
-  },
-  searchResultName: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  searchResultUsername: {
-    color: '#666',
-    fontSize: 12,
-    marginTop: 1,
-  },
-  addButton: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-  },
-  addButtonText: {
-    color: '#000',
-    fontSize: 13,
-    fontWeight: '700',
   },
   tabBar: {
     flexDirection: 'row',

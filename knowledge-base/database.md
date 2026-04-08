@@ -10,6 +10,7 @@ MusicBridge uses **Supabase** (hosted PostgreSQL) with Row Level Security.
 |---|---|
 | `001_initial.sql` | Full schema: enums, tables, RLS policies, indexes, auth trigger |
 | `003_conversion_progress.sql` | Adds `conversion_status` + `tracks_processed` to `shared_items` |
+| `004_follows_and_profile.sql` | Drops `friendships`, creates `follows` (directed), adds `bio`/`favorite_song` to `users`, creates `avatars` storage bucket |
 
 ---
 
@@ -24,6 +25,9 @@ Extends Supabase Auth. Created automatically by an `on_auth_user_created` trigge
 | `id` | uuid | matches `auth.users.id` |
 | `username` | text | unique |
 | `display_name` | text | |
+| `avatar_url` | text | public URL from Supabase Storage `avatars` bucket |
+| `bio` | text | nullable, max 160 chars (enforced in UI) |
+| `favorite_song` | jsonb | `{ title, artist, service, service_id, cover_url }` |
 | `primary_service` | enum | `spotify`, `apple_music`, `youtube_music` |
 | `spotify_access_token` | text | RLS-protected |
 | `spotify_refresh_token` | text | RLS-protected |
@@ -37,17 +41,20 @@ Extends Supabase Auth. Created automatically by an `on_auth_user_created` trigge
 
 ---
 
-### `public.friendships`
+### `public.follows`
+
+Directed follow graph. No approval step — instant follow (Instagram model).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid | |
-| `requester_id` | uuid | FK → users.id |
-| `addressee_id` | uuid | FK → users.id |
-| `status` | enum | `pending`, `accepted`, `declined` |
+| `follower_id` | uuid | FK → users.id |
+| `following_id` | uuid | FK → users.id |
 | `created_at` | timestamptz | |
 
-**RLS**: Both requester and addressee can read. Only addressee can update status. Only requester can insert.
+Unique constraint on `(follower_id, following_id)`. Check constraint: `follower_id <> following_id`.
+
+**RLS**: Anyone can read. Only the follower can insert (their own follows). Only the follower can delete (unfollow).
 
 ---
 

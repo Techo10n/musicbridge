@@ -1,7 +1,5 @@
 export type MusicService = 'spotify' | 'apple_music' | 'youtube_music';
 
-export type FriendshipStatus = 'pending' | 'accepted' | 'declined';
-
 export type SharedItemType = 'song' | 'playlist';
 
 // A track within a playlist (stored as JSONB in Supabase)
@@ -13,12 +11,25 @@ export interface Track {
   youtube_music_id: string | null;
 }
 
-// User profile — extends Supabase auth
+// ─── Favorite song stored on profile ─────────────────────────────────────────
+
+export interface FavoriteSong {
+  title: string;
+  artist: string;
+  service: MusicService;
+  service_id: string;
+  cover_url: string;
+}
+
+// ─── User profile — extends Supabase auth ─────────────────────────────────────
+
 export interface User {
   id: string;
   username: string;
   display_name: string;
   avatar_url: string | null;
+  bio: string | null;
+  favorite_song: FavoriteSong | null;
   primary_service: MusicService | null;
   created_at: string;
   // Music service tokens (sensitive — only accessible server-side or with RLS)
@@ -31,15 +42,16 @@ export interface User {
   youtube_token_expiry?: string | null;
 }
 
-export interface Friendship {
+// ─── Follow system ────────────────────────────────────────────────────────────
+
+export interface Follow {
   id: string;
-  requester_id: string;
-  addressee_id: string;
-  status: FriendshipStatus;
+  follower_id: string;
+  following_id: string;
   created_at: string;
-  // Joined relations
-  requester?: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url'>;
-  addressee?: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url'>;
+  // Joined relations (present when selected with join)
+  follower?: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url'>;
+  following?: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url'>;
 }
 
 export interface SharedItem {
@@ -91,6 +103,42 @@ export interface LibraryArtist {
   imageUrl: string;
 }
 
+// ─── Profile stats types ──────────────────────────────────────────────────────
+
+export interface TopTrack {
+  id: string;
+  title: string;
+  artist: string;
+  coverUrl: string;
+  popularity: number;
+  service: MusicService;
+}
+
+export interface TopArtist {
+  id: string;
+  name: string;
+  imageUrl: string;
+  genres: string[];
+  service: MusicService;
+}
+
+export interface RecentTrack {
+  id: string;
+  title: string;
+  artist: string;
+  coverUrl: string;
+  playedAt: string;
+  service: MusicService;
+}
+
+export interface WrappedStats {
+  topGenre: string | null;
+  topTrackTitle: string | null;
+  topTrackArtist: string | null;
+  savedCount: number;
+  playlistCount: number;
+}
+
 // ─── Spotify API shapes ───────────────────────────────────────────────────────
 
 export interface SpotifyTrack {
@@ -102,6 +150,15 @@ export interface SpotifyTrack {
     images: Array<{ url: string; width: number; height: number }>;
   };
   uri: string;
+  popularity?: number;
+}
+
+export interface SpotifyArtist {
+  id: string;
+  name: string;
+  images: Array<{ url: string }>;
+  genres: string[];
+  popularity: number;
 }
 
 export interface SpotifyPlaylist {
@@ -149,6 +206,7 @@ export interface YouTubeTrack {
   id: { videoId: string };
   snippet: {
     title: string;
+    channelId?: string;
     channelTitle: string;
     description?: string;
     thumbnails: {

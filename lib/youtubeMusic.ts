@@ -150,68 +150,272 @@ export async function getYouTubeAccessToken(userId: string): Promise<string | nu
 
 // ─── Search ───────────────────────────────────────────────────────────────────
 
+// ─── Track-matching helpers ───────────────────────────────────────────────────
+
+/** Lowercase, strip punctuation, collapse whitespace. */
+function norm(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Returns true when the result title contains a variant qualifier (remix, live,
+ * acoustic, etc.) that is NOT present in the original search title.
+ * Uses word boundaries so "live" doesn't match "alive" or "live and let die".
+ */
+function isBadVariant(resultTitle: string, searchTitle: string): boolean {
+  const VARIANTS = /\b(remix|live|acoustic|cover|karaoke|instrumental|extended|vip|demo|reprise|interlude|medley|mashup|tribute)\b/i;
+  return VARIANTS.test(resultTitle) && !VARIANTS.test(searchTitle);
+}
+
+/**
+ * Scores how closely a result title matches the search title (0–4).
+ * 4 = exact match after normalisation
+ * 3 = one is a prefix of the other
+ * 2 = one contains the other
+ * 1 = ≥70% word overlap
+ * 0 = poor match
+ */
+function titleScore(resultTitle: string, searchTitle: string): number {
+  const r = norm(resultTitle);
+  const s = norm(searchTitle);
+  if (r === s) return 4;
+  if (r.startsWith(s) || s.startsWith(r)) return 3;
+  if (r.includes(s) || s.includes(r)) return 2;
+  const rWords = new Set(r.split(' '));
+  const sWords = s.split(' ').filter(Boolean);
+  if (sWords.length > 0 && sWords.filter((w) => rWords.has(w)).length / sWords.length >= 0.7) return 1;
+  return 0;
+}
+
+/**
+ * From a list of candidates, picks the highest-scoring Topic-channel video
+ * whose title is NOT a bad variant (remix, live, etc.).
+ * Returns undefined when no clean Topic result exists — callers must not fall
+ * back to variant results; they should try the next phase instead.
+ */
+function pickBestCleanTopicResult(
+  items: YouTubeTrack[],
+  searchTitle: string,
+  isTopicChannel: (i: YouTubeTrack) => boolean,
+): YouTubeTrack | undefined {
+  const clean = items
+    .filter(isTopicChannel)
+    .filter((i) => !isBadVariant(i.snippet?.title ?? '', searchTitle));
+
+  if (clean.length === 0) return undefined;
+
+  return clean.reduce<YouTubeTrack>((best, item) =>
+    titleScore(item.snippet?.title ?? '', searchTitle) >
+    titleScore(best.snippet?.title ?? '', searchTitle)
+      ? item
+      : best,
+  );
+}
+
+// ─── Search ───────────────────────────────────────────────────────────────────
+
 /**
  * Searches for a track by title + artist.
- * Prefers YouTube Music "Artist - Topic" channels (official audio),
- * falling back to the top result filtered by Music topic.
+ *
+ * Only returns a video from an "Artist - Topic" auto-generated channel — the
+ * only video type YouTube Music renders as a Song (square album art, no video
+ * player). Never falls back to generic videos.
+ *
+ * Phase 1: three parallel queries (base / official-audio / topic keyword).
+ *   → picks the highest-scoring Topic-channel result, filtering out remixes/
+ *     live versions that weren't in the original title.
+ * Phase 2: direct Topic-channel lookup → in-channel title search with the
+ *   same scoring + variant filtering applied to in-channel results.
+ * Throws `youtube_music_topic_not_found` if neither phase finds a Topic video.
  */
 export async function searchTrack(
   userId: string,
   title: string,
   artist: string,
-): Promise<string | null> {
+): Promise<string> {
   const accessToken = await getYouTubeAccessToken(userId);
-  if (!accessToken) return null;
+  if (!accessToken) throw new Error('[YTM] No access token — user not connected to YouTube Music');
 
-  try {
-    // We don't append "audio" to the query anymore because it breaks exact title
-    // matching for short song titles like "About You". Instead we just rely on the API filters.
-    const q = encodeURIComponent(`${title} ${artist}`);
-    
-    // topicId=/m/04rlf restricts results to the Music freebase topic.
-    // videoCategoryId=10 restricts to the Music category.
-    const res = await fetch(
-      `${YOUTUBE_API}/search?q=${q}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10&topicId=/m/04rlf`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
+  // For multi-artist strings like "K-391, Alan Walker, Tungevaag, Mangoo"
+  // use only the first artist for channel lookups and the tighter base query.
+  const primaryArtist = artist.split(',')[0].trim();
+
+  const isTopicChannel = (item: YouTubeTrack): boolean => {
+    const ch = item.snippet?.channelTitle?.toLowerCase() ?? '';
+    return ch.endsWith(' - topic') || ch === 'topic';
+  };
+
+  // videoCategoryId=10 (Music) is enough; topicId uses deprecated Freebase IDs
+  // that started returning 403s under load — removed.
+  const searchVideos = async (query: string, label: string): Promise<YouTubeTrack[]> => {
+    try {
+      const res = await fetch(
+        `${YOUTUBE_API}/search?q=${encodeURIComponent(query)}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!res.ok) {
+        if (res.status === 403) {
+          try {
+            const body = await res.json() as { error?: { errors?: Array<{ reason: string }> } };
+            if (body?.error?.errors?.[0]?.reason === 'quotaExceeded') {
+              throw new Error('youtube_quota_exceeded');
+            }
+          } catch (parseErr) {
+            if ((parseErr as Error).message === 'youtube_quota_exceeded') throw parseErr;
+          }
+        }
+        console.warn(`[YTM] Video search "${label}" failed: HTTP ${res.status}`);
+        return [];
+      }
+      const data = await res.json() as { items?: YouTubeTrack[] };
+      return data.items ?? [];
+    } catch (e) {
+      if ((e as Error).message === 'youtube_quota_exceeded') throw e;
+      console.warn(`[YTM] Video search "${label}" threw:`, e);
+      return [];
+    }
+  };
+
+  // Searches for the artist's Topic channel by name.
+  // Uses primaryArtist so multi-artist strings don't break the lookup.
+  const findTopicChannelId = async (): Promise<string | null> => {
+    try {
+      const res = await fetch(
+        `${YOUTUBE_API}/search?q=${encodeURIComponent(`${primaryArtist} - Topic`)}&type=channel&part=snippet&maxResults=10`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!res.ok) return null;
+      const data = await res.json() as {
+        items?: Array<{ id: { channelId: string }; snippet: { title: string } }>;
+      };
+      const match = (data.items ?? []).find((ch) =>
+        ch.snippet.title.toLowerCase().endsWith(' - topic'),
+      );
+      return match?.id.channelId ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const searchWithinChannel = async (channelId: string): Promise<YouTubeTrack[]> => {
+    try {
+      const res = await fetch(
+        `${YOUTUBE_API}/search?q=${encodeURIComponent(title)}&type=video&part=snippet,id&maxResults=10&channelId=${channelId}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!res.ok) return [];
+      const data = await res.json() as { items?: YouTubeTrack[] };
+      return data.items ?? [];
+    } catch {
+      return [];
+    }
+  };
+
+  // ── Phase 1: 2 parallel queries ──────────────────────────────────────────────
+  // Always use primaryArtist — the first artist is the main artist, and the full
+  // comma-separated string confuses YouTube search results.
+  const [baseItems, audioItems] = await Promise.all([
+    searchVideos(`${title} ${primaryArtist}`, 'base'),
+    searchVideos(`${title} ${primaryArtist} official audio`, 'official audio'),
+  ]);
+
+  const phase1All = [...baseItems, ...audioItems];
+  const phase1Topic = phase1All.filter(isTopicChannel);
+  const phase1Variants = phase1Topic.filter((i) => isBadVariant(i.snippet?.title ?? '', title));
+
+  console.log(
+    `[YTM] searchTrack("${title}" / "${artist}") phase 1: ` +
+    `${phase1All.length} results, ${phase1Topic.length} Topic-channel (${phase1Variants.length} are variants)`,
+  );
+
+  const phase1Best = pickBestCleanTopicResult(phase1All, title, isTopicChannel);
+  if (phase1Best) {
+    console.log(
+      `[YTM] Phase 1 hit — "${phase1Best.snippet?.title}" by "${phase1Best.snippet?.channelTitle}" ` +
+      `(score ${titleScore(phase1Best.snippet?.title ?? '', title)}) — ${phase1Best.id.videoId}`,
     );
-    if (!res.ok) return null;
-    const data = await res.json() as { items?: YouTubeTrack[] };
-    const items = data.items ?? [];
-
-    // YouTube Music auto-generates "Artist - Topic" channels for official audio.
-    // Prefer these results over music videos or lyric videos, as these trigger "Song" mode cleanly.
-    let bestMatch = items.find((item) => {
-      const channel = item.snippet?.channelTitle?.toLowerCase() ?? '';
-      const videoTitle = item.snippet?.title?.toLowerCase() ?? '';
-      const desc = item.snippet?.description?.toLowerCase() ?? '';
-      
-      // "Provided to YouTube by" is the standard watermark for official audio distributions
-      return channel.endsWith(' - topic') 
-          || channel === 'topic'
-          || videoTitle.includes('official audio') 
-          || desc.includes('provided to youtube');
-    });
-
-    // If we didn't find an official Topic/Audio video, try to find a video that at least
-    // ISN'T explicitly labeled as a Music Video, Lyric Video, or Live performance.
-    if (!bestMatch) {
-      bestMatch = items.find((item) => {
-        const title = item.snippet?.title?.toLowerCase() ?? '';
-        return !title.includes('music video') 
-            && !title.includes('lyric') 
-            && !title.includes('live')
-            && !title.includes('official video');
-      });
-    }
-
-    if (bestMatch) {
-      return bestMatch.id.videoId;
-    }
-
-    return items[0]?.id.videoId ?? null;
-  } catch {
-    return null;
+    return phase1Best.id.videoId;
   }
+
+  if (phase1Topic.length > 0) {
+    console.warn(
+      `[YTM] Phase 1: ${phase1Topic.length} Topic result(s) all variants — proceeding to phase 2:\n` +
+      phase1Topic.map((i) => `  "${i.snippet?.title}" (${i.id.videoId})`).join('\n'),
+    );
+  } else {
+    console.log(`[YTM] Phase 1: no Topic-channel results. Proceeding to phase 2…`);
+  }
+
+  // ── Phase 2: search within Topic channels, using two channel ID sources ───────
+  //
+  // Source A: channelId values already embedded in phase 1 variant results.
+  //   These are the most reliable — we know those channels are Topic channels.
+  // Source B: channel name search for "${primaryArtist} - Topic".
+  //   Runs in parallel with A so there's no extra latency when A succeeds.
+  const variantChannelIds = [
+    ...new Set(
+      phase1Variants
+        .map((i) => i.snippet?.channelId)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+
+  const [searchedChannelId] = await Promise.all([findTopicChannelId()]);
+
+  const allChannelIds = [
+    ...new Set([...variantChannelIds, searchedChannelId].filter((id): id is string => !!id)),
+  ];
+
+  console.log(
+    `[YTM] Phase 2 channel sources — from variants: [${variantChannelIds.join(', ')}], ` +
+    `from name search: ${searchedChannelId ?? 'none'}`,
+  );
+
+  if (allChannelIds.length > 0) {
+    const channelResultSets = await Promise.all(allChannelIds.map(searchWithinChannel));
+    const allChannelItems = channelResultSets.flat();
+
+    // All items came from Topic channels; tag them so pickBestCleanTopicResult
+    // can process them without needing to check channelTitle.
+    const tagged = allChannelItems.map((i) => ({
+      ...i,
+      snippet: { ...i.snippet, channelTitle: `${primaryArtist} - Topic` },
+    }));
+
+    const phase2Best = pickBestCleanTopicResult(tagged, title, () => true);
+    if (phase2Best) {
+      console.log(
+        `[YTM] Phase 2 hit — "${phase2Best.snippet?.title}" ` +
+        `(score ${titleScore(phase2Best.snippet?.title ?? '', title)}) — ${phase2Best.id.videoId}`,
+      );
+      return phase2Best.id.videoId;
+    }
+
+    console.warn(
+      `[YTM] Phase 2: ${allChannelItems.length} in-channel video(s) all variants:\n` +
+      allChannelItems
+        .map((i) => `  "${i.snippet?.title}" (score ${titleScore(i.snippet?.title ?? '', title)}, variant: ${isBadVariant(i.snippet?.title ?? '', title)})`)
+        .join('\n'),
+    );
+  } else {
+    console.warn(`[YTM] Phase 2: no Topic channel IDs found for "${primaryArtist}"`);
+  }
+
+  // ── Both phases failed ────────────────────────────────────────────────────────
+  const nonTopicLog = phase1All
+    .filter((i) => !isTopicChannel(i))
+    .map((i) => `  "${i.snippet?.title}" [${i.snippet?.channelTitle}] (${i.id.videoId})`)
+    .join('\n');
+
+  console.error(
+    `[YTM] No clean Topic-channel video found for "${title}" by "${artist}".\n` +
+    `Non-Topic results (rejected):\n${nonTopicLog || '  (none)'}`,
+  );
+
+  throw new Error(
+    `youtube_music_topic_not_found: "${title}" by "${artist}" — no canonical YouTube Music Song found. ` +
+    `${phase1Variants.length} Topic-channel variant(s) and ${phase1All.length - phase1Topic.length} non-Topic video(s) were rejected.`,
+  );
 }
 
 /**
@@ -300,13 +504,20 @@ export async function createPlaylist(
 // ─── Deep links ───────────────────────────────────────────────────────────────
 
 export function getYouTubeMusicDeepLink(videoId: string): string[] {
-  // Try iOS YouTube Music first, then fallback to Android/vanilla YouTube scheme.
-  // We append &vType=audio as an undocumented parameter that frequently forces the
-  // YTM app to open the "Song" tab instead of the "Video" tab on load.
+  // RDAMVM{videoId} is YouTube Music's internal "music mix" playlist prefix.
+  // Passing it as the `list` param signals YTM at load time that this is a
+  // music context, which causes the player to resolve to song mode immediately
+  // (square album art, clean title) instead of loading raw video metadata first
+  // and resolving asynchronously. Without this, users see the video thumbnail
+  // and raw title until they navigate away and back.
+  const mixList = `RDAMVM${videoId}`;
   return [
-    `youtubemusic://watch?v=${videoId}&vType=audio`,
+    // Primary: YouTube Music custom scheme with music-mix context
+    `youtubemusic://watch?v=${videoId}&list=${mixList}`,
+    // Fallback: universal web URL (YTM app handles music.youtube.com links on device)
+    `https://music.youtube.com/watch?v=${videoId}&list=${mixList}`,
+    // Last resort: vanilla YouTube scheme (no music-mix context, but opens something)
     `vnd.youtube://${videoId}`,
-    `https://music.youtube.com/watch?v=${videoId}&vType=audio`
   ];
 }
 
@@ -487,4 +698,92 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
  */
 export async function getLikedMusic(userId: string): Promise<LibraryTrack[]> {
   return getPlaylistTracks(userId, 'LM');
+}
+
+// ─── Profile stats ────────────────────────────────────────────────────────────
+
+/**
+ * Returns channels the user is subscribed to on YouTube.
+ * These are the closest equivalent to "followed artists" on YouTube Music.
+ * Requires youtube.readonly scope (already included in SCOPES).
+ */
+export async function getSubscribedChannels(
+  userId: string,
+  limit = 10,
+): Promise<Array<{ id: string; name: string; imageUrl: string }>> {
+  const accessToken = await getYouTubeAccessToken(userId);
+  if (!accessToken) return [];
+
+  try {
+    const res = await fetch(
+      `${YOUTUBE_API}/subscriptions?part=snippet&mine=true&maxResults=${limit}&order=alphabetical`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      items: Array<{
+        snippet: {
+          resourceId: { channelId: string };
+          title: string;
+          thumbnails: { medium?: { url: string }; default?: { url: string } };
+        };
+      }>;
+    };
+    return data.items.map((item) => ({
+      id: item.snippet.resourceId.channelId,
+      name: item.snippet.title,
+      imageUrl:
+        item.snippet.thumbnails.medium?.url ??
+        item.snippet.thumbnails.default?.url ??
+        '',
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Derives profile stats from the user's YouTube Music library.
+ *
+ * Since YouTube Music's API doesn't expose listening history or top tracks,
+ * we build a picture from what IS accessible:
+ *  - Liked Music playlist → top artists by frequency of channel titles
+ *  - User playlists → playlist count
+ *
+ * Returns:
+ *  - topArtists: most frequent channel names in liked music (up to 5)
+ *  - likedCount: number of liked music tracks
+ *  - playlistCount: number of user playlists
+ *  - topTrack: the most recently liked track (best available proxy)
+ */
+export async function analyzeYouTubeLibrary(userId: string): Promise<{
+  topArtists: Array<{ name: string; count: number }>;
+  likedCount: number;
+  playlistCount: number;
+  topTrack: LibraryTrack | null;
+}> {
+  const [likedTracks, playlists] = await Promise.all([
+    getLikedMusic(userId),
+    getUserPlaylists(userId),
+  ]);
+
+  // Count artist frequency from liked tracks
+  const artistCounts = new Map<string, number>();
+  for (const track of likedTracks) {
+    if (!track.artist) continue;
+    const key = track.artist.replace(/ - Topic$/i, '').trim();
+    artistCounts.set(key, (artistCounts.get(key) ?? 0) + 1);
+  }
+
+  const topArtists = Array.from(artistCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, count]) => ({ name, count }));
+
+  return {
+    topArtists,
+    likedCount: likedTracks.length,
+    playlistCount: playlists.length,
+    topTrack: likedTracks[0] ?? null,
+  };
 }

@@ -17,7 +17,7 @@
 
 ## Phase 3: Social Platform
 
-- Following system
+- [x] Following system (directed follows, migration 004)
 - Music feed (following + discovery)
 - Post likes/comments
 - Direct messaging with music
@@ -32,11 +32,15 @@
 
 ## Ideas Log (from IDEAS.md)
 
-- Share Instagram Reels with music → auto-add songs to a playlist
-- Collaborative cross-platform playlists (create in app, sync to each user's own service)
-- Real-time "what friends are listening to"
-- Profiles showing top songs and artists
-- Song of the Day feature
+See `IDEAS.md` for the full categorized list. Key themes:
+- **Social/Feed**: activity feed, comments, reactions, Music Stories, real-time listening status, streaks, taste compatibility, music polls, group listening rooms
+- **Discovery**: For You feed, friend trending chart, explore page, music challenges, "you might also like"
+- **Profiles**: ✅ top songs/artists, ✅ listening history (Spotify), ✅ Wrapped stats, ✅ taste tags, ✅ pinned playlists
+- **Collaborative**: cross-platform collaborative playlists, shared queue, friend blend
+- **Sharing/Import**: Instagram/TikTok reel import, Song of the Day, deep link previews, QR code profiles
+- **Notifications**: push notifications, weekly digest
+- **Gamification**: leaderboards, badges, music trivia
+- **Platform**: unified search, ISRC matching, Apple Music, offline mode
 
 ---
 

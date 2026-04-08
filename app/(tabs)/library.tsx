@@ -16,7 +16,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useLibrary } from '../../hooks/useLibrary';
-import { useFriends } from '../../hooks/useFriends';
 import { LibraryArtist, LibraryPlaylist, LibraryTrack, User } from '../../types';
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
 import { FriendPickerModal } from '../../components/FriendPickerModal';

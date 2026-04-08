@@ -27,12 +27,33 @@
 
 ---
 
+### Profile tab (revamped)
+- Instagram-style layout: avatar (tappable → image picker), name, @username, bio (tap to edit)
+- Followers / Following / Shared count row
+- Favorite song (tappable to set via search)
+- Taste tags — auto-generated genre labels (Spotify only; derived from top artists)
+- Wrapped-style stats card: top track, top genre, saved count, playlist count
+- Top Artists horizontal scroll (Spotify: top artists API; YouTube: subscribed channels)
+- Top Songs horizontal scroll (Spotify: top tracks API)
+- Pinned Playlists — up to 3, stored in AsyncStorage; picker pulls from Library
+- Listening History — Spotify-only, opt-in toggle, AsyncStorage preference
+
+### People tab (replaces Friends)
+- Directed follow model (Instagram-style), no approval step
+- Following / Followers tabs with follow/unfollow buttons
+- Username search with inline follow/unfollow
+
+### Follows system
+- `follows` table: `follower_id → following_id` (directed, no status enum)
+- `hooks/useFollows.ts` — replaces `useFriends.ts`; provides following, followers, followUser, unfollowUser, isFollowing, getFollowCounts, searchUsers
+- `FriendPickerModal` updated: shows people you follow (not mutual friends)
+- `FriendListItem` updated: follow/unfollow button, share button for following list
+
 ## Not Yet Built (from IDEAS.md)
 
 - Share Instagram Reels with music to the app → add songs to a playlist
 - Collaborative cross-platform playlists (create in app, accessible on each user's own service)
 - Real-time "what friends are listening to"
-- Profiles showing top songs and artists
 
 See [[roadmap]] for phased plan.
 

@@ -15,11 +15,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
-import { useFriends } from '../hooks/useFriends';
+import { useFollows } from '../hooks/useFollows';
 import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
-import { Friendship, LibraryPlaylist, LibraryTrack, Track, User } from '../types';
+import { LibraryPlaylist, LibraryTrack, Track, User } from '../types';
 import { withTimeout } from '../lib/utils';
 
 interface LibraryPlaylistDetailModalProps {
@@ -38,18 +38,13 @@ function toTrackPayload(t: LibraryTrack): Track {
   };
 }
 
-function resolveFriend(friendship: Friendship, currentUserId: string): User | null {
-  if (friendship.requester_id === currentUserId) return (friendship.addressee as User) ?? null;
-  return (friendship.requester as User) ?? null;
-}
-
 export function LibraryPlaylistDetailModal({
   playlist,
   visible,
   onClose,
 }: LibraryPlaylistDetailModalProps) {
   const { user } = useAuth();
-  const { friends } = useFriends();
+  const { mutualFollows: friends } = useFollows();
 
   const [tracks, setTracks] = useState<LibraryTrack[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
@@ -348,24 +343,21 @@ export function LibraryPlaylistDetailModal({
                 />
               </View>
 
-              <Text style={styles.pickerSectionLabel}>Choose a friend</Text>
+              <Text style={styles.pickerSectionLabel}>Mutual follows</Text>
 
               <ScrollView style={styles.pickerList}>
                 {friends.length === 0 ? (
                   <Text style={styles.pickerEmptyText}>
-                    No friends yet. Add some from the Friends tab!
+                    You can only share with mutual followers — follow someone and have them follow you back.
                   </Text>
                 ) : (
-                  friends.map((friendship) => {
-                    if (!user) return null;
-                    const friend = resolveFriend(friendship, user.id);
-                    if (!friend) return null;
+                  friends.map((friend) => {
                     const initials = (
                       friend.display_name[0] ?? friend.username[0] ?? '?'
                     ).toUpperCase();
                     return (
                       <TouchableOpacity
-                        key={friendship.id}
+                        key={friend.id}
                         style={styles.pickerFriendRow}
                         onPress={() => handleFriendSelected(friend)}
                         activeOpacity={0.8}

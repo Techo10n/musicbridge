@@ -52,6 +52,26 @@
 
 ---
 
+## YouTube Music Shows Songs as Videos / "(audio)" Titles
+
+**Problem**: Songs shared/added to YouTube Music playlists rendered as videos (widescreen thumbnail, video player) instead of songs (square album art). Sometimes with confusing "(audio)" in the title.
+
+**Root cause**: Only videos from **"Artist - Topic"** auto-generated YouTube channels render as Songs in YouTube Music. The old `searchTrack` ran a single search and fell back to non-Topic videos (VEVO, user uploads, etc.) when no Topic result appeared in the first 10 hits.
+
+**Fix**: `searchTrack` now runs in two phases with no fallback to non-Topic videos. Both phases use `pickBestTopicResult` which applies two filters before selecting:
+1. `isBadVariant(resultTitle, searchTitle)` — uses `\b` word-boundary regex to detect remix/live/acoustic/cover/etc. qualifiers that appear in the result but NOT in the original search title. Filters these out first. Remaining pool is used for scoring.
+2. `titleScore(resultTitle, searchTitle)` — 0–4 score: exact match (4) → prefix (3) → contains (2) → ≥70% word overlap (1) → poor (0). Picks highest score from the clean pool.
+
+- **Phase 1**: three parallel queries → `pickBestTopicResult` on combined results.
+- **Phase 2**: direct Topic-channel channel lookup → in-channel search (maxResults=10) → `pickBestTopicResult`.
+- **On failure**: throws `youtube_music_topic_not_found` with all rejected non-Topic candidates logged.
+
+**Key rule**: If `channelTitle` doesn't end with `" - Topic"`, YouTube Music renders it as a Video, not a Song. Never add non-Topic videos.
+
+**Variant detection caveat**: `isBadVariant` only flags qualifiers absent from the *search* title — so searching for "Live and Let Die" or "Remix" (as an actual song title) won't falsely filter the canonical recording.
+
+---
+
 ## Related Pages
 
 [[integrations/spotify]] · [[integrations/youtube-music]] · [[playlist-conversion]]

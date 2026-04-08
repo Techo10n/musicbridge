@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Linking,
@@ -18,6 +19,7 @@ import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { withTimeout } from '../../lib/utils';
+import { supabase } from '../../lib/supabase';
 
 export default function Home() {
   const { user } = useAuth();
@@ -61,7 +63,13 @@ export default function Home() {
         case 'youtube_music': {
           let ymID = item.youtube_music_id;
           if (!ymID && item.title && item.artist) {
+            // Throws youtube_music_topic_not_found if no Topic-channel video exists,
+            // or youtube_quota_exceeded if the daily API quota is exhausted.
             ymID = await withTimeout(YouTubeMusic.searchTrack(user!.id, item.title, item.artist), 10_000);
+            // Cache the resolved ID — fire-and-forget so future taps skip the search
+            if (ymID) {
+              supabase.from('shared_items').update({ youtube_music_id: ymID }).eq('id', item.id);
+            }
           }
           // Returns an array of fallbacks (e.g. youtubemusic://, then vnd.youtube://)
           if (ymID) deepLinks = YouTubeMusic.getYouTubeMusicDeepLink(ymID);
@@ -97,9 +105,14 @@ export default function Home() {
         );
       }
     } catch (err: any) {
-      const msg = err?.message === 'timeout'
-        ? 'Request timed out. Check your connection.'
-        : 'Something went wrong. Please try again.';
+      const msg =
+        err?.message === 'timeout'
+          ? 'Request timed out. Check your connection.'
+          : err?.message === 'youtube_quota_exceeded'
+            ? 'YouTube search quota reached for today. Try again tomorrow.'
+            : err?.message?.startsWith('youtube_music_topic_not_found')
+              ? 'This song isn\'t available as a YouTube Music Song yet. It may only exist as a video.'
+              : 'Something went wrong. Please try again.';
       Alert.alert('Error', msg);
       console.error('[Home] handleSongPress error:', err);
     } finally {
@@ -135,25 +148,29 @@ export default function Home() {
         </Text>
       </View>
 
-      <FlatList
-        data={items}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        refreshing={refreshing}
-        onRefresh={refresh}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          !loading ? (
+      {loading ? (
+        <View style={styles.spinnerContainer}>
+          <ActivityIndicator size="large" color="#fff" />
+        </View>
+      ) : (
+        <FlatList
+          data={items}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          refreshing={refreshing}
+          onRefresh={refresh}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>No songs yet</Text>
               <Text style={styles.emptySubtitle}>
                 When friends share songs with you they'll show up here.
               </Text>
             </View>
-          ) : null
-        }
-      />
+          }
+        />
+      )}
 
       <PlaylistModal
         item={playlistModalItem}
@@ -187,6 +204,11 @@ const styles = StyleSheet.create({
     color: '#555',
     fontSize: 13,
     fontWeight: '500',
+  },
+  spinnerContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   listContent: {
     paddingBottom: 24,

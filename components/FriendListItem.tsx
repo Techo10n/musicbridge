@@ -1,33 +1,25 @@
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Friendship, User } from '../types';
-import { useAuth } from '../hooks/useAuth';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image } from 'expo-image';
+import { User } from '../types';
 
 interface FriendListItemProps {
-  friendship: Friendship;
-  onShare: (friend: User) => void;
-  onAccept?: (friendshipId: string) => void;
-  onDecline?: (friendshipId: string) => void;
-  mode: 'friend' | 'pending';
+  user: User;
+  isFollowing: boolean;
+  onFollow: (userId: string) => void;
+  onUnfollow: (userId: string) => void;
+  onShare?: (user: User) => void;
+  showShare?: boolean;
 }
 
 export function FriendListItem({
-  friendship,
+  user,
+  isFollowing,
+  onFollow,
+  onUnfollow,
   onShare,
-  onAccept,
-  onDecline,
-  mode,
+  showShare = false,
 }: FriendListItemProps) {
-  const { user: currentUser } = useAuth();
-
-  // Determine which side of the friendship is the "other" person
-  const other =
-    friendship.requester_id === currentUser?.id
-      ? friendship.addressee
-      : friendship.requester;
-
-  if (!other) return null;
-
-  const initials = other.display_name
+  const initials = user.display_name
     .split(' ')
     .slice(0, 2)
     .map((w) => w[0])
@@ -37,8 +29,8 @@ export function FriendListItem({
   return (
     <View style={styles.container}>
       {/* Avatar */}
-      {other.avatar_url ? (
-        <Image source={{ uri: other.avatar_url }} style={styles.avatar} />
+      {user.avatar_url ? (
+        <Image source={{ uri: user.avatar_url }} style={styles.avatar} />
       ) : (
         <View style={styles.avatarPlaceholder}>
           <Text style={styles.initials}>{initials}</Text>
@@ -48,38 +40,32 @@ export function FriendListItem({
       {/* Name + username */}
       <View style={styles.info}>
         <Text style={styles.displayName} numberOfLines={1}>
-          {other.display_name}
+          {user.display_name}
         </Text>
-        <Text style={styles.username}>@{other.username}</Text>
+        <Text style={styles.username}>@{user.username}</Text>
       </View>
 
       {/* Actions */}
-      {mode === 'friend' ? (
+      <View style={styles.actions}>
+        {showShare && isFollowing && (
+          <TouchableOpacity
+            style={styles.shareButton}
+            onPress={() => onShare?.(user)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.shareButtonText}>Share</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
-          style={styles.shareButton}
-          onPress={() => onShare(other as User)}
+          style={[styles.followButton, isFollowing && styles.followingButton]}
+          onPress={() => (isFollowing ? onUnfollow(user.id) : onFollow(user.id))}
           activeOpacity={0.8}
         >
-          <Text style={styles.shareButtonText}>Share</Text>
+          <Text style={[styles.followButtonText, isFollowing && styles.followingButtonText]}>
+            {isFollowing ? 'Following' : 'Follow'}
+          </Text>
         </TouchableOpacity>
-      ) : (
-        <View style={styles.pendingActions}>
-          <TouchableOpacity
-            style={styles.acceptButton}
-            onPress={() => onAccept?.(friendship.id)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.acceptText}>Accept</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.declineButton}
-            onPress={() => onDecline?.(friendship.id)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.declineText}>Decline</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      </View>
     </View>
   );
 }
@@ -123,41 +109,39 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 13,
   },
-  shareButton: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingVertical: 7,
-    paddingHorizontal: 16,
-  },
-  shareButtonText: {
-    color: '#000',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  pendingActions: {
+  actions: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  acceptButton: {
-    backgroundColor: '#1DB954',
-    borderRadius: 8,
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-  },
-  acceptText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  declineButton: {
+  shareButton: {
     backgroundColor: '#2a2a2a',
     borderRadius: 8,
     paddingVertical: 7,
     paddingHorizontal: 14,
   },
-  declineText: {
-    color: '#888',
+  shareButtonText: {
+    color: '#fff',
     fontSize: 13,
     fontWeight: '600',
+  },
+  followButton: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+  },
+  followingButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#444',
+  },
+  followButtonText: {
+    color: '#000',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  followingButtonText: {
+    color: '#888',
   },
 });
