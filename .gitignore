@@ -47,3 +47,9 @@ supabase/.temp
 
 # ai agent instructions
 CLAUDE.md
+
+#personal knowledge base for claude
+/knowledge_base/*
+
+#potential future ideas
+IDEAS.md
