@@ -73,3 +73,13 @@
 - ISRC-based track matching for higher-fidelity cross-platform conversion
 - Unified search across all connected services at once
 - Offline mode — cache recently shared items for browsing without a connection
+
+
+Favorite song should have a search menu that properly looks up songs. Right now, it                 
+  can only find YouTube like results For example, when I search for about you, at                     
+  first it doesn't show the song I want by the 1975. And if I add 1975 to it, it only                 
+  shows the 1975 about you (official). By the 1975 Vivo instead of just about you by                  
+  the 1975. Secondly, you should be able to delete your favorite song. Also, don't                    
+  make the user click pin to play pinned playlist twice. If you're gonna have a button                
+  to add it, then just let them add it directly instead of going into the edit                        
+  profile and then again having to add it there.

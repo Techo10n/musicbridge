@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -36,6 +37,19 @@ function toTrackPayload(t: LibraryTrack): Track {
     apple_music_id: t.service === 'apple_music' ? t.id : null,
     youtube_music_id: t.service === 'youtube_music' ? t.id : null,
   };
+}
+
+async function openTrackInService(track: LibraryTrack) {
+  let urls: string[] = [];
+  if (track.service === 'spotify') urls = Spotify.getSpotifyDeepLink(track.id);
+  else if (track.service === 'apple_music') urls = AppleMusic.getAppleMusicDeepLink(track.id);
+  else if (track.service === 'youtube_music') urls = YouTubeMusic.getYouTubeMusicDeepLink(track.id);
+  for (const url of urls) {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) { await Linking.openURL(url); return; }
+    } catch {}
+  }
 }
 
 export function LibraryPlaylistDetailModal({
@@ -88,6 +102,11 @@ export function LibraryPlaylistDetailModal({
           return;
         }
         let result: LibraryTrack[] = [];
+        if (service === 'youtube_music' && playlist.id === '__liked_music__') {
+          result = await withTimeout(YouTubeMusic.getLikedMusic(user.id), 20_000);
+          if (!cancelled) setTracks(result);
+          return;
+        }
         if (service === 'spotify') {
           result = await withTimeout(Spotify.getPlaylistTracks(user.id, playlist.id), 20_000);
         } else if (service === 'apple_music') {
@@ -209,17 +228,23 @@ export function LibraryPlaylistDetailModal({
 
   const renderTrack = ({ item: track, index }: { item: LibraryTrack; index: number }) => (
     <View style={styles.trackRow}>
-      {track.coverUrl ? (
-        <Image source={{ uri: track.coverUrl }} style={styles.trackCover} />
-      ) : (
-        <View style={[styles.trackCover, styles.trackCoverPlaceholder]}>
-          <Text style={styles.trackIndexFallback}>{index + 1}</Text>
+      <TouchableOpacity
+        style={styles.trackTappableArea}
+        onPress={() => openTrackInService(track)}
+        activeOpacity={0.7}
+      >
+        {track.coverUrl ? (
+          <Image source={{ uri: track.coverUrl }} style={styles.trackCover} />
+        ) : (
+          <View style={[styles.trackCover, styles.trackCoverPlaceholder]}>
+            <Text style={styles.trackIndexFallback}>{index + 1}</Text>
+          </View>
+        )}
+        <View style={styles.trackInfo}>
+          <Text style={styles.trackTitle} numberOfLines={1}>{track.title}</Text>
+          <Text style={styles.trackArtist} numberOfLines={1}>{track.artist}</Text>
         </View>
-      )}
-      <View style={styles.trackInfo}>
-        <Text style={styles.trackTitle} numberOfLines={1}>{track.title}</Text>
-        <Text style={styles.trackArtist} numberOfLines={1}>{track.artist}</Text>
-      </View>
+      </TouchableOpacity>
       <TouchableOpacity
         style={styles.shareTrackButton}
         onPress={() => openPickerForTrack(track)}
@@ -252,9 +277,9 @@ export function LibraryPlaylistDetailModal({
           ) : (
             <View style={[styles.cover, styles.coverPlaceholder]}>
               <Ionicons
-                name={playlist.id === '__liked_songs__' ? 'heart' : 'musical-notes'}
+                name={(playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? 'heart' : 'musical-notes'}
                 size={28}
-                color={playlist.id === '__liked_songs__' ? '#1DB954' : '#555'}
+                color={(playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? (playlist.id === '__liked_music__' ? '#FF0000' : '#1DB954') : '#555'}
               />
             </View>
           )}
@@ -262,7 +287,7 @@ export function LibraryPlaylistDetailModal({
             <Text style={styles.playlistTitle} numberOfLines={2}>{playlist.name}</Text>
             <Text style={styles.trackCount}>
               {loadingTracks
-                ? 'Loading tracks…'
+                ? 'Loading…'
                 : `${tracks.length} track${tracks.length !== 1 ? 's' : ''}`}
             </Text>
           </View>
@@ -272,32 +297,35 @@ export function LibraryPlaylistDetailModal({
         </View>
 
         {/* Track list */}
-        {loadingTracks ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator color="#fff" size="large" />
-            <Text style={styles.loadingText}>Loading tracks…</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={tracks}
-            renderItem={renderTrack}
-            keyExtractor={(t, i) => `${t.id}-${i}`}
-            style={styles.list}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-            ListEmptyComponent={
+        <FlatList
+          data={tracks}
+          renderItem={renderTrack}
+          keyExtractor={(t, i) => `${t.id}-${i}`}
+          style={styles.list}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListHeaderComponent={
+            loadingTracks ? (
+              <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
+                <ActivityIndicator color="#fff" size="large" />
+                <Text style={{ color: '#555', fontSize: 14 }}>Loading tracks…</Text>
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            loadingTracks ? null : (
               <Text style={styles.emptyText}>No tracks found in this playlist</Text>
-            }
-            ListFooterComponent={
-              streamingMore ? (
-                <View style={{ alignItems: 'center', paddingVertical: 16 }}>
-                  <ActivityIndicator color="#555" size="small" />
-                </View>
-              ) : (
-                <View style={{ height: 20 }} />
-              )
-            }
-          />
-        )}
+            )
+          }
+          ListFooterComponent={
+            streamingMore ? (
+              <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                <ActivityIndicator color="#555" size="small" />
+              </View>
+            ) : (
+              <View style={{ height: 20 }} />
+            )
+          }
+        />
 
         {/* Footer: share whole playlist */}
         <View style={styles.footer}>
@@ -426,16 +454,6 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 18,
   },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  loadingText: {
-    color: '#555',
-    fontSize: 14,
-  },
   list: {
     flex: 1,
   },
@@ -444,6 +462,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
+    gap: 12,
+  },
+  trackTappableArea: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
   },
   trackCover: {

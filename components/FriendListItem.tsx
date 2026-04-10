@@ -9,6 +9,7 @@ interface FriendListItemProps {
   onUnfollow: (userId: string) => void;
   onShare?: (user: User) => void;
   showShare?: boolean;
+  onViewProfile?: (user: User) => void;
 }
 
 export function FriendListItem({
@@ -18,6 +19,7 @@ export function FriendListItem({
   onUnfollow,
   onShare,
   showShare = false,
+  onViewProfile,
 }: FriendListItemProps) {
   const initials = user.display_name
     .split(' ')
@@ -28,22 +30,29 @@ export function FriendListItem({
 
   return (
     <View style={styles.container}>
-      {/* Avatar */}
-      {user.avatar_url ? (
-        <Image source={{ uri: user.avatar_url }} style={styles.avatar} />
-      ) : (
-        <View style={styles.avatarPlaceholder}>
-          <Text style={styles.initials}>{initials}</Text>
-        </View>
-      )}
+      {/* Avatar + info — tappable to view profile */}
+      <TouchableOpacity
+        style={styles.profileTouchable}
+        onPress={() => onViewProfile?.(user)}
+        activeOpacity={onViewProfile ? 0.7 : 1}
+        disabled={!onViewProfile}
+      >
+        {user.avatar_url ? (
+          <Image source={{ uri: user.avatar_url }} style={styles.avatar} />
+        ) : (
+          <View style={styles.avatarPlaceholder}>
+            <Text style={styles.initials}>{initials}</Text>
+          </View>
+        )}
 
-      {/* Name + username */}
-      <View style={styles.info}>
-        <Text style={styles.displayName} numberOfLines={1}>
-          {user.display_name}
-        </Text>
-        <Text style={styles.username}>@{user.username}</Text>
-      </View>
+        {/* Name + username */}
+        <View style={styles.info}>
+          <Text style={styles.displayName} numberOfLines={1}>
+            {user.display_name}
+          </Text>
+          <Text style={styles.username}>@{user.username}</Text>
+        </View>
+      </TouchableOpacity>
 
       {/* Actions */}
       <View style={styles.actions}>
@@ -76,6 +85,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 16,
+    gap: 12,
+  },
+  profileTouchable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
   },
   avatar: {

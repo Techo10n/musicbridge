@@ -213,27 +213,41 @@ async function createSpotifyPlaylist(
   name: string,
   trackIds: string[],
 ): Promise<string | null> {
-  const meRes = await fetch('https://api.spotify.com/v1/me', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!meRes.ok) return null;
-  const me = await meRes.json();
-
-  const createRes = await fetch(`https://api.spotify.com/v1/users/${me.id}/playlists`, {
+  // Use /v1/me/playlists — simpler than /v1/users/{id}/playlists and avoids
+  // an extra /v1/me round-trip to look up the user ID.
+  const createRes = await fetch('https://api.spotify.com/v1/me/playlists', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, public: false, description: 'Shared via MusicBridge' }),
   });
-  if (!createRes.ok) return null;
+  if (!createRes.ok) {
+    const errText = await createRes.text().catch(() => '(unreadable)');
+    console.error(`[convert-playlist] Spotify playlist create failed: ${createRes.status} ${errText}`);
+    return null;
+  }
   const playlist = await createRes.json();
 
+  if (!playlist.id) {
+    console.error('[convert-playlist] Spotify playlist create: no id in response', JSON.stringify(playlist));
+    return null;
+  }
+
   if (trackIds.length > 0) {
+    // Spotify allows max 100 URIs per request — batch if needed
     const uris = trackIds.map((id) => `spotify:track:${id}`);
-    await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uris }),
-    });
+    for (let i = 0; i < uris.length; i += 100) {
+      const batch = uris.slice(i, i + 100);
+      const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: batch }),
+      });
+      if (!addRes.ok) {
+        const errText = await addRes.text().catch(() => '(unreadable)');
+        console.error(`[convert-playlist] Spotify add tracks failed (batch ${i}): ${addRes.status} ${errText}`);
+        // Don't abort — playlist was created, partial tracks is better than nothing
+      }
+    }
   }
 
   return playlist.id;
@@ -287,8 +301,14 @@ serve(async (req) => {
     global: { headers: { Authorization: authHeader } },
   });
 
-  const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
-  if (authError || !authUser) return json({ error: 'Unauthorized' }, 401);
+  // Must pass the JWT explicitly — there is no persistent session in edge functions,
+  // so getUser() without arguments returns null even with a valid token.
+  const jwt = authHeader.replace('Bearer ', '');
+  const { data: { user: authUser }, error: authError } = await supabase.auth.getUser(jwt);
+  if (authError || !authUser) {
+    console.error('[convert-playlist] auth.getUser failed:', authError?.message);
+    return json({ error: 'Unauthorized' }, 401);
+  }
 
   let body: { sharedItemId?: string };
   try {
@@ -308,7 +328,10 @@ serve(async (req) => {
     .eq('recipient_id', authUser.id)
     .single();
 
-  if (itemErr || !item) return json({ error: 'Shared item not found' }, 404);
+  if (itemErr || !item) {
+    console.error('[convert-playlist] shared item fetch failed:', itemErr?.message);
+    return json({ error: 'Shared item not found' }, 404);
+  }
   if (item.type !== 'playlist') return json({ error: 'Item is not a playlist' }, 400);
   if (!item.tracks?.length) return json({ error: 'Playlist has no tracks' }, 400);
 
@@ -321,7 +344,10 @@ serve(async (req) => {
     .eq('id', authUser.id)
     .single();
 
-  if (recipientErr || !recipient) return json({ error: 'Recipient profile not found' }, 404);
+  if (recipientErr || !recipient) {
+    console.error('[convert-playlist] recipient fetch failed:', recipientErr?.message);
+    return json({ error: 'Recipient profile not found' }, 404);
+  }
 
   const primaryService: string = recipient.primary_service;
 
@@ -341,11 +367,9 @@ serve(async (req) => {
     const hasToken = primaryService === 'spotify'
       ? !!recipient.spotify_access_token
       : !!recipient.youtube_access_token;
-    await supabase
-      .from('shared_items')
-      .update({ conversion_status: 'failed' })
-      .eq('id', sharedItemId);
     const errMsg = hasToken ? 'spotify_token_refresh_failed' : 'not_connected';
+    console.error(`[convert-playlist] No access token for ${primaryService}. hasToken=${hasToken}, errMsg=${errMsg}`);
+    await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     return json({ error: errMsg }, 400);
   }
 
@@ -403,6 +427,8 @@ serve(async (req) => {
     return json({ error: 'No tracks could be matched on the destination service' }, 422);
   }
 
+  console.log(`[convert-playlist] Resolved ${resolvedIds.length}/${tracks.length} tracks for ${primaryService}`);
+
   // ── Create the playlist ────────────────────────────────────────────────────
 
   let playlistId: string | null = null;
@@ -413,11 +439,9 @@ serve(async (req) => {
   }
 
   if (!playlistId) {
-    await supabase
-      .from('shared_items')
-      .update({ conversion_status: 'failed' })
-      .eq('id', sharedItemId);
-    return json({ error: 'Failed to create playlist on destination service' }, 500);
+    console.error(`[convert-playlist] Playlist creation returned null for service=${primaryService}`);
+    await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
+    return json({ error: 'playlist_creation_failed' }, 500);
   }
 
   // ── Write playlist ID and mark done ───────────────────────────────────────

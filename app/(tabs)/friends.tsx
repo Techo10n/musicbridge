@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFollows } from '../../hooks/useFollows';
 import { FriendListItem } from '../../components/FriendListItem';
 import { ShareModal } from '../../components/ShareModal';
+import { UserProfileModal } from '../../components/UserProfileModal';
 import { User } from '../../types';
 
 type Tab = 'following' | 'followers';
@@ -26,6 +27,7 @@ export default function People() {
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
   const [shareRecipient, setShareRecipient] = useState<User | null>(null);
+  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) {
@@ -106,6 +108,7 @@ export default function People() {
                 isFollowing={isFollowing(u.id)}
                 onFollow={handleFollow}
                 onUnfollow={handleUnfollow}
+                onViewProfile={(user) => setViewingUserId(user.id)}
               />
             </View>
           ))}
@@ -150,6 +153,7 @@ export default function People() {
               onUnfollow={handleUnfollow}
               onShare={(u) => setShareRecipient(u)}
               showShare={mutualFollows.some((m) => m.id === item.id)}
+              onViewProfile={(u) => setViewingUserId(u.id)}
             />
           )}
           keyExtractor={(u) => u.id}
@@ -173,6 +177,11 @@ export default function People() {
         recipient={shareRecipient}
         onClose={() => setShareRecipient(null)}
         onShared={() => setShareRecipient(null)}
+      />
+
+      <UserProfileModal
+        userId={viewingUserId}
+        onClose={() => setViewingUserId(null)}
       />
     </SafeAreaView>
   );

@@ -84,9 +84,10 @@ export default function Profile() {
   const [signingOut, setSigningOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  // Inline edit state
-  const [editingBio, setEditingBio] = useState(false);
-  const [bioDraft, setBioDraft] = useState('');
+  // Edit Profile modal state
+  const [editProfileVisible, setEditProfileVisible] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftBio, setDraftBio] = useState('');
 
   // Follower/following counts (fetched once)
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
@@ -138,24 +139,25 @@ export default function Profile() {
     }
   };
 
-  // ─── Bio editing ──────────────────────────────────────────────────────────
+  // ─── Edit Profile modal ───────────────────────────────────────────────────
 
-  const startEditingBio = () => {
-    setBioDraft(user?.bio ?? '');
-    setEditingBio(true);
+  const openEditProfile = () => {
+    setDraftName(user?.display_name ?? '');
+    setDraftBio(user?.bio ?? '');
+    setEditProfileVisible(true);
   };
 
-  const saveBio = async () => {
+  const saveProfile = async () => {
     if (!user) return;
-    setEditingBio(false);
+    setEditProfileVisible(false);
     try {
-      await supabase
-        .from('users')
-        .update({ bio: bioDraft.trim() || null })
-        .eq('id', user.id);
+      await supabase.from('users').update({
+        display_name: draftName.trim() || user.display_name,
+        bio: draftBio.trim() || null,
+      }).eq('id', user.id);
       await refreshUser();
     } catch {
-      Alert.alert('Error', 'Could not save bio');
+      Alert.alert('Error', 'Could not save profile');
     }
   };
 
@@ -347,11 +349,7 @@ export default function Profile() {
 
         {/* ── Avatar + name + username ────────────────────────────────────── */}
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.avatarWrapper}
-            onPress={handleAvatarPress}
-            activeOpacity={0.8}
-          >
+          <View style={styles.avatarWrapper}>
             {user.avatar_url ? (
               <Image source={{ uri: user.avatar_url }} style={styles.avatar} />
             ) : (
@@ -364,43 +362,26 @@ export default function Profile() {
                 <ActivityIndicator color="#fff" size="small" />
               </View>
             )}
-            <View style={styles.cameraIcon}>
-              <Text style={styles.cameraEmoji}>📷</Text>
-            </View>
-          </TouchableOpacity>
+          </View>
 
           <Text style={styles.displayName}>{user.display_name}</Text>
           <Text style={styles.username}>@{user.username}</Text>
 
-          {/* Bio */}
-          {editingBio ? (
-            <View style={styles.bioEditRow}>
-              <TextInput
-                style={styles.bioInput}
-                value={bioDraft}
-                onChangeText={setBioDraft}
-                placeholder="Write a bio…"
-                placeholderTextColor="#444"
-                multiline
-                autoFocus
-                maxLength={160}
-              />
-              <View style={styles.bioEditActions}>
-                <TouchableOpacity onPress={() => setEditingBio(false)} style={styles.bioCancel}>
-                  <Text style={styles.bioCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={saveBio} style={styles.bioSave}>
-                  <Text style={styles.bioSaveText}>Save</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+          {/* Bio (read-only) */}
+          {user.bio ? (
+            <Text style={styles.bio}>{user.bio}</Text>
           ) : (
-            <TouchableOpacity onPress={startEditingBio} activeOpacity={0.7}>
-              <Text style={user.bio ? styles.bio : styles.bioPlaceholder}>
-                {user.bio ?? 'Add a bio…'}
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.bioPlaceholder}>No bio yet</Text>
           )}
+
+          {/* Edit Profile button */}
+          <TouchableOpacity
+            style={styles.editProfileButton}
+            onPress={openEditProfile}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+          </TouchableOpacity>
         </View>
 
         {/* ── Followers / Following / Shared stats ────────────────────────── */}
@@ -415,11 +396,7 @@ export default function Profile() {
         {/* ── Favorite song ────────────────────────────────────────────────── */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Favorite Song</Text>
-          <TouchableOpacity
-            style={styles.favSongRow}
-            onPress={() => setFavSongModalVisible(true)}
-            activeOpacity={0.8}
-          >
+          <View style={styles.favSongRow}>
             {user.favorite_song ? (
               <>
                 {user.favorite_song.cover_url ? (
@@ -448,9 +425,9 @@ export default function Profile() {
                 />
               </>
             ) : (
-              <Text style={styles.favPlaceholder}>Tap to set your favorite song</Text>
+              <Text style={styles.favPlaceholder}>No favorite song set</Text>
             )}
-          </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── Taste tags (Spotify only) ────────────────────────────────────── */}
@@ -554,7 +531,7 @@ export default function Profile() {
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Pinned Playlists</Text>
             {stats.pinnedPlaylists.length < 3 && (
-              <TouchableOpacity onPress={openPinnedPicker} style={styles.addButton}>
+              <TouchableOpacity onPress={openEditProfile} style={styles.addButton}>
                 <Text style={styles.addButtonText}>+ Add</Text>
               </TouchableOpacity>
             )}
@@ -691,6 +668,129 @@ export default function Profile() {
 
         <View style={{ height: 48 }} />
       </ScrollView>
+
+      {/* ── Edit Profile Modal ────────────────────────────────────────────── */}
+      <Modal
+        visible={editProfileVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setEditProfileVisible(false)}
+      >
+        <View style={modalStyles.container}>
+          <View style={modalStyles.header}>
+            <Text style={modalStyles.title}>Edit Profile</Text>
+            <TouchableOpacity
+              onPress={() => setEditProfileVisible(false)}
+              style={modalStyles.close}
+            >
+              <Text style={modalStyles.closeText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.editModalScroll}>
+            {/* Avatar */}
+            <TouchableOpacity
+              style={styles.editAvatarRow}
+              onPress={async () => {
+                setEditProfileVisible(false);
+                await handleAvatarPress();
+                setEditProfileVisible(true);
+              }}
+              activeOpacity={0.8}
+            >
+              {user.avatar_url ? (
+                <Image source={{ uri: user.avatar_url }} style={styles.editAvatar} />
+              ) : (
+                <View style={[styles.editAvatar, styles.avatarFallback]}>
+                  <Text style={styles.initials}>{initials}</Text>
+                </View>
+              )}
+              <Text style={styles.editAvatarLabel}>Change Photo</Text>
+            </TouchableOpacity>
+
+            {/* Display Name */}
+            <Text style={styles.editFieldLabel}>Display Name</Text>
+            <TextInput
+              style={styles.editInput}
+              value={draftName}
+              onChangeText={setDraftName}
+              placeholder="Display name"
+              placeholderTextColor="#444"
+              autoCapitalize="words"
+              maxLength={50}
+            />
+
+            {/* Bio */}
+            <Text style={styles.editFieldLabel}>Bio</Text>
+            <TextInput
+              style={[styles.editInput, styles.editInputMultiline]}
+              value={draftBio}
+              onChangeText={setDraftBio}
+              placeholder="Write a bio…"
+              placeholderTextColor="#444"
+              multiline
+              maxLength={160}
+              textAlignVertical="top"
+            />
+
+            {/* Favorite Song */}
+            <Text style={styles.editFieldLabel}>Favorite Song</Text>
+            <TouchableOpacity
+              style={styles.editRowItem}
+              onPress={() => {
+                setEditProfileVisible(false);
+                setFavSongModalVisible(true);
+              }}
+              activeOpacity={0.8}
+            >
+              {user.favorite_song ? (
+                <>
+                  {user.favorite_song.cover_url ? (
+                    <Image source={{ uri: user.favorite_song.cover_url }} style={styles.editRowCover} />
+                  ) : (
+                    <View style={[styles.editRowCover, styles.favCoverFallback]}>
+                      <Text style={{ fontSize: 14 }}>🎵</Text>
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.editRowTitle} numberOfLines={1}>{user.favorite_song.title}</Text>
+                    <Text style={styles.editRowMeta} numberOfLines={1}>{user.favorite_song.artist}</Text>
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.editRowPlaceholder}>Tap to set favorite song</Text>
+              )}
+              <Text style={styles.editRowChevron}>›</Text>
+            </TouchableOpacity>
+
+            {/* Pinned Playlists */}
+            <Text style={styles.editFieldLabel}>Pinned Playlists</Text>
+            <TouchableOpacity
+              style={styles.editRowItem}
+              onPress={() => {
+                setEditProfileVisible(false);
+                openPinnedPicker();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.editRowPlaceholder}>
+                {stats.pinnedPlaylists.length > 0
+                  ? `${stats.pinnedPlaylists.length} playlist${stats.pinnedPlaylists.length > 1 ? 's' : ''} pinned`
+                  : 'Pin up to 3 playlists'}
+              </Text>
+              <Text style={styles.editRowChevron}>›</Text>
+            </TouchableOpacity>
+
+            {/* Save */}
+            <TouchableOpacity
+              style={styles.saveProfileButton}
+              onPress={saveProfile}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.saveProfileButtonText}>Save</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* ── Pinned Playlist Picker Modal ───────────────────────────────────── */}
       <Modal
@@ -892,16 +992,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cameraIcon: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 3,
+  editProfileButton: {
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    marginTop: 12,
   },
-  cameraEmoji: {
+  editProfileButtonText: {
+    color: '#fff',
     fontSize: 14,
+    fontWeight: '600',
   },
   displayName: {
     color: '#fff',
@@ -927,45 +1029,77 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
   },
-  bioEditRow: {
-    width: '100%',
-    marginTop: 4,
+  // ── Edit Profile modal fields ─────────────────────────────────────────────
+  editModalScroll: {
+    padding: 20,
+    paddingBottom: 48,
   },
-  bioInput: {
+  editAvatarRow: {
+    alignItems: 'center',
+    marginBottom: 24,
+    gap: 10,
+  },
+  editAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  editAvatarLabel: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  editFieldLabel: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+    marginTop: 18,
+  },
+  editInput: {
     backgroundColor: '#1a1a1a',
     borderRadius: 10,
     padding: 12,
     color: '#fff',
-    fontSize: 14,
+    fontSize: 15,
     borderWidth: 1,
     borderColor: '#2a2a2a',
-    minHeight: 60,
+  },
+  editInputMultiline: {
+    minHeight: 80,
     textAlignVertical: 'top',
   },
-  bioEditActions: {
+  editRowItem: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-    marginTop: 8,
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 10,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
   },
-  bioCancel: {
-    paddingVertical: 7,
-    paddingHorizontal: 14,
+  editRowCover: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
   },
-  bioCancelText: {
-    color: '#666',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  bioSave: {
+  editRowTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 1 },
+  editRowMeta: { color: '#666', fontSize: 12 },
+  editRowPlaceholder: { color: '#444', fontSize: 14, flex: 1, fontStyle: 'italic' },
+  editRowChevron: { color: '#444', fontSize: 20, marginLeft: 'auto' },
+  saveProfileButton: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingVertical: 7,
-    paddingHorizontal: 16,
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 32,
   },
-  bioSaveText: {
+  saveProfileButtonText: {
     color: '#000',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '700',
   },
 

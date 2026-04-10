@@ -51,13 +51,25 @@ export function useLibrary() {
           break;
         }
         case 'youtube_music': {
-          const [p, t] = await Promise.all([
+          const [p, channels] = await Promise.all([
             YouTubeMusic.getUserPlaylists(user.id),
-            YouTubeMusic.getLikedMusic(user.id),
+            YouTubeMusic.getSubscribedChannels(user.id, 50),
           ]);
-          setPlaylists(p);
-          setSavedTracks(t);
-          setFollowedArtists([]);
+          const likedMusic: LibraryPlaylist = {
+            id: '__liked_music__',
+            name: 'Liked Music',
+            coverUrl: '',
+            trackCount: 0,
+            service: 'youtube_music' as MusicService,
+          };
+          setPlaylists([likedMusic, ...p]);
+          setSavedTracks([]);
+          const artists: LibraryArtist[] = channels.map((ch) => ({
+            id: ch.id,
+            name: ch.name,
+            imageUrl: ch.imageUrl,
+          }));
+          setFollowedArtists(artists);
           break;
         }
       }

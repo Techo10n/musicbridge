@@ -26,10 +26,10 @@ const SCOPES = ['https://www.googleapis.com/auth/youtube'];
 export async function connectYouTubeMusic(userId: string): Promise<boolean> {
   if (!GOOGLE_CLIENT_ID) throw new Error('EXPO_PUBLIC_GOOGLE_CLIENT_ID is not set');
 
+  // Google blocks the auth.expo.io shared proxy. Native apps must use the
+  // reverse client ID as the redirect scheme (already registered in app.json).
   const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'https',
-    host: 'auth.expo.io',
-    path: '@techolon/musicbridge',
+    scheme: 'com.googleusercontent.apps.215416693574-ul79o63f153r4eapd9n5a6067roa132b',
   });
 
   const request = new AuthSession.AuthRequest({
@@ -702,14 +702,29 @@ export async function getLikedMusic(userId: string): Promise<LibraryTrack[]> {
 
 // ─── Profile stats ────────────────────────────────────────────────────────────
 
+const NON_MUSIC_KEYWORDS = [
+  'news', 'sports', 'gaming', 'games', 'tech', 'technology', 'comedy',
+  'vlog', 'vlogs', 'cooking', 'food', 'travel', 'fitness', 'workout',
+  'beauty', 'fashion', 'politics', 'finance', 'investing', 'nba', 'nfl',
+  'soccer', 'football', 'basketball', 'baseball', 'cricket',
+];
+
+function looksLikeMusicChannel(title: string): boolean {
+  const lower = title.toLowerCase();
+  return !NON_MUSIC_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 /**
  * Returns channels the user is subscribed to on YouTube.
  * These are the closest equivalent to "followed artists" on YouTube Music.
  * Requires youtube.readonly scope (already included in SCOPES).
+ *
+ * Fetches up to `limit` subscriptions alphabetically, then applies a
+ * best-effort client-side filter to remove obviously non-music channels.
  */
 export async function getSubscribedChannels(
   userId: string,
-  limit = 10,
+  limit = 50,
 ): Promise<Array<{ id: string; name: string; imageUrl: string }>> {
   const accessToken = await getYouTubeAccessToken(userId);
   if (!accessToken) return [];
@@ -729,14 +744,16 @@ export async function getSubscribedChannels(
         };
       }>;
     };
-    return data.items.map((item) => ({
-      id: item.snippet.resourceId.channelId,
-      name: item.snippet.title,
-      imageUrl:
-        item.snippet.thumbnails.medium?.url ??
-        item.snippet.thumbnails.default?.url ??
-        '',
-    }));
+    return data.items
+      .filter((item) => looksLikeMusicChannel(item.snippet.title))
+      .map((item) => ({
+        id: item.snippet.resourceId.channelId,
+        name: item.snippet.title,
+        imageUrl:
+          item.snippet.thumbnails.medium?.url ??
+          item.snippet.thumbnails.default?.url ??
+          '',
+      }));
   } catch {
     return [];
   }

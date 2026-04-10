@@ -24,21 +24,22 @@ export async function pickAndUploadAvatar(userId: string): Promise<string | null
   if (result.canceled || !result.assets[0]) return null;
 
   const asset = result.assets[0];
-  const uri = asset.uri;
+
+  // Derive a consistent file extension
+  const ext = asset.mimeType === 'image/png' ? 'png' : 'jpg';
+  const path = `${userId}/avatar.${ext}`;
 
   try {
-    // Fetch the image as a blob
-    const response = await fetch(uri);
-    const blob = await response.blob();
+    const formData = new FormData();
+    formData.append('file', {
+      uri: asset.uri,
+      name: `avatar.${ext}`,
+      type: asset.mimeType ?? 'image/jpeg',
+    } as any);
 
-    // Derive a consistent file extension
-    const ext = asset.mimeType === 'image/png' ? 'png' : 'jpg';
-    const path = `${userId}/avatar.${ext}`;
-
-    // Upload to Supabase Storage
     const { error: uploadError } = await supabase.storage
       .from('avatars')
-      .upload(path, blob, {
+      .upload(path, formData, {
         contentType: asset.mimeType ?? 'image/jpeg',
         upsert: true,
       });
@@ -48,11 +49,10 @@ export async function pickAndUploadAvatar(userId: string): Promise<string | null
       return null;
     }
 
-    // Get the public URL
+    // Add cache-busting timestamp so React Native re-fetches the image
     const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
-    const publicUrl = urlData.publicUrl;
+    const publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
 
-    // Save to users table
     const { error: updateError } = await supabase
       .from('users')
       .update({ avatar_url: publicUrl })

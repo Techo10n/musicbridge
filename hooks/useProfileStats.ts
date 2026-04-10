@@ -5,8 +5,8 @@ import * as Spotify from '../lib/spotify';
 import * as YouTube from '../lib/youtubeMusic';
 import { TopTrack, TopArtist, RecentTrack, WrappedStats, LibraryPlaylist } from '../types';
 
-const PINNED_KEY = 'profile_pinned_playlists';
-const HISTORY_OPT_IN_KEY = 'profile_history_opt_in';
+const getPinnedKey = (userId: string) => `profile_pinned_playlists_${userId}`;
+const getHistoryOptInKey = (userId: string) => `profile_history_opt_in_${userId}`;
 const MAX_PINNED = 3;
 
 export interface ProfileStats {
@@ -45,44 +45,48 @@ export function useProfileStats() {
   // ─── Pinned playlists ────────────────────────────────────────────────────────
 
   const loadPinned = useCallback(async () => {
+    if (!user) return;
     try {
-      const raw = await AsyncStorage.getItem(PINNED_KEY);
+      const raw = await AsyncStorage.getItem(getPinnedKey(user.id));
       if (raw) setPinnedPlaylists(JSON.parse(raw) as LibraryPlaylist[]);
     } catch {}
-  }, []);
+  }, [user]);
 
   const pinPlaylist = useCallback(async (playlist: LibraryPlaylist) => {
+    const key = getPinnedKey(user?.id ?? 'unknown');
     setPinnedPlaylists((prev) => {
       if (prev.find((p) => p.id === playlist.id)) return prev;
       const next = [...prev, playlist].slice(0, MAX_PINNED);
-      AsyncStorage.setItem(PINNED_KEY, JSON.stringify(next)).catch(() => {});
+      AsyncStorage.setItem(key, JSON.stringify(next)).catch(() => {});
       return next;
     });
-  }, []);
+  }, [user]);
 
   const unpinPlaylist = useCallback(async (playlistId: string) => {
+    const key = getPinnedKey(user?.id ?? 'unknown');
     setPinnedPlaylists((prev) => {
       const next = prev.filter((p) => p.id !== playlistId);
-      AsyncStorage.setItem(PINNED_KEY, JSON.stringify(next)).catch(() => {});
+      AsyncStorage.setItem(key, JSON.stringify(next)).catch(() => {});
       return next;
     });
-  }, []);
+  }, [user]);
 
   // ─── History opt-in ──────────────────────────────────────────────────────────
 
   const loadHistoryPref = useCallback(async () => {
+    if (!user) return;
     try {
-      const val = await AsyncStorage.getItem(HISTORY_OPT_IN_KEY);
+      const val = await AsyncStorage.getItem(getHistoryOptInKey(user.id));
       setHistoryOptIn(val === 'true');
     } catch {}
-  }, []);
+  }, [user]);
 
   const setHistoryOptInPref = useCallback(async (enabled: boolean) => {
     setHistoryOptIn(enabled);
     try {
-      await AsyncStorage.setItem(HISTORY_OPT_IN_KEY, enabled ? 'true' : 'false');
+      await AsyncStorage.setItem(getHistoryOptInKey(user?.id ?? 'unknown'), enabled ? 'true' : 'false');
     } catch {}
-  }, []);
+  }, [user]);
 
   // ─── Taste tags from genres ───────────────────────────────────────────────────
 

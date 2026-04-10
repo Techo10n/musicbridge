@@ -192,6 +192,8 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
         errorMsg = 'Your Spotify session has expired. Go to Profile and reconnect Spotify.';
       } else if (failureReason === 'not_connected') {
         errorMsg = `You are not connected to ${serviceName(primaryService ?? 'spotify')}. Go to Profile and connect your account.`;
+      } else if (failureReason === 'playlist_creation_failed') {
+        errorMsg = `Tracks were found but the playlist couldn't be created on ${serviceName(primaryService)}. Try reconnecting ${serviceName(primaryService)} in Profile.`;
       }
       return (
         <View style={styles.failedContainer}>
