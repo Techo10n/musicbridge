@@ -343,7 +343,12 @@ export async function createPlaylist(
           body: JSON.stringify({ uris: chunk }),
         });
         if (!addRes.ok) {
-          console.error('[Spotify] add playlist tracks error:', addRes.status, await addRes.text());
+          const chunkNumber = Math.floor(i / 100) + 1;
+          console.error(
+            `[Spotify] add playlist tracks error (chunk ${chunkNumber}):`,
+            addRes.status,
+            await addRes.text(),
+          );
           return null;
         }
       }
