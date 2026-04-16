@@ -191,6 +191,7 @@ export default function LibraryScreen() {
       ) : (
         <ScrollView
           style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
           refreshControl={
             <RefreshControl
               refreshing={loading}
@@ -321,6 +322,9 @@ const styles = StyleSheet.create({
   },
   scroll: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   section: {
     marginTop: 28,

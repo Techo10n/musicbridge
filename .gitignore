@@ -47,9 +47,11 @@ supabase/.temp
 
 # ai agent instructions
 CLAUDE.md
+/.claude
+/.juno_task
 
 #personal knowledge base for claude
-/knowledge_base/*
+/knowledge_base
 
 #potential future ideas
 IDEAS.md

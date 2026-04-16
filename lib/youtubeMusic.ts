@@ -158,6 +158,62 @@ function norm(s: string): string {
 }
 
 /**
+ * Extracts a clean artist name from a YouTube channel title.
+ *
+ * Handles:
+ *  - "Artist Name - Topic"  → "Artist Name"  (auto-generated channels)
+ *  - "ArtistNameVEVO"       → "ArtistName"   (Vevo channels)
+ *
+ * Returns the cleaned string; callers should check whether it looks like a
+ * label/uploader and fall back to title parsing if so.
+ */
+export function cleanChannelToArtist(channelTitle: string): string {
+  return channelTitle
+    .replace(/ - Topic$/i, '')
+    .replace(/VEVO$/i, '')
+    .trim();
+}
+
+/**
+ * Returns true when the channel title belongs to a record label, distributor,
+ * or generic uploader rather than an individual artist.  When this is true,
+ * callers should try to parse the artist from the video title instead.
+ */
+function looksLikeLabelChannel(channelTitle: string): boolean {
+  const LABEL_PATTERN = /\b(records?|music\s*group|entertainment|universal|sony|warner|atlantic|republic|columbia|island|interscope|def\s*jam|capitol|rca|epic|elektra|big\s*machine|young\s*money|cash\s*money|umg|smg|uploads?|official\s*channel)\b/i;
+  return LABEL_PATTERN.test(channelTitle);
+}
+
+/**
+ * Tries to extract the artist from a YouTube video title.
+ * Handles the common "Artist - Song Title" format.
+ * Returns null when the title doesn't follow a recognisable pattern.
+ */
+function parseArtistFromVideoTitle(videoTitle: string): string | null {
+  // Strip common suffixes first so they don't bleed into the artist match
+  const stripped = videoTitle
+    .replace(/\s*[\[(]official[^\])"]*[\])]/gi, '')
+    .replace(/\s*[\[(]lyrics?[^\])"]*[\])]/gi, '')
+    .replace(/\s*[\[(]audio[^\])"]*[\])]/gi, '')
+    .trim();
+  const match = stripped.match(/^(.{2,40}?)\s*[-–—]\s*.+/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Returns the best artist string for a YouTube playlist item.
+ * Priority:
+ *  1. Cleaned channel title (Topic or Vevo) — most reliable when it's an artist channel
+ *  2. Parsed from video title — used when the channel looks like a label/uploader
+ *  3. Cleaned channel title as last resort
+ */
+export function extractYouTubeArtist(channelTitle: string, videoTitle: string): string {
+  const cleaned = cleanChannelToArtist(channelTitle);
+  if (!looksLikeLabelChannel(cleaned)) return cleaned;
+  return parseArtistFromVideoTitle(videoTitle) ?? cleaned;
+}
+
+/**
  * Returns true when the result title contains a variant qualifier (remix, live,
  * acoustic, etc.) that is NOT present in the original search title.
  * Uses word boundaries so "live" doesn't match "alive" or "live and let die".
@@ -673,8 +729,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
         rawTracks.push({
           id: item.snippet.resourceId.videoId,
           title: item.snippet.title,
-          // Strip " - Topic" so artist names match correctly when searching other services
-          artist: (item.snippet.videoOwnerChannelTitle ?? '').replace(' - Topic', ''),
+          artist: extractYouTubeArtist(item.snippet.videoOwnerChannelTitle ?? '', item.snippet.title),
           coverUrl: item.snippet.thumbnails.medium?.url ?? '',
           service: 'youtube_music',
         });

@@ -83,7 +83,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
           mapped = tracks.map((t) => ({
             id: t.id.videoId,
             title: t.snippet.title,
-            artist: t.snippet.channelTitle,
+            artist: YouTubeMusic.cleanChannelToArtist(t.snippet.channelTitle),
             coverUrl: t.snippet.thumbnails.medium.url,
             raw: t,
           }));

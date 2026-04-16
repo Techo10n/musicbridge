@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   Image,
+  Linking,
   Modal,
   StyleSheet,
   Text,
@@ -27,6 +28,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const [conversionState, setConversionState] = useState<ConversionState>('idle');
   const [tracksProcessed, setTracksProcessed] = useState(0);
   const [failureReason, setFailureReason] = useState<string | null>(null);
+  const [createdPlaylistId, setCreatedPlaylistId] = useState<string | null>(null);
 
   // Hold a ref to the realtime channel so we can unsubscribe on cleanup or close
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -54,6 +56,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     setConversionState('idle');
     setTracksProcessed(0);
     setFailureReason(null);
+    setCreatedPlaylistId(null);
     onClose();
   };
 
@@ -61,6 +64,20 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     setConversionState('idle');
     setTracksProcessed(0);
     setFailureReason(null);
+    setCreatedPlaylistId(null);
+  };
+
+  const openCreatedPlaylist = async () => {
+    if (!createdPlaylistId || !primaryService) return;
+    const urls =
+      primaryService === 'spotify'
+        ? [`spotify:playlist:${createdPlaylistId}`, `https://open.spotify.com/playlist/${createdPlaylistId}`]
+        : [`https://music.youtube.com/playlist?list=${createdPlaylistId}`];
+    for (const url of urls) {
+      try {
+        if (await Linking.canOpenURL(url)) { await Linking.openURL(url); return; }
+      } catch {}
+    }
   };
 
   const handleAddToService = async () => {
@@ -112,6 +129,9 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       { body: { sharedItemId: item.id } },
     );
 
+    // Capture the created playlist ID from the response regardless of which path finished first.
+    if (fnData?.playlistId) setCreatedPlaylistId(fnData.playlistId);
+
     // If the realtime event already marked it done, we're finished.
     if (succeededViaRealtime) return;
 
@@ -120,18 +140,31 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     channelRef.current = null;
 
     if (fnError) {
-      // In Supabase JS v2, fnError.message is always a generic string.
-      // The actual JSON body is in fnError.context (a Response object).
+      const ctx = fnError.context;
+      let reason: string | null = null;
+      let rawBody = '';
       try {
-        const body = fnError.context ? await fnError.context.json() : {};
-        setFailureReason(body.error ?? null);
-      } catch {
-        setFailureReason(null);
+        if (ctx && typeof ctx.text === 'function') {
+          rawBody = await ctx.text();
+          try {
+            const body = JSON.parse(rawBody);
+            reason = typeof body?.error === 'string' ? body.error : null;
+            if (body?.detail) console.error('[PlaylistModal] failure detail:', body.detail);
+          } catch {
+            reason = rawBody.length > 0 && rawBody.length < 300 ? rawBody : null;
+          }
+        }
+      } catch (readErr) {
+        rawBody = `(read error: ${readErr})`;
       }
+      console.error(`[PlaylistModal] HTTP ${ctx?.status ?? '?'} | body: ${rawBody || '(empty)'} | reason: ${reason}`);
+      setFailureReason(reason);
       setConversionState('failed');
     } else if (fnData?.playlistId) {
+      setCreatedPlaylistId(fnData.playlistId);
       setConversionState('done');
     } else {
+      console.error('[PlaylistModal] unexpected fnData:', fnData);
       setFailureReason(fnData?.error ?? null);
       setConversionState('failed');
     }
@@ -172,9 +205,25 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
               {tracksProcessed} of {totalTracks} tracks matched
             </Text>
           </Text>
-          <TouchableOpacity style={styles.closeActionButton} onPress={handleClose} activeOpacity={0.8}>
-            <Text style={styles.closeActionText}>Close</Text>
-          </TouchableOpacity>
+          <View style={styles.doneButtons}>
+            <TouchableOpacity style={styles.closeActionButton} onPress={handleClose} activeOpacity={0.8}>
+              <Text style={styles.closeActionText}>Close</Text>
+            </TouchableOpacity>
+            {createdPlaylistId && (
+              <TouchableOpacity
+                style={[
+                  styles.openServiceButton,
+                  { backgroundColor: primaryService === 'youtube_music' ? '#FF0000' : '#1DB954' },
+                ]}
+                onPress={openCreatedPlaylist}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.openServiceText, { color: primaryService === 'youtube_music' ? '#fff' : '#000' }]}>
+                  Open in {serviceName(primaryService)}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       );
     }
@@ -192,8 +241,15 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
         errorMsg = 'Your Spotify session has expired. Go to Profile and reconnect Spotify.';
       } else if (failureReason === 'not_connected') {
         errorMsg = `You are not connected to ${serviceName(primaryService ?? 'spotify')}. Go to Profile and connect your account.`;
+      } else if (failureReason === 'spotify_permission_denied') {
+        errorMsg = `Spotify denied permission to add tracks (missing scope). Go to Profile, disconnect Spotify, reconnect it, then try again.`;
+      } else if (failureReason === 'tracks_not_added') {
+        errorMsg = `The playlist was created on ${serviceName(primaryService)} but no tracks could be added. Try reconnecting ${serviceName(primaryService)} in Profile.`;
       } else if (failureReason === 'playlist_creation_failed') {
         errorMsg = `Tracks were found but the playlist couldn't be created on ${serviceName(primaryService)}. Try reconnecting ${serviceName(primaryService)} in Profile.`;
+      } else if (failureReason) {
+        // Show the raw reason so we can identify unknown errors.
+        errorMsg = `Conversion failed: ${failureReason}`;
       }
       return (
         <View style={styles.failedContainer}>
@@ -413,17 +469,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '400',
   },
+  doneButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+  },
   closeActionButton: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
     paddingVertical: 14,
-    paddingHorizontal: 40,
+    paddingHorizontal: 24,
     alignItems: 'center',
   },
   closeActionText: {
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
+  },
+  openServiceButton: {
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  openServiceText: {
+    fontSize: 15,
+    fontWeight: '700',
   },
   // ── Failed state ───────────────────────────────────────────────────────────
   failedContainer: {

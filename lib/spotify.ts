@@ -332,7 +332,7 @@ export async function createPlaylist(
 
     if (trackIds.length > 0) {
       const uris = trackIds.map((id) => `spotify:track:${id}`);
-      const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+      const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -421,7 +421,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
 
   const tracks: LibraryTrack[] = [];
   let url: string | null =
-    `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+    `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=100`;
 
   while (url) {
     try {

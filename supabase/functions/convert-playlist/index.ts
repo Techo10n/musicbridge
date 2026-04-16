@@ -135,35 +135,88 @@ async function getYouTubeToken(
 
 // ─── Track search ─────────────────────────────────────────────────────────────
 
+interface SpotifyItem { id: string; name: string; artists: { name: string }[] }
+
+// Normalise a string for loose word-level matching
+function normForMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\(feat[^)]*\)/gi, '')   // remove (feat. ...) in parens
+    .replace(/\bfeat\.?\s+.*/gi, '')  // remove trailing feat. ...
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Fraction of needle's significant words found in haystack (0–1)
+function wordCoverage(needle: string, haystack: string): number {
+  const words = normForMatch(needle).split(' ').filter(w => w.length > 1);
+  if (words.length === 0) return 0;
+  const hSet = new Set(normForMatch(haystack).split(' '));
+  return words.filter(w => hSet.has(w)).length / words.length;
+}
+
+// Pick the best-matching result; return null if nothing clears the threshold
+function pickBest(
+  items: SpotifyItem[],
+  queryTitle: string,
+  queryArtist: string,
+  minScore = 0.35,
+): string | null {
+  let best: { id: string; score: number } | null = null;
+  for (const item of items) {
+    const titleScore = wordCoverage(queryTitle, item.name);
+    // Accept the best artist match across all credited artists on the track
+    const artistScore = Math.max(0, ...item.artists.map(a => wordCoverage(queryArtist, a.name)));
+    const score = titleScore * 0.6 + artistScore * 0.4;
+    if (score > (best?.score ?? -1)) best = { id: item.id, score };
+  }
+  return best && best.score >= minScore ? best.id : null;
+}
+
 async function searchSpotify(token: string, title: string, artist: string): Promise<string | null> {
   const t = cleanTitle(title);
-  const a = cleanArtistName(artist);
+  // Use only the primary artist (strip feat. / comma-separated collaborators)
+  const primaryArtist = cleanArtistName(
+    artist.split(/[,&]|\bfeat\b|\bft\b/i)[0].trim(),
+  );
 
-  const doSearch = async (rawQuery: string): Promise<string | null> => {
-    const q = encodeURIComponent(rawQuery);
+  const fetchItems = async (query: string, limit = 5): Promise<SpotifyItem[]> => {
+    const q = encodeURIComponent(query);
     let retries = 0;
     while (retries <= 3) {
       const res = await fetch(
-        `https://api.spotify.com/v1/search?q=${q}&type=track&limit=1`,
+        `https://api.spotify.com/v1/search?q=${q}&type=track&limit=${limit}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (res.status === 429) {
-        const retryAfter = res.headers.get('Retry-After');
-        const wait = retryAfter ? parseInt(retryAfter) * 1000 : 2000 * (retries + 1);
-        if (wait > 15_000) throw new Error('spotify_rate_limit_exceeded');
-        await new Promise((r) => setTimeout(r, wait));
+        const wait = res.headers.get('Retry-After');
+        const ms = wait ? parseInt(wait) * 1000 : 2000 * (retries + 1);
+        if (ms > 15_000) throw new Error('spotify_rate_limit_exceeded');
+        await new Promise(r => setTimeout(r, ms));
         retries++;
         continue;
       }
-      if (!res.ok) return null;
+      if (!res.ok) return [];
       const data = await res.json();
-      return data.tracks?.items?.[0]?.id ?? null;
+      return data.tracks?.items ?? [];
     }
-    return null;
+    return [];
   };
 
-  // Prefer field-filter query; fall back to plain keyword if zero results
-  return (await doSearch(`track:${t} artist:${a}`)) ?? (await doSearch(`${t} ${a}`));
+  // Strategy 1: Spotify field-filter — Spotify's own matching is precise so trust the first hit
+  const fieldItems = await fetchItems(`track:${t} artist:${primaryArtist}`, 1);
+  if (fieldItems.length > 0) return fieldItems[0].id;
+
+  // Strategy 2: Broad keyword search — verify the result actually matches before accepting
+  // (prevents returning a completely unrelated popular song when artist name is slightly off)
+  const keywordItems = await fetchItems(`${t} ${primaryArtist}`);
+  const keywordMatch = pickBest(keywordItems, title, artist);
+  if (keywordMatch) return keywordMatch;
+
+  // Strategy 3: Title only — last resort, use a stricter threshold to avoid false positives
+  const titleItems = await fetchItems(t);
+  return pickBest(titleItems, title, artist, 0.55);
 }
 
 async function searchYouTube(token: string, title: string, artist: string): Promise<string | null> {
@@ -206,15 +259,48 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
   return best?.id?.videoId ?? null;
 }
 
+// ─── Playlist cleanup ─────────────────────────────────────────────────────────
+
+// Unfollow removes an owned playlist from the user's library (Spotify has no hard-delete API).
+async function deleteSpotifyPlaylist(token: string, playlistId: string): Promise<void> {
+  const res = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/followers`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '(unreadable)');
+    console.error(`[convert-playlist] Spotify playlist cleanup failed: ${res.status} ${errText}`);
+  } else {
+    console.log(`[convert-playlist] Deleted empty Spotify playlist ${playlistId}`);
+  }
+}
+
+async function deleteYouTubePlaylist(token: string, playlistId: string): Promise<void> {
+  const res = await fetch(
+    `https://www.googleapis.com/youtube/v3/playlists?id=${encodeURIComponent(playlistId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '(unreadable)');
+    console.error(`[convert-playlist] YouTube playlist cleanup failed: ${res.status} ${errText}`);
+  } else {
+    console.log(`[convert-playlist] Deleted empty YouTube playlist ${playlistId}`);
+  }
+}
+
 // ─── Playlist creation ────────────────────────────────────────────────────────
+
+type SpotifyPlaylistResult = {
+  playlistId: string;
+  tracksAdded: number;
+  addError: string | null; // first Spotify error text from add-tracks, if any
+};
 
 async function createSpotifyPlaylist(
   token: string,
   name: string,
   trackIds: string[],
-): Promise<string | null> {
-  // Use /v1/me/playlists — simpler than /v1/users/{id}/playlists and avoids
-  // an extra /v1/me round-trip to look up the user ID.
+): Promise<SpotifyPlaylistResult | null> {
   const createRes = await fetch('https://api.spotify.com/v1/me/playlists', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -232,25 +318,32 @@ async function createSpotifyPlaylist(
     return null;
   }
 
-  if (trackIds.length > 0) {
-    // Spotify allows max 100 URIs per request — batch if needed
-    const uris = trackIds.map((id) => `spotify:track:${id}`);
-    for (let i = 0; i < uris.length; i += 100) {
-      const batch = uris.slice(i, i + 100);
-      const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uris: batch }),
-      });
-      if (!addRes.ok) {
-        const errText = await addRes.text().catch(() => '(unreadable)');
-        console.error(`[convert-playlist] Spotify add tracks failed (batch ${i}): ${addRes.status} ${errText}`);
-        // Don't abort — playlist was created, partial tracks is better than nothing
-      }
+  if (trackIds.length === 0) {
+    return { playlistId: playlist.id, tracksAdded: 0, addError: null };
+  }
+
+  // Spotify allows max 100 URIs per request — batch if needed
+  const uris = trackIds.map((id) => `spotify:track:${id}`);
+  let tracksAdded = 0;
+  let firstAddError: string | null = null;
+
+  for (let i = 0; i < uris.length; i += 100) {
+    const batch = uris.slice(i, i + 100);
+    const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uris: batch }),
+    });
+    if (!addRes.ok) {
+      const errText = await addRes.text().catch(() => '(unreadable)');
+      console.error(`[convert-playlist] Spotify add tracks failed (batch ${i}): ${addRes.status} ${errText}`);
+      if (!firstAddError) firstAddError = `${addRes.status}: ${errText}`;
+    } else {
+      tracksAdded += batch.length;
     }
   }
 
-  return playlist.id;
+  return { playlistId: playlist.id, tracksAdded, addError: firstAddError };
 }
 
 async function createYouTubePlaylist(
@@ -432,16 +525,42 @@ serve(async (req) => {
   // ── Create the playlist ────────────────────────────────────────────────────
 
   let playlistId: string | null = null;
+  let tracksAdded = 0;
+  let addError: string | null = null;
+
   if (primaryService === 'spotify') {
-    playlistId = await createSpotifyPlaylist(accessToken, item.title, resolvedIds);
+    const result = await createSpotifyPlaylist(accessToken, item.title, resolvedIds);
+    if (result) {
+      playlistId = result.playlistId;
+      tracksAdded = result.tracksAdded;
+      addError = result.addError;
+      if (addError) {
+        console.error(`[convert-playlist] Spotify add-tracks error: ${addError}`);
+      }
+    }
   } else if (primaryService === 'youtube_music') {
     playlistId = await createYouTubePlaylist(accessToken, item.title, resolvedIds);
+    if (playlistId) tracksAdded = resolvedIds.length;
   }
 
   if (!playlistId) {
     console.error(`[convert-playlist] Playlist creation returned null for service=${primaryService}`);
     await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     return json({ error: 'playlist_creation_failed' }, 500);
+  }
+
+  // If zero tracks were added despite having resolved IDs, clean up the empty playlist
+  // and return an actionable error.
+  if (tracksAdded === 0 && resolvedIds.length > 0) {
+    console.error(`[convert-playlist] Playlist ${playlistId} created but 0/${resolvedIds.length} tracks added. Error: ${addError}`);
+    // Delete the empty playlist so it doesn't clog the user's library.
+    if (primaryService === 'spotify') await deleteSpotifyPlaylist(accessToken, playlistId);
+    else if (primaryService === 'youtube_music') await deleteYouTubePlaylist(accessToken, playlistId);
+
+    await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
+    // 403 means the token is missing playlist-modify-private scope — give a specific error.
+    const errorCode = addError?.startsWith('403') ? 'spotify_permission_denied' : 'tracks_not_added';
+    return json({ error: errorCode, detail: addError }, 500);
   }
 
   // ── Write playlist ID and mark done ───────────────────────────────────────
@@ -452,5 +571,5 @@ serve(async (req) => {
 
   await supabase.from('shared_items').update(playlistUpdate).eq('id', sharedItemId);
 
-  return json({ playlistId, matchedTracks: resolvedIds.length, totalTracks: tracks.length });
+  return json({ playlistId, matchedTracks: tracksAdded, totalTracks: tracks.length });
 });

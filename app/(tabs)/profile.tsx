@@ -184,10 +184,25 @@ export default function Profile() {
 
       if (user.youtube_access_token) {
         const tracks = await YouTubeMusic.searchTracks(user.id, favSearchQuery.trim());
-        for (const t of tracks.slice(0, 3)) {
+        const seen = new Set<string>();
+        for (const t of tracks) {
+          // Cap total results at 8; if Spotify already contributed 5, limit YouTube to 3
+          if (results.length >= 8) break;
+          // Skip Vivo / regional variants — they duplicate the official release with different metadata
+          const channel = t.snippet.channelTitle ?? '';
+          if (/vivo/i.test(channel)) continue;
+          // Clean up title — strip common suffixes YouTube adds
+          const cleanTitle = t.snippet.title
+            .replace(/\s*[\[(](?:official\s*(?:video|music\s*video|audio|lyric\s*video|visualizer)?|audio|lyrics?|hd|hq|4k|explicit|clean|live)[)\]]/gi, '')
+            .trim();
+          // Deduplicate by normalised title+artist key
+          const artist = channel.replace(/ - Topic$/i, '').trim();
+          const key = `${cleanTitle.toLowerCase()}|${artist.toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
           results.push({
-            title: t.snippet.title,
-            artist: t.snippet.channelTitle.replace(' - Topic', ''),
+            title: cleanTitle,
+            artist,
             service: 'youtube_music',
             service_id: t.id.videoId,
             cover_url: t.snippet.thumbnails.medium?.url ?? '',
@@ -214,6 +229,19 @@ export default function Profile() {
       await refreshUser();
     } catch {
       Alert.alert('Error', 'Could not save favorite song');
+    }
+  };
+
+  const clearFavoriteSong = async () => {
+    if (!user) return;
+    try {
+      await supabase
+        .from('users')
+        .update({ favorite_song: null })
+        .eq('id', user.id);
+      await refreshUser();
+    } catch {
+      Alert.alert('Error', 'Could not remove favorite song');
     }
   };
 
@@ -395,8 +423,14 @@ export default function Profile() {
 
         {/* ── Favorite song ────────────────────────────────────────────────── */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Favorite Song</Text>
-          <View style={styles.favSongRow}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Favorite Song</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.favSongRow}
+            onPress={() => setFavSongModalVisible(true)}
+            activeOpacity={0.8}
+          >
             {user.favorite_song ? (
               <>
                 {user.favorite_song.cover_url ? (
@@ -423,11 +457,18 @@ export default function Profile() {
                     { backgroundColor: SERVICE_COLORS[user.favorite_song.service] },
                   ]}
                 />
+                <TouchableOpacity
+                  onPress={(e) => { e.stopPropagation(); clearFavoriteSong(); }}
+                  style={styles.unpinButton}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.unpinText}>✕</Text>
+                </TouchableOpacity>
               </>
             ) : (
-              <Text style={styles.favPlaceholder}>No favorite song set</Text>
+              <Text style={styles.favPlaceholder}>Tap to set a favorite song</Text>
             )}
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* ── Taste tags (Spotify only) ────────────────────────────────────── */}
@@ -531,7 +572,7 @@ export default function Profile() {
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Pinned Playlists</Text>
             {stats.pinnedPlaylists.length < 3 && (
-              <TouchableOpacity onPress={openEditProfile} style={styles.addButton}>
+              <TouchableOpacity onPress={openPinnedPicker} style={styles.addButton}>
                 <Text style={styles.addButtonText}>+ Add</Text>
               </TouchableOpacity>
             )}
