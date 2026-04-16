@@ -332,16 +332,20 @@ export async function createPlaylist(
 
     if (trackIds.length > 0) {
       const uris = trackIds.map((id) => `spotify:track:${id}`);
-      const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ uris }),
-      });
-      if (!addRes.ok) {
-        console.error('[Spotify] add playlist tracks error:', addRes.status, await addRes.text());
+      for (let i = 0; i < uris.length; i += 100) {
+        const chunk = uris.slice(i, i + 100);
+        const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ uris: chunk }),
+        });
+        if (!addRes.ok) {
+          console.error('[Spotify] add playlist tracks error:', addRes.status, await addRes.text());
+          return null;
+        }
       }
     }
 

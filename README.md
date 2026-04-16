@@ -47,7 +47,7 @@ musicbridge/
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar (Ionicons)
 │       ├── home.tsx            Feed of received shared items
-│       ├── friends.tsx         Friends list, pending requests, user search
+│       ├── friends.tsx         People tab (following/followers), user search
 │       ├── library.tsx         User's streaming library
 │       └── profile.tsx         Profile + service connections + sign out
 ├── components/
@@ -62,7 +62,7 @@ musicbridge/
 │   └── ServiceBadge.tsx
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
-│   ├── useFriends.ts
+│   ├── useFollows.ts
 │   ├── useSharedItems.ts
 │   └── useLibrary.ts           Playlists, saved tracks, followed artists; lazy track loading
 ├── lib/
@@ -173,15 +173,15 @@ Deep links: `youtubemusic://watch?v=<id>&vType=audio`
 
 RLS: users can read all rows (friend search), update only their own.
 
-### `public.friendships`
+### `public.follows`
 
 | Column | Type |
 |---|---|
 | `id` | uuid |
-| `requester_id`, `addressee_id` | uuid FK → users |
-| `status` | enum: pending / accepted / declined |
+| `follower_id`, `following_id` | uuid FK → users |
+| `created_at` | timestamptz |
 
-Unique constraint on `(requester_id, addressee_id)`.
+Unique constraint on `(follower_id, following_id)` and check `(follower_id <> following_id)`.
 
 ### `public.shared_items`
 
@@ -209,7 +209,6 @@ Unique constraint on `(requester_id, addressee_id)`.
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
 | `EXPO_PUBLIC_SPOTIFY_CLIENT_ID` | Spotify app client ID |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `EXPO_PUBLIC_GOOGLE_REDIRECT_URI` | Google OAuth redirect URI |
 | `EXPO_PUBLIC_APPLE_TEAM_ID` | Apple Developer team ID |
 | `EXPO_PUBLIC_APPLE_MUSIC_AUTH_URL` | Hosted MusicKit JS page URL |
 | `EXPO_PUBLIC_APPLE_DEVELOPER_TOKEN` | Apple Music developer JWT |

@@ -80,6 +80,11 @@ create policy "avatars_auth_update"
     bucket_id = 'avatars'
     and auth.uid() is not null
     and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'avatars'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] = auth.uid()::text
   );
 
 create policy "avatars_auth_delete"

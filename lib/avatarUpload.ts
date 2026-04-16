@@ -30,16 +30,12 @@ export async function pickAndUploadAvatar(userId: string): Promise<string | null
   const path = `${userId}/avatar.${ext}`;
 
   try {
-    const formData = new FormData();
-    formData.append('file', {
-      uri: asset.uri,
-      name: `avatar.${ext}`,
-      type: asset.mimeType ?? 'image/jpeg',
-    } as any);
+    const response = await fetch(asset.uri);
+    const imageBlob = await response.blob();
 
     const { error: uploadError } = await supabase.storage
       .from('avatars')
-      .upload(path, formData, {
+      .upload(path, imageBlob, {
         contentType: asset.mimeType ?? 'image/jpeg',
         upsert: true,
       });

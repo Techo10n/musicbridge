@@ -40,23 +40,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
           if (retries > 0) {
             console.log(`Profile not found yet, retrying... (${retries} retries left)`);
             await new Promise((resolve) => setTimeout(resolve, 500));
-            await fetchUserProfile(userId, retries - 1);
-            return;
+            return fetchUserProfile(userId, retries - 1);
           } else {
-             // We ran out of retries and there's STILL no profile row.
-             // This user is broken (signup trigger failed). Log them out so they aren't stuck.
-             console.error('CRITICAL: User has auth session but no profile row. Logging out.');
-             await supabase.auth.signOut();
-             setUser(null);
-             setSession(null);
+            // We ran out of retries and there's STILL no profile row.
+            // This user is broken (signup trigger failed). Log them out so they aren't stuck.
+            console.error('CRITICAL: User has auth session but no profile row. Logging out.');
+            await supabase.auth.signOut();
+            setUser(null);
+            setSession(null);
+            setLoading(false);
+            return;
           }
         }
         throw error;
       }
       setUser(data as User);
+      setLoading(false);
     } catch (err) {
       console.error('Error fetching user profile:', err);
-    } finally {
       setLoading(false);
     }
   }, []);
@@ -78,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     } = supabase.auth.onAuthStateChange(async (_event, s) => {
       setSession(s);
       if (s) {
+        setLoading(true);
         await fetchUserProfile(s.user.id);
       } else {
         setUser(null);

@@ -1,5 +1,5 @@
 -- ============================================================
--- MusicBridge — Migration 002: Playlist Conversion Progress
+-- MusicBridge — Migration 003: Playlist Conversion Progress
 -- Adds real-time progress tracking columns to shared_items so
 -- the convert-playlist Edge Function can report status back to
 -- the client via Supabase Realtime.

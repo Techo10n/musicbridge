@@ -3,7 +3,7 @@
 ## What Was Built
 
 ### Foundation
-- **`types/index.ts`** — Complete TypeScript types for `User`, `Friendship`, `SharedItem`, `Track`, `MusicService`, and all three service-specific track shapes (`SpotifyTrack`, `AppleMusicTrack`, `YouTubeTrack`)
+- **`types/index.ts`** — Complete TypeScript types for `User`, `Follow`, `SharedItem`, `Track`, `MusicService`, and all three service-specific track shapes (`SpotifyTrack`, `AppleMusicTrack`, `YouTubeTrack`)
 - **`lib/supabase.ts`** — Supabase client with `AsyncStorage` session persistence
 - **`supabase/migrations/001_initial.sql`** — Full schema with enums, tables, RLS policies, and indexes
 
@@ -20,20 +20,20 @@
 
 ### Data Hooks
 - **`hooks/useSharedItems.ts`** — Fetches received items newest-first, pull-to-refresh, `markAsOpened` with optimistic updates
-- **`hooks/useFriends.ts`** — Friends list, pending requests, user search, send/accept/decline requests
+- **`hooks/useFollows.ts`** — Following/followers lists, user search, follow/unfollow, mutual-follow detection for sharing
 
 ### Components
 - **`ServiceBadge`** — Colored dot badge (S/A/Y) for each service
 - **`MusicServiceButton`** — Connect/disconnect button with service branding + Primary indicator
-- **`FriendListItem`** — Friend row with Share button or Accept/Decline for pending requests
+- **`FriendListItem`** — User row with Follow/Unfollow controls and Share button for mutual follows
 - **`SongCard`** — Cover art, title, artist, sender, timestamp, message; unread state (bold + left border)
 - **`PlaylistCard`** — Like SongCard but with track count overlay on cover art
 - **`PlaylistModal`** — Scrollable track list + "Add to [Primary Service]" button
-- **`ShareModal`** — Search your primary service, see results, share with a friend (resolves IDs across all services)
+- **`ShareModal`** — Search your primary service, see results, share with a mutual follow (resolves IDs across all services)
 
 ### Screens
 - **`home.tsx`** — Feed with pull-to-refresh; song tap → service deep link; playlist tap → PlaylistModal
-- **`friends.tsx`** — Friends/Pending tabs, username search, send requests, share button opens ShareModal
+- **`friends.tsx`** — People tab (Following/Followers), username search, follow/unfollow, share button opens ShareModal
 - **`profile.tsx`** — Avatar initials, connect/disconnect each service, set primary, sign out
 
 ---
@@ -185,7 +185,7 @@ musicbridge/
 │   └── (tabs)/
 │       ├── _layout.tsx          Tab bar with Ionicons
 │       ├── home.tsx             Feed of received shared items
-│       ├── friends.tsx          Friends list + search + pending requests
+│       ├── friends.tsx          People tab + search + following/followers
 │       └── profile.tsx          Profile + service connections + sign out
 ├── lib/
 │   ├── supabase.ts              Supabase client
@@ -195,7 +195,7 @@ musicbridge/
 ├── hooks/
 │   ├── useAuth.ts               Auth context provider + hook
 │   ├── useSharedItems.ts        Received items data hook
-│   └── useFriends.ts            Friends + search data hook
+│   └── useFollows.ts            Follow graph + search data hook
 ├── components/
 │   ├── SongCard.tsx             Shared song card
 │   ├── PlaylistCard.tsx         Shared playlist card
