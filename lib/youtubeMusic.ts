@@ -158,14 +158,8 @@ function norm(s: string): string {
 }
 
 /**
- * Extracts a clean artist name from a YouTube channel title.
- *
- * Handles:
- *  - "Artist Name - Topic"  → "Artist Name"  (auto-generated channels)
- *  - "ArtistNameVEVO"       → "ArtistName"   (Vevo channels)
- *
- * Returns the cleaned string; callers should check whether it looks like a
- * label/uploader and fall back to title parsing if so.
+ * Strips " - Topic" and "VEVO" suffixes from a YouTube channel title so it
+ * can be used as a fallback artist name.
  */
 export function cleanChannelToArtist(channelTitle: string): string {
   return channelTitle
@@ -174,43 +168,121 @@ export function cleanChannelToArtist(channelTitle: string): string {
     .trim();
 }
 
+// Common video-title suffixes that should be stripped before storing/searching.
+const TITLE_SUFFIX_RE = /\s*[\[(](official\s*(music\s*)?video|official\s*audio|lyrics?|audio|visualizer|hd|4k|explicit|prod\.?[^\])"]*|ft\.?[^\])"]*|feat\.?[^\])"]*)[^\])"]*[\])]/gi;
+
 /**
- * Returns true when the channel title belongs to a record label, distributor,
- * or generic uploader rather than an individual artist.  When this is true,
- * callers should try to parse the artist from the video title instead.
+ * Parses a raw YouTube video title into a clean { artist, title } pair.
+ *
+ * YouTube music videos almost universally follow the "Artist - Song Title"
+ * convention.  We split on the first " - " (spaces required so hyphens inside
+ * artist names like "Wu-Tang Clan" are not treated as separators), then strip
+ * common parenthetical suffixes from the song title.
+ *
+ * Returns null when the title does not contain a spaced dash separator.
  */
-function looksLikeLabelChannel(channelTitle: string): boolean {
-  const LABEL_PATTERN = /\b(records?|music\s*group|entertainment|universal|sony|warner|atlantic|republic|columbia|island|interscope|def\s*jam|capitol|rca|epic|elektra|big\s*machine|young\s*money|cash\s*money|umg|smg|uploads?|official\s*channel)\b/i;
-  return LABEL_PATTERN.test(channelTitle);
+export function parseYouTubeVideoTitle(rawTitle: string): { artist: string; title: string } | null {
+  // Require spaces around the dash so hyphens inside artist/song names
+  // (e.g. "Wu-Tang Clan", "C.R.E.A.M.") are not mistaken for the separator.
+  const match = rawTitle.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (!match) return null;
+
+  const artist = match[1].trim();
+  const title = match[2].replace(TITLE_SUFFIX_RE, '').trim();
+
+  if (!artist || !title || artist.length > 80 || title.length > 150) return null;
+  return { artist, title };
 }
 
 /**
- * Tries to extract the artist from a YouTube video title.
- * Handles the common "Artist - Song Title" format.
- * Returns null when the title doesn't follow a recognisable pattern.
+ * Returns the best artist + title for a YouTube playlist item, and whether the
+ * artist came from the video title (true) or fell back to the channel name (false).
+ *
+ * Exported so callers can decide whether to run a secondary description/tags pass.
  */
-function parseArtistFromVideoTitle(videoTitle: string): string | null {
-  // Strip common suffixes first so they don't bleed into the artist match
-  const stripped = videoTitle
-    .replace(/\s*[\[(]official[^\])"]*[\])]/gi, '')
-    .replace(/\s*[\[(]lyrics?[^\])"]*[\])]/gi, '')
-    .replace(/\s*[\[(]audio[^\])"]*[\])]/gi, '')
-    .trim();
-  const match = stripped.match(/^(.{2,40}?)\s*[-–—]\s*.+/);
-  return match ? match[1].trim() : null;
+export function extractYouTubeTrackInfo(
+  channelTitle: string,
+  videoTitle: string,
+): { artist: string; title: string; artistFromTitle: boolean } {
+  const parsed = parseYouTubeVideoTitle(videoTitle);
+  if (parsed) return { ...parsed, artistFromTitle: true };
+  return { artist: cleanChannelToArtist(channelTitle), title: videoTitle, artistFromTitle: false };
 }
 
 /**
- * Returns the best artist string for a YouTube playlist item.
- * Priority:
- *  1. Cleaned channel title (Topic or Vevo) — most reliable when it's an artist channel
- *  2. Parsed from video title — used when the channel looks like a label/uploader
- *  3. Cleaned channel title as last resort
+ * Returns true when a string looks like a show, album, or series name rather
+ * than a performing artist — used to detect OST-style false positives from
+ * video title parsing (e.g. "약한영웅 CLASS 2 OST Part.3 - Mind" yields
+ * "약한영웅 CLASS 2 OST Part.3" as the "artist").
  */
-export function extractYouTubeArtist(channelTitle: string, videoTitle: string): string {
-  const cleaned = cleanChannelToArtist(channelTitle);
-  if (!looksLikeLabelChannel(cleaned)) return cleaned;
-  return parseArtistFromVideoTitle(videoTitle) ?? cleaned;
+function looksLikeShowOrAlbumTitle(s: string): boolean {
+  return /\b(ost|o\.s\.t|soundtrack|part\.?\s*\d|season\s*\d|class\s*\d|vol\.?\s*\d|ep\.?\s*\d)\b/i.test(s)
+    || /[（(]\s*ost\s*[)）]/i.test(s);
+}
+
+/**
+ * Tries to recover the real artist name from a video description and/or tags.
+ *
+ * Formats handled (in priority order):
+ *  1. IIP-DDS / auto-generated pipe-delimited descriptions:
+ *       "Provided to YouTube by … |  | Song · Artist |  | Album | …"
+ *     The segment "Song · Artist" (middle dot) reliably identifies the artist.
+ *  2. "Artist - Song" on one of the first 5 lines.
+ *  3. "아티스트 : Artist" or "Artist : Artist" (structured metadata).
+ *  4. "Performed by X" / "Vocals by X".
+ *  5. Tags: first tag that is not the song title and not an album/show name.
+ */
+function parseArtistFromDescription(
+  description: string,
+  knownTitle: string,
+  tags: string[] = [],
+): string | null {
+  const titleNorm = knownTitle.toLowerCase().trim();
+
+  if (description) {
+    // 1. Pipe-delimited IIP-DDS format: split on " | " and look for "Song · Artist"
+    const segments = description.split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
+    for (const seg of segments) {
+      const dotMatch = seg.match(/^(.+?)\s*[·•]\s*(.+)$/);
+      if (dotMatch) {
+        const [, a, b] = dotMatch;
+        if (a.toLowerCase() === titleNorm) return b.trim();
+        if (b.toLowerCase() === titleNorm) return a.trim();
+      }
+    }
+
+    const lines = description.split('\n').map((l) => l.trim()).filter(Boolean);
+
+    // 2. "Artist - Song" on one of the first 5 lines
+    for (const line of lines.slice(0, 5)) {
+      const parsed = parseYouTubeVideoTitle(line);
+      if (parsed && parsed.title.toLowerCase() === titleNorm) {
+        return parsed.artist;
+      }
+    }
+
+    // 3. "아티스트 : Meego" or "Artist : Meego"
+    for (const line of lines) {
+      const m = line.match(/^(?:아티스트|artist)\s*[:：]\s*(.+)$/i);
+      if (m) return m[1].trim();
+    }
+
+    // 4. "Performed by X" / "Vocals by X"
+    for (const line of lines) {
+      const m = line.match(/^(?:performed|vocals?)\s+by\s+(.+)$/i);
+      if (m) return m[1].trim();
+    }
+  }
+
+  // 5. Tags: first tag that isn't the song title and isn't an album/show name
+  for (const tag of tags) {
+    const t = tag.trim();
+    if (t.toLowerCase() === titleNorm) continue;
+    if (looksLikeShowOrAlbumTitle(t)) continue;
+    if (t.length > 0 && t.length < 50) return t;
+  }
+
+  return null;
 }
 
 /**
@@ -587,12 +659,22 @@ export function getYouTubeMusicPlaylistDeepLink(playlistId: string): string[] {
 
 // ─── Library ──────────────────────────────────────────────────────────────────
 
+interface VideoMeta {
+  isMusicCategory: boolean;
+  description: string;
+  tags: string[];
+}
+
 /**
- * Batch-checks a list of video IDs and returns the subset that belong to
- * videoCategoryId=10 (Music). Processes in groups of 50 (API max).
+ * Batch-fetches video metadata (category, description, tags) for a list of IDs.
+ * Processes in groups of 50 (YouTube API max).
+ * Used both for music-category filtering and artist recovery from descriptions.
  */
-async function getMusicVideoIds(accessToken: string, videoIds: string[]): Promise<Set<string>> {
-  const musicIds = new Set<string>();
+async function batchGetVideoMeta(
+  accessToken: string,
+  videoIds: string[],
+): Promise<Map<string, VideoMeta>> {
+  const result = new Map<string, VideoMeta>();
   for (let i = 0; i < videoIds.length; i += 50) {
     const batch = videoIds.slice(i, i + 50);
     const params = new URLSearchParams({ part: 'snippet', id: batch.join(',') });
@@ -602,16 +684,35 @@ async function getMusicVideoIds(accessToken: string, videoIds: string[]): Promis
       });
       if (!res.ok) continue;
       const data = await res.json() as {
-        items: Array<{ id: string; snippet: { categoryId: string } }>;
+        items: Array<{
+          id: string;
+          snippet: { categoryId: string; description?: string; tags?: string[] };
+        }>;
       };
       for (const item of data.items) {
-        if (item.snippet.categoryId === '10') musicIds.add(item.id);
+        result.set(item.id, {
+          isMusicCategory: item.snippet.categoryId === '10',
+          description: item.snippet.description ?? '',
+          tags: item.snippet.tags ?? [],
+        });
       }
     } catch {
       // skip batch on error
     }
   }
-  return musicIds;
+  return result;
+}
+
+/**
+ * Kept for getUserPlaylists which only needs the music-category check.
+ */
+async function getMusicVideoIds(accessToken: string, videoIds: string[]): Promise<Set<string>> {
+  const meta = await batchGetVideoMeta(accessToken, videoIds);
+  const ids = new Set<string>();
+  for (const [id, m] of meta) {
+    if (m.isMusicCategory) ids.add(id);
+  }
+  return ids;
 }
 
 /**
@@ -687,14 +788,22 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
 
 /**
  * Returns tracks in a YouTube playlist, paginating through all pages.
- * Filters out non-music videos (videoCategoryId != 10) via a batch /videos check.
- * Strips " - Topic" suffix from channel names so artist names are clean for cross-service search.
+ *
+ * Artist extraction priority for each track:
+ *  1. Parse "Artist - Song" from the video title (works for most uploads)
+ *  2. If the parsed "artist" looks like a show/album name (e.g. OST, Part.X),
+ *     or title parsing failed entirely (channel-name fallback), try to recover
+ *     the real artist from the video description — using the same batch
+ *     /videos call that filters non-music content.
+ *  3. Fall back to the cleaned channel title as a last resort.
+ *
+ * Non-music videos (videoCategoryId != 10) are filtered out.
  */
 export async function getPlaylistTracks(userId: string, playlistId: string): Promise<LibraryTrack[]> {
   const accessToken = await getYouTubeAccessToken(userId);
   if (!accessToken) return [];
 
-  const rawTracks: LibraryTrack[] = [];
+  const rawTracks: Array<LibraryTrack & { artistFromTitle: boolean }> = [];
   let pageToken: string | undefined;
 
   do {
@@ -721,15 +830,19 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
         }>;
       };
       for (const item of data.items) {
-        // Skip deleted or private videos
         if (
           item.snippet.title === 'Deleted video' ||
           item.snippet.title === 'Private video'
         ) continue;
+        const info = extractYouTubeTrackInfo(
+          item.snippet.videoOwnerChannelTitle ?? '',
+          item.snippet.title,
+        );
         rawTracks.push({
           id: item.snippet.resourceId.videoId,
-          title: item.snippet.title,
-          artist: extractYouTubeArtist(item.snippet.videoOwnerChannelTitle ?? '', item.snippet.title),
+          title: info.title,
+          artist: info.artist,
+          artistFromTitle: info.artistFromTitle,
           coverUrl: item.snippet.thumbnails.medium?.url ?? '',
           service: 'youtube_music',
         });
@@ -740,10 +853,27 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
     }
   } while (pageToken);
 
-  // Batch-check video categories; keep only Music (categoryId=10)
+  // Single batch call: filter non-music AND get descriptions for artist recovery.
   const allIds = rawTracks.map((t) => t.id);
-  const musicIds = await getMusicVideoIds(accessToken, allIds);
-  return rawTracks.filter((t) => musicIds.has(t.id));
+  const videoMeta = await batchGetVideoMeta(accessToken, allIds);
+
+  return rawTracks
+    .filter((t) => videoMeta.get(t.id)?.isMusicCategory ?? false)
+    .map(({ artistFromTitle, ...track }) => {
+      // Only attempt description-based recovery when the initial extraction is
+      // unreliable: either the title gave us a show/album name, or it gave us
+      // the channel name as a fallback (artistFromTitle === false).
+      const needsRecovery =
+        !artistFromTitle || looksLikeShowOrAlbumTitle(track.artist);
+      if (!needsRecovery) return track;
+
+      const meta = videoMeta.get(track.id);
+      if (!meta) return track;
+
+      const recovered = parseArtistFromDescription(meta.description, track.title, meta.tags);
+      if (recovered) return { ...track, artist: recovered };
+      return track;
+    });
 }
 
 /**

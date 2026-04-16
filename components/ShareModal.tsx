@@ -15,6 +15,7 @@ import { supabase } from '../lib/supabase';
 import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
+import { extractYouTubeTrackInfo } from '../lib/youtubeMusic';
 import { useAuth } from '../hooks/useAuth';
 import { MusicService, SpotifyTrack, AppleMusicTrack, YouTubeTrack, User } from '../types';
 import { serviceName } from './ServiceBadge';
@@ -80,13 +81,16 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
         }
         case 'youtube_music': {
           const tracks = await YouTubeMusic.searchTracks(user.id, query.trim());
-          mapped = tracks.map((t) => ({
-            id: t.id.videoId,
-            title: t.snippet.title,
-            artist: YouTubeMusic.cleanChannelToArtist(t.snippet.channelTitle),
-            coverUrl: t.snippet.thumbnails.medium.url,
-            raw: t,
-          }));
+          mapped = tracks.map((t) => {
+            const info = extractYouTubeTrackInfo(t.snippet.channelTitle, t.snippet.title);
+            return {
+              id: t.id.videoId,
+              title: info.title,
+              artist: info.artist,
+              coverUrl: t.snippet.thumbnails.medium.url,
+              raw: t,
+            };
+          });
           break;
         }
       }
