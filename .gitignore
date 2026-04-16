@@ -41,3 +41,17 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Supabase
+supabase/.temp
+
+# ai agent instructions
+CLAUDE.md
+/.claude
+/.juno_task
+
+#personal knowledge base for claude
+/knowledge_base
+
+#potential future ideas
+IDEAS.md
