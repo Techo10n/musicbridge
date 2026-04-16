@@ -4,12 +4,12 @@
  * states from hanging forever when network requests stall.
  */
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), ms),
-    ),
-  ]);
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('timeout')), ms);
+  });
+
+  return Promise.race([promise.finally(() => clearTimeout(timeoutId)), timeout]);
 }
 
 export function cleanArtistName(artist: string): string {
