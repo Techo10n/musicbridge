@@ -27,6 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [loading, setLoading] = useState(true);
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 3) => {
+    let isRetrying = false;
     try {
       const { data, error } = await supabase
         .from('users')
@@ -38,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         // PGRST116 means zero rows were found. The trigger might still be running.
         if (error.code === 'PGRST116') {
           if (retries > 0) {
+            isRetrying = true;
             console.log(`Profile not found yet, retrying... (${retries} retries left)`);
             await new Promise((resolve) => setTimeout(resolve, 500));
             return fetchUserProfile(userId, retries - 1);
@@ -48,17 +50,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
             await supabase.auth.signOut();
             setUser(null);
             setSession(null);
-            setLoading(false);
             return;
           }
         }
         throw error;
       }
       setUser(data as User);
-      setLoading(false);
     } catch (err) {
       console.error('Error fetching user profile:', err);
-      setLoading(false);
+    } finally {
+      if (!isRetrying) {
+        setLoading(false);
+      }
     }
   }, []);
 
