@@ -25,7 +25,8 @@
           "vnd.youtube",
           "vnd.youtube.music",
           "youtube",
-          "youtubemusic"
+          "youtubemusic",
+          "music"
         ]
       }
     },
