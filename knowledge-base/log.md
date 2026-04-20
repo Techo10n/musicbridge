@@ -75,3 +75,103 @@ Created knowledge base from project files, README, SETUP.md, IDEAS.md, CLAUDE.md
 - Added `streamingMore` state to `LibraryPlaylistDetailModal`. Shows a footer spinner while pages are still being fetched after the first 50 tracks appear. Previously: spinner disappeared after first page, user could close modal before streaming finished.
 - Fixed `useLibrary.getPlaylistTracks` calling non-existent `Spotify.getSavedTracks`. Now wraps `streamSavedTracks` as a synchronous collector.
 - Updated `mistakes-and-learnings.md` with this incident.
+
+## 2026-04-16 — Fix YouTube Music artist extraction (IIP-DDS distributor channels)
+
+**Files changed**: `lib/youtubeMusic.ts`, `components/ShareModal.tsx`
+
+- `videoOwnerChannelTitle` for K-drama OST tracks uploaded by IIP-DDS distributor showed channel name ("release") instead of performing artist.
+- Built a multi-stage artist extraction pipeline with zero hardcoded names:
+  1. Parse `"Artist - Song"` from video title (regex with spaces around dash)
+  2. If title yields a show/album name (OST/Part/Season/Episode keywords), recover from video description
+  3. Description recovery: IIP-DDS pipe format (`Song · Artist` segment), `아티스트:` field, `Performed by`, first 5 lines `"Artist - Song"` pattern
+  4. Fall back to cleaned channel title (`cleanChannelToArtist`: strips " - Topic" and "VEVO")
+- `batchGetVideoMeta` extended to also return `description` and `tags` (no extra API cost — added to existing `videos.list` call).
+- `ShareModal` uses `extractYouTubeTrackInfo` for search result artist names (was using raw `channelTitle`).
+- Updated `mistakes-and-learnings.md`.
+
+## 2026-04-16 — Push notifications
+
+**Files created**: `supabase/migrations/005_push_tokens.sql`, `supabase/functions/send-notification/index.ts`, `lib/notifications.ts`, `hooks/useNotifications.ts`
+
+**Files updated**: `hooks/useAuth.tsx`, `hooks/useFollows.ts`, `components/ReelImportModal.tsx`
+
+- `push_tokens` table: unique `(user_id, token)`, RLS owner-only. Upserted on login, deleted on sign-out.
+- `send-notification` edge function: verifies JWT, reads all tokens for recipient, POSTs batch to Expo Push API (`https://exp.host/--/api/v2/push/send`).
+- `lib/notifications.ts`: `registerForPushNotifications` (requests permission, upserts token), `unregisterPushToken` (delete on sign-out), `sendPushNotification` (calls edge function).
+- `useNotifications`: calls register on login; `addNotificationResponseReceivedListener` navigates to `/(tabs)/home` for `new_share`, `/(tabs)/friends` for `new_follower`.
+- Fires on: new share received, new follower.
+
+## 2026-04-16 — Instagram Reel import
+
+**Files created**: `lib/reelParser.ts`, `hooks/useClipboardReel.ts`, `components/ReelImportBanner.tsx`, `components/ReelImportModal.tsx`, `supabase/functions/parse-reel/index.ts`
+
+**Files updated**: `app/_layout.tsx`
+
+- Clipboard polling (`expo-clipboard` + `AppState`) detects Instagram reel URLs. `seenUrls` ref prevents re-showing after dismiss. Works in Expo Go without native build.
+- `ReelImportBanner`: slim top bar with platform icon + "Find Song" button, shown on all authenticated screens.
+- `ReelImportModal`: calls `parse-reel` edge function; shows song card + friend picker + message input on success; auto-closes after 2s on failure.
+- `parse-reel` edge function — two-stage pipeline:
+  - Stage 1: Instagram `?__a=1&__d=dis` scrape with mobile user-agent + `X-Ig-App-Id: 936619743392459`. Handles Format A (`clips_metadata.music_info.music_asset_info`) and Format B (`graphql.shortcode_media.clips_music_attribution_info`).
+  - Stage 2: AudD audio fingerprinting via `AUDD_API_TOKEN` Supabase secret — POSTs CDN video URL directly to AudD.
+- TikTok URL patterns pre-defined in `reelParser.ts`; edge function only handles Instagram today.
+- **Deployment**: `supabase functions deploy parse-reel --no-verify-jwt` + `supabase secrets set AUDD_API_TOKEN=<token>`
+
+## 2026-04-17 — Reel import fixes: real AudD offsets, frame OCR, direct YTM open
+
+**Files changed**: `components/ReelImportModal.tsx`, `supabase/functions/parse-reel/index.ts`, `package.json`, `package-lock.json`, `README.md`, `knowledge-base/features.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Fixed a false-positive caption parse: free-form lines like `"playlist - let me know"` no longer get treated as `Song - Artist`. Caption parsing now only accepts structured, song-like patterns.
+- Switched AudD from the standard endpoint to `enterprise.audd.io` and uses `skip_first_seconds` per request so timestamped scans actually hit different parts of the reel.
+- Removed thumbnail-only vision from the edge function. `ReelImportModal` now extracts multiple frames from the reel video on-device with `expo-video-thumbnails`, then sends those frames back for OCR.
+- Vision prompt now ignores hashtags, playlist labels, and generic mood text unless a frame explicitly shows a song title + artist pair.
+- Reel song taps now use the same resolve-and-deeplink flow as the home feed, so YouTube Music accounts open the canonical song player instead of dropping the query into YTM search.
+
+## 2026-04-17 — Reel import confidence ranking and OCR anti-inference
+
+**Files changed**: `components/ReelImportModal.tsx`, `supabase/functions/parse-reel/index.ts`, `lib/youtubeMusic.ts`, `README.md`, `knowledge-base/integrations/youtube-music.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Removed the remaining Jimi Hendrix-specific aliasing. YouTube Music search and reel matching are back to generic title/artist heuristics only.
+- `parse-reel` now aggregates enterprise AudD chunk hits into canonicalized `audioSongs` with `matchCount` and `orderHint` instead of treating every chunk match as an independent final song.
+- `ReelImportModal` now ignores the edge function's broad merged song list and ranks raw evidence buckets locally. Audio-only intros/interludes are penalized, corroborated songs are preferred, repeated vision hits get boosted, and final ordering now prefers earliest observed reel position.
+- Strengthened the Claude OCR prompt so it only returns songs when both title and artist are directly readable in the frame text, explicitly forbidding guesses from album art, vinyl sleeves, artist photos, and playlist-style frames.
+
+## 2026-04-17 — Reel OCR canonicalization tolerates small title typos
+
+**Files changed**: `supabase/functions/parse-reel/index.ts`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- `canonicalizeTrack` now falls back to a small Levenshtein-based title similarity check when artist matches but the OCR title is slightly misspelled.
+- This fixes cases where Claude reads the right song with a minor typo, such as `Seigiried` instead of `Seigfried`, and the edge function was previously dropping the track before the client could rank it.
+
+## 2026-04-17 — Reel import fast path for simple reels
+
+**Files changed**: `components/ReelImportModal.tsx`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Added a fast path that skips OCR entirely when metadata/audio already provides a high-confidence low-song-count result.
+- When OCR is needed, `ReelImportModal` now scans late frames first and only pays for the early-frame pass if the late pass still leaves gaps.
+- OCR batch collection now stops after consecutive empty batches, which trims wasted Claude calls on reels where the remaining frames are not yielding new songs.
+- Tightened the skip condition after testing: the fast path now only bypasses OCR for clearly small, high-confidence reels instead of using a broad “enough songs found already” heuristic.
+- Tightened it further: OCR now only gets skipped for genuinely tiny reels (about 20-25 seconds or shorter) with at most one or two strong initial songs.
+
+## 2026-04-17 — Remove reel OCR fast-skip heuristic
+
+**Files changed**: `components/ReelImportModal.tsx`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Reverted the separate fast-track skip logic after it incorrectly suppressed OCR on dense reels whose on-screen text listed many songs while the Instagram audio only matched one unrelated track.
+- Restored the pre-fast-track trigger: if the initial merged metadata/audio/text result is still thin, run OCR.
+- Kept the staged OCR structure itself: late frames first, early frames only if needed, and early stopping after consecutive empty batches.
+
+## 2026-04-17 — Denser OCR sampling for 1-2 second song cards
+
+**Files changed**: `components/ReelImportModal.tsx`, `supabase/functions/parse-reel/index.ts`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Increased late-frame and early-frame sampling density so fast-changing reels capture more intermediate title cards.
+- Reduced OCR batch sizes (late: 3 frames, early: 2 frames) so Claude is less likely to compress several adjacent song cards into one answer.
+- Trimmed noisy Instagram debug output by removing the full media-key dump and shortening caption logging to a preview.
+
+## 2026-04-18 — Add middle OCR pass for dense short reels
+
+**Files changed**: `components/ReelImportModal.tsx`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Added a middle-range OCR pass between the late and early passes so short reels with many 1-2 second title cards do not miss the middle third of the timeline.
+- Assigned separate order-hint bands to early, middle, and late OCR batches so merged song ordering better reflects where the card actually appeared in the reel.

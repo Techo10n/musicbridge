@@ -40,6 +40,52 @@
 
 ---
 
+## AudD "skip" Was Wired To The Wrong Endpoint
+
+**Problem**: The reel importer logged multiple AudD timestamp checks, but every request kept identifying the same middle-of-video song.
+
+**Root cause**: `skip`-style chunk scanning is documented for AudD's enterprise endpoint, not the standard `api.audd.io` endpoint. The old code was POSTing the reel URL to the standard endpoint, so the offset logging did not correspond to real per-chunk scanning.
+
+**Fix**: Use `https://enterprise.audd.io/` with `skip_first_seconds` (and `limit=1`) for each requested offset. This makes the reel importer fingerprint the intended section of the video instead of repeatedly sampling the same chunk.
+
+---
+
+## Reel Import False Positives Need Cross-Source Ranking
+
+**Problem**: Treating every AudD or OCR match as equally trustworthy polluted reel imports with tracks that were never actually in the reel. Typical failures were:
+- AudD confidently returning the same intro/interlude track across adjacent chunks
+- OCR inferring a famous song from album art or cover text before the real song title appeared
+
+**Root cause**: The raw source outputs are not equally reliable. AudD can overfit short transitional audio, and OCR can hallucinate when it sees album covers, artist photos, or playlist-style frames instead of explicit title+artist overlays.
+
+**Fix**:
+- Return raw reel evidence buckets separately (`audioSongs`, `metadataSong`, `textSongs`) instead of trusting one pre-merged list
+- Rank on the client by confidence and corroboration rather than auto-keeping every audio hit
+- Penalize standalone intro/interlude-style titles unless another source supports them
+- In the vision prompt, require that both song title and artist name are directly readable on-screen and explicitly forbid album-cover inference
+- When canonicalizing OCR hits, allow small title typos instead of requiring an exact normalized iTunes match, otherwise good frame reads like `Seigiried` get dropped before they ever reach the client
+
+**Rule**: For reel imports, use cross-source evidence and order hints. Do not treat a single confident source as ground truth by default.
+
+---
+
+## Reel OCR Should Be A Fallback, Not A Blind Skip
+
+**Problem**: Reel import got accurate enough, but still felt too slow on simple reels with only one or a few songs because the client always paid for expensive frame extraction + Claude OCR whenever the initial merged count was below a fixed threshold.
+
+**Fix**:
+- When OCR is needed, scan late frames first because that is where missing songs usually are after audio has already covered the beginning
+- Add a middle-frame OCR pass for short, text-heavy reels. Early+late alone can still miss fast title cards in the middle of the reel
+- Only run the early-frame OCR pass if the late pass still leaves obvious gaps
+- Stop OCR batches early after consecutive empty batches
+- Do not use a separate fast-track skip heuristic. A reel having "enough" initial audio hits is not proof that OCR is unnecessary, especially on dense multi-song reels where the Instagram audio is unrelated to the on-screen tracklist. The safe trigger is still whether the initial merged result is thin.
+- For reels where each song card is only visible for about 1-2 seconds, use denser frame spacing and smaller OCR batches. Sparse sampling and large multi-frame batches will miss cards or cause Claude to collapse multiple songs into one answer.
+- For very short dense reels, a single dense full-timeline OCR sweep is better than staged late/middle/early passes. When every 1-2 seconds shows a new card, full coverage matters more than prioritizing one section of the reel.
+
+**Rule**: For reel import, keep the expensive vision pass staged, but trigger it off missing evidence rather than off assumptions about reel simplicity.
+
+---
+
 ---
 
 ## Liked Songs Streaming — No In-Progress Indicator

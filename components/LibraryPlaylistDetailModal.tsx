@@ -22,6 +22,7 @@ import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
 import { LibraryPlaylist, LibraryTrack, Track, User } from '../types';
 import { withTimeout } from '../lib/utils';
+import { sendPushNotification } from '../lib/notifications';
 
 interface LibraryPlaylistDetailModalProps {
   playlist: LibraryPlaylist | null;
@@ -184,6 +185,12 @@ export function LibraryPlaylistDetailModal({
           })
           .abortSignal(abort.signal);
         if (error) throw error;
+        sendPushNotification(
+          friend.id,
+          `${user.display_name ?? user.username} shared a song`,
+          trackSnapshot.title,
+          { type: 'new_share' },
+        );
         Alert.alert('Sent!', `Shared "${trackSnapshot.title}" with ${friend.display_name}.`);
       } else {
         // ── Share whole playlist ─────────────────────────────────────────
@@ -205,6 +212,12 @@ export function LibraryPlaylistDetailModal({
           })
           .abortSignal(abort.signal);
         if (error) throw error;
+        sendPushNotification(
+          friend.id,
+          `${user.display_name ?? user.username} shared a playlist`,
+          `${playlist.name} · ${tracksSnapshot.length} tracks`,
+          { type: 'new_share' },
+        );
         Alert.alert(
           'Sent!',
           `Shared "${playlist.name}" (${tracksSnapshot.length} tracks) with ${friend.display_name}.`,

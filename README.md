@@ -58,25 +58,36 @@ musicbridge/
 │   ├── FriendListItem.tsx
 │   ├── FriendPickerModal.tsx   Reusable friend picker with optional message
 │   ├── LibraryPlaylistDetailModal.tsx
+│   ├── ReelImportBanner.tsx    Slim banner shown when a reel URL is in the clipboard
+│   ├── ReelImportModal.tsx     Full reel-import flow: analyze → song card → share
 │   ├── MusicServiceButton.tsx
 │   └── ServiceBadge.tsx
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
 │   ├── useFollows.ts
 │   ├── useSharedItems.ts
-│   └── useLibrary.ts           Playlists, saved tracks, followed artists; lazy track loading
+│   ├── useLibrary.ts           Playlists, saved tracks, followed artists; lazy track loading
+│   ├── useClipboardReel.ts     Clipboard polling for reel URLs; fires on mount + foreground
+│   └── useNotifications.ts     Push registration + tap handler
 ├── lib/
 │   ├── supabase.ts
 │   ├── spotify.ts
 │   ├── appleMusic.ts           DEFERRED — see limitations
 │   ├── youtubeMusic.ts
+│   ├── notifications.ts        Register/unregister tokens, sendPushNotification helper
+│   ├── reelParser.ts           parseReelUrl, isReelUrl, platform/shortcode types
 │   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle()
 ├── types/index.ts
 ├── supabase/
-│   ├── functions/convert-playlist/index.ts   Edge Function: server-side conversion + progress
+│   ├── functions/
+│   │   ├── convert-playlist/index.ts    Edge Function: server-side conversion + progress
+│   │   ├── send-notification/index.ts   Edge Function: Expo push delivery
+│   │   └── parse-reel/index.ts          Edge Function: Instagram reel → song (metadata + AudD)
 │   └── migrations/
 │       ├── 001_initial.sql
-│       └── 003_conversion_progress.sql
+│       ├── 003_conversion_progress.sql
+│       ├── 004_follows_and_profile.sql
+│       └── 005_push_tokens.sql
 └── .env.example
 ```
 
@@ -151,7 +162,7 @@ Requires $99/year Apple Developer membership. Code is retained but non-functiona
 | `getPlaylistTracks` | Paginated, Music category only |
 | `getLikedMusic` | Playlist ID `LM` (YouTube Music Liked Music, not `LL` Liked Videos) |
 
-All library data is filtered to `videoCategoryId=10`. Artist names have ` - Topic` suffix stripped via `cleanArtistName()` before cross-platform search.
+All library data is filtered to `videoCategoryId=10`. Artist names are extracted via a multi-stage pipeline: parse from video title (`"Artist - Song"` format) → recover from video description (IIP-DDS pipe format, `아티스트:` fields, `Performed by`) → fall back to tags → cleaned channel title. This correctly handles distributor/aggregator channels (e.g. "release", IIP-DDS) that upload OST content without being the performing artist.
 
 Deep links: `youtubemusic://watch?v=<id>&vType=audio`
 
@@ -172,6 +183,18 @@ Deep links: `youtubemusic://watch?v=<id>&vType=audio`
 | `youtube_access_token`, `_refresh_token`, `_token_expiry` | text / timestamptz |
 
 RLS: users can read all rows (friend search), update only their own.
+
+### `public.push_tokens`
+
+| Column | Type |
+|---|---|
+| `id` | uuid |
+| `user_id` | uuid FK → users |
+| `token` | text (Expo push token) |
+| `platform` | text: `ios` / `android` |
+| `created_at` | timestamptz |
+
+Unique constraint on `(user_id, token)`. RLS: owner-only. Upserted on login, deleted on sign-out.
 
 ### `public.follows`
 
@@ -212,6 +235,33 @@ Unique constraint on `(follower_id, following_id)` and check `(follower_id <> fo
 | `EXPO_PUBLIC_APPLE_TEAM_ID` | Apple Developer team ID |
 | `EXPO_PUBLIC_APPLE_MUSIC_AUTH_URL` | Hosted MusicKit JS page URL |
 | `EXPO_PUBLIC_APPLE_DEVELOPER_TOKEN` | Apple Music developer JWT |
+
+---
+
+## Instagram Reel Import
+
+Users can share an Instagram reel URL to MusicBridge (or simply copy it to the clipboard). The app detects the URL on foreground and shows a slim banner.
+
+**Flow**:
+1. `useClipboardReel` polls the clipboard on mount and every time the app returns to the foreground.
+2. `ReelImportBanner` appears at the top of every screen with a "Find Song" button.
+3. Tapping "Find Song" opens `ReelImportModal`, which calls the `parse-reel` Edge Function.
+4. On success: shows the identified song card (title, artist, cover art) with an inline friend picker and optional message field.
+5. On failure: shows a brief error state and auto-closes after 2 seconds.
+
+**Reel analysis pipeline**:
+
+| Stage | Method | Notes |
+|---|---|---|
+| 1 | Instagram metadata scrape | Hits Instagram GraphQL with a mobile-style header set. Parses `clips_music_attribution_info`, caption text, preview comments, plus `video_url` / `video_duration` for follow-up analysis. Caption parsing is intentionally strict to avoid false positives from natural-language captions. |
+| 2 | AudD audio fingerprinting | Uploads the reel file once to `https://enterprise.audd.io/` for a full enterprise scan, aggregates repeated chunk hits, canonicalizes titles/artists through iTunes, and returns `matchCount` + `orderHint` so the client can rank results. Requires `AUDD_API_TOKEN` Supabase secret. |
+| 3 | Client frame OCR | `ReelImportModal` extracts a small early sample plus a larger late sample with `expo-video-thumbnails`, sends those frames back to the edge function, and Claude Haiku is instructed to return songs only when both song title and artist are directly readable on-screen. Album-cover inference is explicitly disallowed. |
+| 4 | Client confidence merge | The modal ranks raw `audioSongs`, `metadataSong`, `textSongs`, and OCR hits together. Audio-only intros/interludes are penalized, repeated OCR hits get boosted, and final ordering prefers the earliest observed reel position. OCR hits are canonicalized through iTunes with a small typo-tolerant fallback so minor frame-reading mistakes can still resolve to the real track. |
+| 5 | Staged vision fallback | Vision OCR runs whenever the initial metadata/audio/text result is still thin. Most reels use a staged late → middle → early fallback. Short dense reels instead use a single full-timeline dense OCR sweep, which is better for 1-2 second song cards where every part of the reel changes quickly. OCR batches are kept small so Claude is less likely to collapse adjacent cards together. |
+
+If all stages miss, the modal shows "Couldn't identify the song" and closes.
+
+**TikTok**: URL patterns are already defined in `lib/reelParser.ts` (`REEL_PATTERNS.tiktok`). The `parse-reel` Edge Function only handles Instagram today; extending it for TikTok requires adding scraping/fingerprint routing for TikTok video URLs.
 
 ---
 

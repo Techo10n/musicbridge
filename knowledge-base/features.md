@@ -49,11 +49,25 @@
 - `FriendPickerModal` updated: shows people you follow (not mutual friends)
 - `FriendListItem` updated: follow/unfollow button, share button for following list
 
+### Push Notifications
+- `lib/notifications.ts` — `registerForPushNotifications`, `unregisterPushToken`, `sendPushNotification`
+- `hooks/useNotifications.ts` — registers on login, navigates to home on `new_share` tap, to friends on `new_follower` tap
+- `supabase/functions/send-notification/index.ts` — verifies JWT, reads tokens from `push_tokens` table, POSTs to Expo Push API
+- `supabase/migrations/005_push_tokens.sql` — `push_tokens` table with unique `(user_id, token)` constraint, RLS owner-only
+- Fires on: new share (from `handleShareToFriend`), new follow (from `useFollows.followUser`)
+
+### Instagram Reel Import
+- `lib/reelParser.ts` — `parseReelUrl`, `isReelUrl`; `ReelPlatform` type supports instagram + tiktok patterns
+- `hooks/useClipboardReel.ts` — clipboard poll on mount + foreground; `seenUrls` ref prevents re-surfacing dismissed URLs
+- `components/ReelImportBanner.tsx` — slim top banner with platform icon, "Find Song" button, dismiss
+- `components/ReelImportModal.tsx` — analyzing → found → sharing/failed; first edge pass for metadata/audio, then client-side multi-frame extraction via `expo-video-thumbnails`, then vision-only OCR pass; song taps reuse the direct per-service track-opening flow
+- `supabase/functions/parse-reel/index.ts` — Instagram GraphQL scrape + strict caption/comment parsing + AudD enterprise fingerprinting (`skip_first_seconds`) + optional OCR over client-supplied frames
+
 ## Not Yet Built (from IDEAS.md)
 
-- Share Instagram Reels with music to the app → add songs to a playlist
 - Collaborative cross-platform playlists (create in app, accessible on each user's own service)
 - Real-time "what friends are listening to"
+- TikTok reel import (URL patterns already defined in reelParser.ts; edge function needs TikTok routing)
 
 See [[roadmap]] for phased plan.
 

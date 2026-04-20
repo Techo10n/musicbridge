@@ -35,7 +35,6 @@
 
 ## Sharing & Import
 
-- Import music from Instagram/TikTok reels — detect the song and add it to a playlist
 - Song of the Day — send one song to all your friends at once
 - Deep-link share previews — rich Open Graph previews when sharing MusicBridge links externally
 - QR code profile sharing — scan a friend's code to instantly follow them
@@ -44,8 +43,7 @@
 
 ## Notifications
 
-- Push notifications for friend activity (new share, accepted friend request, story reaction)
-- Weekly digest — "Your friends shared 14 songs this week, here's what's trending"
+- Push notifications for story reactions (deferred — Stories not yet built)
 
 ---
 

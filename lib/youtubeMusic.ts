@@ -2,6 +2,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import { supabase } from './supabase';
 import { YouTubeTrack, LibraryPlaylist, LibraryTrack, MusicService } from '../types';
+import { cleanArtistName, cleanTitle } from './utils';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -315,6 +316,21 @@ function titleScore(resultTitle: string, searchTitle: string): number {
   return 0;
 }
 
+function artistTokenScore(resultArtist: string, searchArtist: string): number {
+  const r = norm(cleanArtistName(resultArtist));
+  const s = norm(cleanArtistName(searchArtist));
+  if (!r || !s) return 0;
+  if (r === s) return 4;
+  if (r.includes(s) || s.includes(r)) return 3;
+
+  const rWords = new Set(r.split(' ').filter(Boolean));
+  const sWords = s.split(' ').filter(Boolean);
+  const overlap = sWords.filter((w) => rWords.has(w)).length;
+  if (sWords.length > 0 && overlap / sWords.length >= 0.7) return 2;
+  if (overlap >= 1) return 1;
+  return 0;
+}
+
 /**
  * From a list of candidates, picks the highest-scoring Topic-channel video
  * whose title is NOT a bad variant (remix, live, etc.).
@@ -324,19 +340,29 @@ function titleScore(resultTitle: string, searchTitle: string): number {
 function pickBestCleanTopicResult(
   items: YouTubeTrack[],
   searchTitle: string,
+  searchArtist: string,
   isTopicChannel: (i: YouTubeTrack) => boolean,
 ): YouTubeTrack | undefined {
   const clean = items
     .filter(isTopicChannel)
-    .filter((i) => !isBadVariant(i.snippet?.title ?? '', searchTitle));
+    .filter((i) => !isBadVariant(i.snippet?.title ?? '', searchTitle))
+    .filter((i) => artistTokenScore(i.snippet?.channelTitle ?? '', searchArtist) >= 2);
 
   if (clean.length === 0) return undefined;
 
-  return clean.reduce<YouTubeTrack>((best, item) =>
-    titleScore(item.snippet?.title ?? '', searchTitle) >
-    titleScore(best.snippet?.title ?? '', searchTitle)
-      ? item
-      : best,
+  return clean.slice(1).reduce<YouTubeTrack>(
+    (best, item) =>
+      (
+        titleScore(item.snippet?.title ?? '', searchTitle) * 10
+        + artistTokenScore(item.snippet?.channelTitle ?? '', searchArtist)
+      ) >
+      (
+        titleScore(best.snippet?.title ?? '', searchTitle) * 10
+        + artistTokenScore(best.snippet?.channelTitle ?? '', searchArtist)
+      )
+        ? item
+        : best,
+    clean[0],
   );
 }
 
@@ -366,7 +392,9 @@ export async function searchTrack(
 
   // For multi-artist strings like "K-391, Alan Walker, Tungevaag, Mangoo"
   // use only the first artist for channel lookups and the tighter base query.
-  const primaryArtist = artist.split(',')[0].trim();
+  const cleanedTitle = cleanTitle(title);
+  const cleanedArtist = cleanArtistName(artist);
+  const primaryArtist = cleanedArtist.split(',')[0].trim();
 
   const isTopicChannel = (item: YouTubeTrack): boolean => {
     const ch = item.snippet?.channelTitle?.toLowerCase() ?? '';
@@ -428,7 +456,7 @@ export async function searchTrack(
   const searchWithinChannel = async (channelId: string): Promise<YouTubeTrack[]> => {
     try {
       const res = await fetch(
-        `${YOUTUBE_API}/search?q=${encodeURIComponent(title)}&type=video&part=snippet,id&maxResults=10&channelId=${channelId}`,
+        `${YOUTUBE_API}/search?q=${encodeURIComponent(cleanedTitle)}&type=video&part=snippet,id&maxResults=10&channelId=${channelId}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       if (!res.ok) return [];
@@ -443,24 +471,24 @@ export async function searchTrack(
   // Always use primaryArtist — the first artist is the main artist, and the full
   // comma-separated string confuses YouTube search results.
   const [baseItems, audioItems] = await Promise.all([
-    searchVideos(`${title} ${primaryArtist}`, 'base'),
-    searchVideos(`${title} ${primaryArtist} official audio`, 'official audio'),
+    searchVideos(`${cleanedTitle} ${primaryArtist}`, 'base'),
+    searchVideos(`${cleanedTitle} ${primaryArtist} official audio`, 'official audio'),
   ]);
 
   const phase1All = [...baseItems, ...audioItems];
   const phase1Topic = phase1All.filter(isTopicChannel);
-  const phase1Variants = phase1Topic.filter((i) => isBadVariant(i.snippet?.title ?? '', title));
+  const phase1Variants = phase1Topic.filter((i) => isBadVariant(i.snippet?.title ?? '', cleanedTitle));
 
   console.log(
     `[YTM] searchTrack("${title}" / "${artist}") phase 1: ` +
     `${phase1All.length} results, ${phase1Topic.length} Topic-channel (${phase1Variants.length} are variants)`,
   );
 
-  const phase1Best = pickBestCleanTopicResult(phase1All, title, isTopicChannel);
+  const phase1Best = pickBestCleanTopicResult(phase1All, cleanedTitle, primaryArtist, isTopicChannel);
   if (phase1Best) {
     console.log(
       `[YTM] Phase 1 hit — "${phase1Best.snippet?.title}" by "${phase1Best.snippet?.channelTitle}" ` +
-      `(score ${titleScore(phase1Best.snippet?.title ?? '', title)}) — ${phase1Best.id.videoId}`,
+      `(score ${titleScore(phase1Best.snippet?.title ?? '', cleanedTitle)}, artist ${artistTokenScore(phase1Best.snippet?.channelTitle ?? '', primaryArtist)}) — ${phase1Best.id.videoId}`,
     );
     return phase1Best.id.videoId;
   }
@@ -510,11 +538,11 @@ export async function searchTrack(
       snippet: { ...i.snippet, channelTitle: `${primaryArtist} - Topic` },
     }));
 
-    const phase2Best = pickBestCleanTopicResult(tagged, title, () => true);
+    const phase2Best = pickBestCleanTopicResult(tagged, cleanedTitle, primaryArtist, () => true);
     if (phase2Best) {
       console.log(
         `[YTM] Phase 2 hit — "${phase2Best.snippet?.title}" ` +
-        `(score ${titleScore(phase2Best.snippet?.title ?? '', title)}) — ${phase2Best.id.videoId}`,
+        `(score ${titleScore(phase2Best.snippet?.title ?? '', cleanedTitle)}, artist ${artistTokenScore(phase2Best.snippet?.channelTitle ?? '', primaryArtist)}) — ${phase2Best.id.videoId}`,
       );
       return phase2Best.id.videoId;
     }

@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { sendPushNotification } from '../lib/notifications';
 import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
@@ -131,6 +132,13 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
       }).abortSignal(abort.signal);
 
       if (error) throw error;
+
+      sendPushNotification(
+        recipient.id,
+        `${user.display_name ?? user.username} shared a song`,
+        result.title,
+        { type: 'new_share' },
+      );
 
       Alert.alert('Sent!', `Shared "${result.title}" with ${recipient.display_name}.`);
       onShared();
