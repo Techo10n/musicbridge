@@ -3,6 +3,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const AUDD_API = 'https://enterprise.audd.io/';
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50 MB hard cap
+const ITUNES_ENRICH_TIMEOUT_MS = 5_000;
+const ENRICH_BATCH_SIZE = 3;
+
 const IG_GRAPHQL_ENDPOINT = 'https://www.instagram.com/api/graphql';
 const IG_GRAPHQL_DOC_ID_FALLBACK = '10015901848480474';
 const IG_LSD = 'AVqbxe3J_YA';
@@ -20,6 +24,28 @@ const IG_GRAPHQL_HEADERS: Record<string, string> = {
   'Referer': 'https://www.instagram.com/',
   'Origin': 'https://www.instagram.com',
 };
+
+// ─── Per-request context ──────────────────────────────────────────────────────
+
+interface RequestContext {
+  debugNotes: string[];
+  loggedMalformedAuddResult: boolean;
+  dbg: (msg: string) => void;
+}
+
+function createContext(): RequestContext {
+  const ctx: RequestContext = {
+    debugNotes: [],
+    loggedMalformedAuddResult: false,
+    dbg(msg: string) {
+      console.log(`[parse-reel] ${msg}`);
+      ctx.debugNotes.push(msg);
+    },
+  };
+  return ctx;
+}
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface ReelSong {
   title: string;
@@ -43,13 +69,6 @@ interface AuddSongCandidate {
 interface OrderedReelSong extends ReelSong {
   orderHint: number;
   matchCount: number;
-}
-
-const debugNotes: string[] = [];
-let loggedMalformedAuddResult = false;
-function dbg(msg: string) {
-  console.log(`[parse-reel] ${msg}`);
-  debugNotes.push(msg);
 }
 
 // ─── Deduplication ────────────────────────────────────────────────────────────
@@ -172,12 +191,20 @@ function deduplicateSongs(songs: ReelSong[]): ReelSong[] {
   return deduped;
 }
 
+// ─── iTunes cover art enrichment ──────────────────────────────────────────────
+
 async function enrichSongCover(song: ReelSong): Promise<ReelSong> {
   if (song.coverUrl) return song;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ITUNES_ENRICH_TIMEOUT_MS);
+
   try {
     const term = encodeURIComponent(`${song.title} ${song.artist}`);
-    const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=5`);
+    const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=5`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
     if (!res.ok) return song;
 
     const data = await res.json() as {
@@ -199,13 +226,21 @@ async function enrichSongCover(song: ReelSong): Promise<ReelSong> {
       coverUrl: match.artworkUrl100.replace(/100x100bb/i, '400x400bb'),
     };
   } catch {
+    clearTimeout(timer);
     return song;
   }
 }
 
 async function enrichSongCovers(songs: ReelSong[]): Promise<ReelSong[]> {
-  return Promise.all(songs.map(enrichSongCover));
+  const out: ReelSong[] = [];
+  for (let i = 0; i < songs.length; i += ENRICH_BATCH_SIZE) {
+    const batch = await Promise.all(songs.slice(i, i + ENRICH_BATCH_SIZE).map(enrichSongCover));
+    out.push(...batch);
+  }
+  return out;
 }
+
+// ─── iTunes track canonicalization ────────────────────────────────────────────
 
 async function canonicalizeTrack(song: ReelSong): Promise<ReelSong | null> {
   try {
@@ -237,7 +272,7 @@ async function canonicalizeTrack(song: ReelSong): Promise<ReelSong | null> {
           cleanedResultTitle: cleanTitleForMatch(result.trackName),
           cleanedResultArtist: cleanArtistForMatch(result.artistName),
         }))
-        .filter(({ cleanedResultTitle, cleanedResultArtist }) =>
+        .filter(({ cleanedResultArtist }) =>
           cleanedResultArtist.includes(cleanedArtist)
           || cleanedArtist.includes(cleanedResultArtist),
         )
@@ -264,25 +299,17 @@ async function canonicalizeTrack(song: ReelSong): Promise<ReelSong | null> {
 
 // ─── Text-based song parsing (caption + comments) ────────────────────────────
 
-/**
- * Parses a block of text for multiple song/artist pairs.
- * Handles numbered lists, bullet lists, emoji prefixes, and inline patterns.
- * Used on the reel caption and pinned comments.
- */
 function parseAllSongsFromText(text: string): { title: string; artist: string }[] {
   const songs: { title: string; artist: string }[] = [];
   const lines = text.split(/[\n|]/);
 
   for (const line of lines) {
-    // Strip leading number/bullet markers
     const t = line
       .replace(/^[\d]+[.)]\s*/, '')
       .replace(/^[•\-→*]\s*/, '')
       .trim();
     if (!t || t.length < 5) continue;
 
-    // Multi-line labeled (Artist:/Song: on same stripped line won't match — handled below)
-    // Single: "Song - Artist" or "Artist - Song"
     const dash = t.match(/^(.+?)\s+[-–—]\s+(.+)$/);
     if (dash) {
       const left = dash[1].trim();
@@ -293,7 +320,6 @@ function parseAllSongsFromText(text: string): { title: string; artist: string }[
       continue;
     }
 
-    // "Song by Artist"
     const by = t.match(/^(.+?)\s+by\s+(.+)$/i);
     if (by) {
       const left = by[1].trim();
@@ -304,14 +330,12 @@ function parseAllSongsFromText(text: string): { title: string; artist: string }[
       continue;
     }
 
-    // "🎵 Song - Artist" / "🎶 Song by Artist"
     const emoji = t.match(/^[🎵🎶🎸🎤♪♫]\s*(.+?)\s+(?:[-–—]|by)\s+(.+)$/i);
     if (emoji) {
       songs.push({ title: emoji[1].trim(), artist: emoji[2].trim() });
     }
   }
 
-  // Also handle multi-line labeled blocks: "Artist: X\nSong: Y"
   const artistLine = text.match(/(?:^|\n)\s*artist[:\s]+(.+)/i)?.[1]?.trim();
   const songLine = text.match(/(?:^|\n)\s*song(?:\s+name)?[:\s]+(.+)/i)?.[1]?.trim();
   if (artistLine && songLine) {
@@ -326,7 +350,7 @@ function parseAllSongsFromText(text: string): { title: string; artist: string }[
 
 // ─── Instagram GraphQL scrape ─────────────────────────────────────────────────
 
-async function scrapeInstagramMetadata(shortcode: string): Promise<{
+async function scrapeInstagramMetadata(shortcode: string, ctx: RequestContext): Promise<{
   song: ReelSong | null;
   videoUrl: string | null;
   videoDuration: number | null;
@@ -349,7 +373,7 @@ async function scrapeInstagramMetadata(shortcode: string): Promise<{
 
     if (!res.ok) {
       const body = (await res.text()).slice(0, 200);
-      dbg(`Stage-IG: HTTP ${res.status} body: ${body}`);
+      ctx.dbg(`Stage-IG: HTTP ${res.status} body: ${body}`);
       return { song: null, videoUrl: null, videoDuration: null, caption: '', comments: [] };
     }
 
@@ -357,20 +381,20 @@ async function scrapeInstagramMetadata(shortcode: string): Promise<{
     try {
       data = await res.json() as Record<string, unknown>;
     } catch {
-      dbg('Stage-IG: non-JSON response');
+      ctx.dbg('Stage-IG: non-JSON response');
       return { song: null, videoUrl: null, videoDuration: null, caption: '', comments: [] };
     }
 
     const errors = data?.errors as unknown[] | undefined;
     if (Array.isArray(errors) && errors.length > 0) {
-      dbg(`Stage-IG: GraphQL errors: ${JSON.stringify(errors).slice(0, 300)}`);
+      ctx.dbg(`Stage-IG: GraphQL errors: ${JSON.stringify(errors).slice(0, 300)}`);
     }
 
     const media = (data?.data as Record<string, unknown> | undefined)
       ?.xdt_shortcode_media as Record<string, unknown> | undefined;
 
     if (!media) {
-      dbg('Stage-IG: xdt_shortcode_media missing');
+      ctx.dbg('Stage-IG: xdt_shortcode_media missing');
       return { song: null, videoUrl: null, videoDuration: null, caption: '', comments: [] };
     }
 
@@ -380,16 +404,13 @@ async function scrapeInstagramMetadata(shortcode: string): Promise<{
       ? rawDuration
       : null;
 
-    // Caption
     const captionEdges = ((media.edge_media_to_caption as Record<string, unknown> | undefined)
       ?.edges as Array<Record<string, unknown>> | undefined) ?? [];
     const caption = (captionEdges[0]?.node as Record<string, unknown> | undefined)
       ?.text as string ?? '';
-    dbg(`Stage-IG: caption length=${caption.length}`);
-    if (caption) dbg(`Stage-IG: caption preview: "${caption.slice(0, 140).replace(/\s+/g, ' ')}${caption.length > 140 ? '…' : ''}"`);
+    ctx.dbg(`Stage-IG: caption length=${caption.length}`);
+    if (caption) ctx.dbg(`Stage-IG: caption preview: "${caption.slice(0, 140).replace(/\s+/g, ' ')}${caption.length > 140 ? '…' : ''}"`);
 
-
-    // Comments (preview_comments first, then edge_media_to_comment)
     const comments: string[] = [];
     const preview = media.preview_comments as Array<Record<string, unknown>> | undefined;
     if (Array.isArray(preview)) {
@@ -407,12 +428,11 @@ async function scrapeInstagramMetadata(shortcode: string): Promise<{
         node.is_pinned ? comments.unshift(node.text) : comments.push(node.text);
       }
     }
-    dbg(`Stage-IG: ${comments.length} comment(s)`);
+    ctx.dbg(`Stage-IG: ${comments.length} comment(s)`);
 
-    // Licensed track metadata (Format B)
     const attr = media.clips_music_attribution_info as Record<string, unknown> | undefined;
     if (attr) {
-      dbg(`Stage-IG: attr — uses_original=${attr.uses_original_audio}, song="${attr.song_name}", artist="${attr.artist_name}"`);
+      ctx.dbg(`Stage-IG: attr — uses_original=${attr.uses_original_audio}, song="${attr.song_name}", artist="${attr.artist_name}"`);
     }
 
     const song = (attr && !attr.uses_original_audio && attr.song_name && attr.artist_name)
@@ -421,28 +441,75 @@ async function scrapeInstagramMetadata(shortcode: string): Promise<{
 
     return { song, videoUrl, videoDuration, caption, comments };
   } catch (err) {
-    dbg(`Stage-IG: exception: ${err}`);
+    ctx.dbg(`Stage-IG: exception: ${err}`);
     return { song: null, videoUrl: null, videoDuration: null, caption: '', comments: [] };
   }
 }
 
 // ─── AudD multi-segment fingerprinting ───────────────────────────────────────
 
-async function downloadVideoForFingerprinting(videoUrl: string): Promise<DownloadedVideo | null> {
+async function downloadVideoForFingerprinting(
+  videoUrl: string,
+  ctx: RequestContext,
+): Promise<DownloadedVideo | null> {
   try {
-    dbg(`Stage-Audio: downloading video for file upload ${videoUrl.slice(0, 80)}…`);
+    ctx.dbg(`Stage-Audio: downloading video for file upload ${videoUrl.slice(0, 80)}…`);
     const res = await fetch(videoUrl);
     if (!res.ok) {
-      dbg(`Stage-Audio: video download HTTP ${res.status}`);
+      ctx.dbg(`Stage-Audio: video download HTTP ${res.status}`);
       return null;
     }
 
-    const bytes = new Uint8Array(await res.arrayBuffer());
     const contentType = res.headers.get('content-type') ?? 'video/mp4';
-    dbg(`Stage-Audio: downloaded ${(bytes.byteLength / (1024 * 1024)).toFixed(2)}MB (${contentType})`);
+
+    // Reject oversized videos early if content-length is present
+    const contentLengthHeader = res.headers.get('content-length');
+    if (contentLengthHeader) {
+      const contentLength = parseInt(contentLengthHeader, 10);
+      if (!isNaN(contentLength) && contentLength > MAX_VIDEO_BYTES) {
+        ctx.dbg(
+          `Stage-Audio: video too large per content-length (${(contentLength / (1024 * 1024)).toFixed(1)}MB > ${MAX_VIDEO_BYTES / (1024 * 1024)}MB limit)`,
+        );
+        res.body?.cancel();
+        return null;
+      }
+    }
+
+    if (!res.body) {
+      ctx.dbg('Stage-Audio: no response body');
+      return null;
+    }
+
+    // Stream and enforce size limit in flight
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.length;
+      if (totalBytes > MAX_VIDEO_BYTES) {
+        ctx.dbg(
+          `Stage-Audio: video exceeded ${MAX_VIDEO_BYTES / (1024 * 1024)}MB limit while streaming — aborting`,
+        );
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    ctx.dbg(`Stage-Audio: downloaded ${(bytes.byteLength / (1024 * 1024)).toFixed(2)}MB (${contentType})`);
     return { bytes, contentType };
   } catch (err) {
-    dbg(`Stage-Audio: video download failed: ${err}`);
+    ctx.dbg(`Stage-Audio: video download failed: ${err}`);
     return null;
   }
 }
@@ -489,6 +556,7 @@ async function fingerprintSegment(
   video: DownloadedVideo,
   token: string,
   offsetSeconds: number,
+  ctx: RequestContext,
 ): Promise<ReelSong | null> {
   try {
     const body = new FormData();
@@ -503,12 +571,9 @@ async function fingerprintSegment(
       'reel.mp4',
     );
 
-    const res = await fetch(AUDD_API, {
-      method: 'POST',
-      body,
-    });
+    const res = await fetch(AUDD_API, { method: 'POST', body });
 
-    if (!res.ok) { dbg(`AudD offset=${offsetSeconds}s: HTTP ${res.status}`); return null; }
+    if (!res.ok) { ctx.dbg(`AudD offset=${offsetSeconds}s: HTTP ${res.status}`); return null; }
 
     const data = await res.json() as {
       status: string;
@@ -518,24 +583,24 @@ async function fingerprintSegment(
 
     if (data.status !== 'success' || !data.result) {
       const reason = data.error ? `code=${data.error.error_code} "${data.error.error_message}"` : 'no match';
-      dbg(`AudD offset=${offsetSeconds}s: ${reason}`);
+      ctx.dbg(`AudD offset=${offsetSeconds}s: ${reason}`);
       return null;
     }
 
     const song = pickBestEnterpriseSong(data.result);
     if (!song) {
-      if (!loggedMalformedAuddResult) {
-        loggedMalformedAuddResult = true;
-        dbg(`AudD malformed result sample: ${JSON.stringify(data.result).slice(0, 500)}`);
+      if (!ctx.loggedMalformedAuddResult) {
+        ctx.loggedMalformedAuddResult = true;
+        ctx.dbg(`AudD malformed result sample: ${JSON.stringify(data.result).slice(0, 500)}`);
       }
-      dbg(`AudD offset=${offsetSeconds}s: success response but no valid song fields`);
+      ctx.dbg(`AudD offset=${offsetSeconds}s: success response but no valid song fields`);
       return null;
     }
 
-    dbg(`AudD offset=${offsetSeconds}s: "${song.title}" by "${song.artist}"`);
+    ctx.dbg(`AudD offset=${offsetSeconds}s: "${song.title}" by "${song.artist}"`);
     return song;
   } catch (err) {
-    dbg(`AudD offset=${offsetSeconds}s: exception: ${err}`);
+    ctx.dbg(`AudD offset=${offsetSeconds}s: exception: ${err}`);
     return null;
   }
 }
@@ -543,8 +608,9 @@ async function fingerprintSegment(
 async function fingerprintWholeVideo(
   videoUrl: string,
   token: string,
+  ctx: RequestContext,
 ): Promise<OrderedReelSong[]> {
-  const downloadedVideo = await downloadVideoForFingerprinting(videoUrl);
+  const downloadedVideo = await downloadVideoForFingerprinting(videoUrl, ctx);
   if (!downloadedVideo) return [];
 
   try {
@@ -559,14 +625,11 @@ async function fingerprintWholeVideo(
       'reel.mp4',
     );
 
-    dbg('Stage-Audio: single enterprise scan across full reel');
-    const res = await fetch(AUDD_API, {
-      method: 'POST',
-      body,
-    });
+    ctx.dbg('Stage-Audio: single enterprise scan across full reel');
+    const res = await fetch(AUDD_API, { method: 'POST', body });
 
     if (!res.ok) {
-      dbg(`Stage-Audio: enterprise scan HTTP ${res.status}`);
+      ctx.dbg(`Stage-Audio: enterprise scan HTTP ${res.status}`);
       return [];
     }
 
@@ -578,7 +641,7 @@ async function fingerprintWholeVideo(
 
     if (data.status !== 'success' || !Array.isArray(data.result)) {
       const reason = data.error ? `code=${data.error.error_code} "${data.error.error_message}"` : 'unexpected result';
-      dbg(`Stage-Audio: enterprise scan failed: ${reason}`);
+      ctx.dbg(`Stage-Audio: enterprise scan failed: ${reason}`);
       return [];
     }
 
@@ -586,7 +649,7 @@ async function fingerprintWholeVideo(
     for (const chunk of data.result as Array<{ offset?: number; songs?: unknown }>) {
       const parsed = pickBestEnterpriseSong([{ songs: chunk.songs }]);
       if (!parsed) continue;
-      dbg(`AudD chunk offset=${chunk.offset ?? 'unknown'}s: "${parsed.title}" by "${parsed.artist}"`);
+      ctx.dbg(`AudD chunk offset=${chunk.offset ?? 'unknown'}s: "${parsed.title}" by "${parsed.artist}"`);
       results.push({
         ...parsed,
         orderHint: typeof chunk.offset === 'number' ? chunk.offset : Number.MAX_SAFE_INTEGER,
@@ -594,9 +657,9 @@ async function fingerprintWholeVideo(
       });
     }
 
-    if (results.length === 0 && !loggedMalformedAuddResult) {
-      loggedMalformedAuddResult = true;
-      dbg(`AudD malformed result sample: ${JSON.stringify(data.result).slice(0, 500)}`);
+    if (results.length === 0 && !ctx.loggedMalformedAuddResult) {
+      ctx.loggedMalformedAuddResult = true;
+      ctx.dbg(`AudD malformed result sample: ${JSON.stringify(data.result).slice(0, 500)}`);
     }
 
     const aggregated: OrderedReelSong[] = [];
@@ -629,10 +692,10 @@ async function fingerprintWholeVideo(
       }),
     )).sort((a, b) => a.orderHint - b.orderHint);
 
-    dbg(`Stage-Audio: ${canonicalized.length} unique song(s) found`);
+    ctx.dbg(`Stage-Audio: ${canonicalized.length} unique song(s) found`);
     return canonicalized;
   } catch (err) {
-    dbg(`Stage-Audio: enterprise scan exception: ${err}`);
+    ctx.dbg(`Stage-Audio: enterprise scan exception: ${err}`);
     return [];
   }
 }
@@ -641,11 +704,12 @@ async function fingerprintWholeVideo(
 
 async function extractSongsFromFrames(
   frames: string[],
+  ctx: RequestContext,
 ): Promise<{ title: string; artist: string }[]> {
   if (frames.length === 0) return [];
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) { dbg('Stage-Vision: ANTHROPIC_API_KEY not set — skipping'); return []; }
+  if (!apiKey) { ctx.dbg('Stage-Vision: ANTHROPIC_API_KEY not set — skipping'); return []; }
 
   try {
     const imageContent = frames.map(f => ({
@@ -678,16 +742,16 @@ async function extractSongsFromFrames(
 
     const data = await res.json() as { content?: Array<{ type: string; text: string }> };
     const text = data.content?.find(c => c.type === 'text')?.text ?? '[]';
-    dbg(`Stage-Vision: Claude response: ${text.slice(0, 300)}`);
+    ctx.dbg(`Stage-Vision: Claude response: ${text.slice(0, 300)}`);
 
     const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) { dbg('Stage-Vision: no JSON array in response'); return []; }
+    if (!jsonMatch) { ctx.dbg('Stage-Vision: no JSON array in response'); return []; }
 
     const parsed = JSON.parse(jsonMatch[0]) as { title: string; artist: string }[];
-    dbg(`Stage-Vision: ${parsed.length} song(s) from frames`);
+    ctx.dbg(`Stage-Vision: ${parsed.length} song(s) from frames`);
     return parsed;
   } catch (err) {
-    dbg(`Stage-Vision: failed: ${err}`);
+    ctx.dbg(`Stage-Vision: failed: ${err}`);
     return [];
   }
 }
@@ -704,8 +768,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  debugNotes.length = 0;
-  loggedMalformedAuddResult = false;
+  const ctx = createContext();
 
   const jsonResp = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -718,10 +781,14 @@ Deno.serve(async (req) => {
     const jwt = authHeader?.replace('Bearer ', '');
     if (!jwt) return jsonResp({ error: 'unauthorized' }, 401);
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    );
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('[parse-reel] Missing required env vars: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+      return jsonResp({ error: 'server_misconfigured' }, 500);
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const { error: authError } = await supabase.auth.getUser(jwt);
     if (authError) return jsonResp({ error: 'unauthorized' }, 401);
 
@@ -738,48 +805,49 @@ Deno.serve(async (req) => {
     if (!visionOnly && !body.url) return jsonResp({ error: 'missing url' }, 400);
 
     if (visionOnly) {
-      dbg(`Stage-Vision: ${clientFrames.length} client frame(s) provided`);
-      const visionSongs = await extractSongsFromFrames(clientFrames);
+      ctx.dbg(`Stage-Vision: ${clientFrames.length} client frame(s) provided`);
+      const visionSongs = await extractSongsFromFrames(clientFrames, ctx);
       const canonicalVisionSongs = (await Promise.all(
         visionSongs.map((song) => canonicalizeTrack({ ...song, coverUrl: null })),
       )).filter((song): song is ReelSong => !!song);
       const allSongs = deduplicateSongs(canonicalVisionSongs);
       const source = allSongs.length > 0 ? 'vision' : 'none';
-      dbg(`RESULT: ${allSongs.length} song(s) via [${source}]`);
-      return jsonResp({ songs: allSongs, source, debug: debugNotes });
+      ctx.dbg(`RESULT: ${allSongs.length} song(s) via [${source}]`);
+      return jsonResp({ songs: allSongs, source, debug: ctx.debugNotes });
     }
 
     const shortcodeMatch = body.url!.match(/instagram\.com\/(?:reel|p)\/([A-Za-z0-9_-]+)/);
     if (!shortcodeMatch) return jsonResp({ error: 'invalid_url' }, 400);
     const shortcode = shortcodeMatch[1];
-    dbg(`shortcode: ${shortcode}`);
+    ctx.dbg(`shortcode: ${shortcode}`);
 
     // ── Stage 0: Instagram metadata + caption/comment text parsing ───────────
-    const { song: igSong, videoUrl, videoDuration, caption, comments } = await scrapeInstagramMetadata(shortcode);
+    const { song: igSong, videoUrl, videoDuration, caption, comments } =
+      await scrapeInstagramMetadata(shortcode, ctx);
 
     const captionSongs = caption ? parseAllSongsFromText(caption) : [];
-    dbg(`Stage-Text: caption yielded ${captionSongs.length} song(s)`);
+    ctx.dbg(`Stage-Text: caption yielded ${captionSongs.length} song(s)`);
 
     const commentSongs = comments.flatMap(c => parseAllSongsFromText(c));
-    dbg(`Stage-Text: comments yielded ${commentSongs.length} song(s)`);
+    ctx.dbg(`Stage-Text: comments yielded ${commentSongs.length} song(s)`);
 
-    // ── Stage 1: AudD multi-segment audio fingerprinting ────────────────────
+    // ── Stage 1: AudD enterprise scan across full reel ───────────────────────
     const auddToken = Deno.env.get('AUDD_API_TOKEN');
     let audioSongs: OrderedReelSong[] = [];
     if (videoUrl && auddToken) {
-      audioSongs = await fingerprintWholeVideo(videoUrl, auddToken);
+      audioSongs = await fingerprintWholeVideo(videoUrl, auddToken, ctx);
     } else {
-      if (!videoUrl) dbg('Stage-Audio: skipped — no video URL');
-      if (!auddToken) dbg('Stage-Audio: skipped — AUDD_API_TOKEN not set');
+      if (!videoUrl) ctx.dbg('Stage-Audio: skipped — no video URL');
+      if (!auddToken) ctx.dbg('Stage-Audio: skipped — AUDD_API_TOKEN not set');
     }
 
-    // ── Stage 2: Vision OCR on client-extracted frames ──────────────────────
+    // ── Stage 2: Vision OCR on client-extracted frames ───────────────────────
     let visionSongs: { title: string; artist: string }[] = [];
     if (clientFrames.length > 0) {
-      dbg(`Stage-Vision: using ${clientFrames.length} client frame(s)`);
-      visionSongs = await extractSongsFromFrames(clientFrames);
+      ctx.dbg(`Stage-Vision: using ${clientFrames.length} client frame(s)`);
+      visionSongs = await extractSongsFromFrames(clientFrames, ctx);
     } else {
-      dbg('Stage-Vision: skipped — no client frames provided');
+      ctx.dbg('Stage-Vision: skipped — no client frames provided');
     }
 
     // ── Merge all sources ────────────────────────────────────────────────────
@@ -799,7 +867,7 @@ Deno.serve(async (req) => {
     ].filter(Boolean);
 
     const source = allSongs.length > 0 ? sources.join('+') : 'none';
-    dbg(`RESULT: ${allSongs.length} song(s) via [${source}]`);
+    ctx.dbg(`RESULT: ${allSongs.length} song(s) via [${source}]`);
 
     return jsonResp({
       songs: allSongs,
@@ -810,7 +878,7 @@ Deno.serve(async (req) => {
         ...commentSongs.map(s => ({ ...s, coverUrl: null })),
       ]),
       source,
-      debug: debugNotes,
+      debug: ctx.debugNotes,
       videoUrl,
       videoDuration,
     });
@@ -818,7 +886,7 @@ Deno.serve(async (req) => {
     const msg = `unexpected error: ${err}`;
     console.error(`[parse-reel] ${msg}`);
     return new Response(
-      JSON.stringify({ error: 'internal_error', debug: [...debugNotes, msg] }),
+      JSON.stringify({ error: 'internal_error', debug: [...ctx.debugNotes, msg] }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }

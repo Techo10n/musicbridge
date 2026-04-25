@@ -40,7 +40,7 @@ See `IDEAS.md` for the full categorized list. Key themes:
 - **Sharing/Import**: Instagram/TikTok reel import, Song of the Day, deep link previews, QR code profiles
 - **Notifications**: push notifications, weekly digest
 - **Gamification**: leaderboards, badges, music trivia
-- **Platform**: unified search, ISRC matching, Apple Music, offline mode
+- **Platform**: unified search, ISRC matching, offline mode
 
 ---
 

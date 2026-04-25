@@ -102,7 +102,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const signOut = async () => {
     const currentUser = user;
     if (currentUser?.id) {
-      await unregisterPushToken(currentUser.id);
+      try {
+        await unregisterPushToken(currentUser.id);
+      } catch (err) {
+        console.warn('[useAuth] unregisterPushToken failed during sign-out:', err);
+      }
     }
     await supabase.auth.signOut({ scope: 'local' });
     setUser(null);

@@ -75,7 +75,9 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
             id: t.id,
             title: t.attributes.name,
             artist: t.attributes.artistName,
-            coverUrl: resolveAppleMusicArtwork(t.attributes.artwork.url, 300),
+            coverUrl: t.attributes.artwork
+              ? resolveAppleMusicArtwork(t.attributes.artwork.url, 300)
+              : '',
             raw: t,
           }));
           break;

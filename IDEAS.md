@@ -28,7 +28,7 @@
 ## Collaborative
 
 - Cross-platform collaborative playlists — anyone can add songs; syncs to each collaborator's streaming account
-- Shared queue — add songs to a joint real-time queue with a friend
+- *Shared queue — add songs to a joint real-time queue with a friend - listenable on different devices at the same time, or on one device.
 - Friend blend — auto-generated playlist built from two friends' libraries, updated weekly
 
 ---
@@ -57,8 +57,13 @@
 
 ## Platform & Infrastructure
 
-- Apple Music integration (deferred until funded)
 - ISRC-based track matching for higher-fidelity cross-platform conversion
 - Unified search across all connected services at once
 - Offline mode — cache recently shared items for browsing without a connection
 
+
+
+## ELSE
+
+- Favorite song search doesnt work, at least on apple music accounts. On Youtube music, still returns the incorrect youtube untrimmed song title and artist, instead of the clean song and artist as seen on YT Music
+- Apple Music created-playlist UX — if Apple doesn't expose a direct playlist URL, consider stronger guidance beyond Library fallback (toast, temporary banner, or auto-refresh hint)

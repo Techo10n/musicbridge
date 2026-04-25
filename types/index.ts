@@ -74,6 +74,8 @@ export interface SharedItem {
   tracks: Track[] | null;
   message: string | null;
   opened: boolean;
+  conversion_status: 'idle' | 'processing' | 'done' | 'failed';
+  tracks_processed: number;
   created_at: string;
   // Joined sender profile
   sender?: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'>;

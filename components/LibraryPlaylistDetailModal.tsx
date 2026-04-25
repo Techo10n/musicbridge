@@ -40,10 +40,12 @@ function toTrackPayload(t: LibraryTrack): Track {
   };
 }
 
-async function openTrackInService(track: LibraryTrack) {
+async function openTrackInService(userId: string | undefined, track: LibraryTrack) {
   let urls: string[] = [];
   if (track.service === 'spotify') urls = Spotify.getSpotifyDeepLink(track.id);
-  else if (track.service === 'apple_music') urls = AppleMusic.getAppleMusicDeepLink(track.id);
+  else if (track.service === 'apple_music' && userId) {
+    urls = await AppleMusic.resolveAppleMusicTrackLinks(userId, track.title, track.artist, track.id);
+  }
   else if (track.service === 'youtube_music') urls = YouTubeMusic.getYouTubeMusicDeepLink(track.id);
   for (const url of urls) {
     try {
@@ -59,7 +61,7 @@ export function LibraryPlaylistDetailModal({
   onClose,
 }: LibraryPlaylistDetailModalProps) {
   const { user } = useAuth();
-  const { mutualFollows: friends } = useFollows();
+  const { mutualFollows: friends, refresh: refreshFollows } = useFollows();
 
   const [tracks, setTracks] = useState<LibraryTrack[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
@@ -133,12 +135,14 @@ export function LibraryPlaylistDetailModal({
   }, [visible, playlist?.id, user?.id, user?.primary_service]);
 
   const openPickerForPlaylist = () => {
+    void refreshFollows();
     setPendingTrack(null);
     setPickerMessage('');
     setPickerVisible(true);
   };
 
   const openPickerForTrack = (track: LibraryTrack) => {
+    void refreshFollows();
     setPendingTrack(track);
     setPickerMessage('');
     setPickerVisible(true);
@@ -243,7 +247,7 @@ export function LibraryPlaylistDetailModal({
     <View style={styles.trackRow}>
       <TouchableOpacity
         style={styles.trackTappableArea}
-        onPress={() => openTrackInService(track)}
+        onPress={() => openTrackInService(user?.id, track)}
         activeOpacity={0.7}
       >
         {track.coverUrl ? (

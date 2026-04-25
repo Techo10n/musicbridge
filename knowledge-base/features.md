@@ -3,18 +3,19 @@
 ## Built and Working
 
 ### Screens
-- **home** — feed of received shared items; pull-to-refresh; song tap → deep link; playlist tap → PlaylistModal
+- **home** — feed of received shared items; pull-to-refresh; realtime refresh on new/updated shares; song tap → deep link; playlist tap → PlaylistModal
 - **friends** — friends/pending tabs, username search, send/accept/decline requests, share button
 - **library** — playlists (tap to open detail), saved songs/liked videos (share per song), followed artists (Spotify only, horizontal scroll)
 - **profile** — connect/disconnect each service, set primary service, sign out
-- **login / register** — email+password; 2-step registration (credentials → primary service)
+- **login / register** — email+password; 2-step registration (credentials → primary service) with immediate connect prompt for the selected default service before entering Home
+- **login** — shows a Spotify reconnect prompt when a stored Spotify refresh token was invalidated and the user needs to reconnect from Profile
 
 ### Components
 - `SongCard` / `PlaylistCard` — unread state (bold + left border)
-- `PlaylistModal` — track list + "Add to [service]" conversion
+- `PlaylistModal` — track list + "Add to [service]" conversion; preserves live progress/success during the current conversion, and if the playlist was already converted for the recipient when reopened later, shows `Already In Library` instead of another add action. For Apple Music, opens a catalog playlist URL when Apple exposes one, otherwise falls back to the Apple Music Library and explains that the new playlist may take a moment to appear
 - `ShareModal` — search primary service, pick friend, send
-- `LibraryPlaylistDetailModal` — per-track share (paper-plane icon) + "Share Playlist with Friend" footer
-- `FriendPickerModal` — reusable, resolves friend from `Friendship` requester/addressee
+- `LibraryPlaylistDetailModal` — per-track share (paper-plane icon) + "Share Playlist with Friend" footer; refreshes mutual follows when share opens
+- `FriendPickerModal` — reusable mutual-follow picker; refreshes follows whenever opened
 - `ServiceBadge` / `MusicServiceButton`
 
 ### Library (hooks/useLibrary.ts)
@@ -24,6 +25,7 @@
 ### Playlist Conversion
 - Client-side by default; also available as Edge Function (`supabase/functions/convert-playlist/`)
 - Progress tracked via `conversion_status` + `tracks_processed` on `shared_items`
+- `useSharedItems` now refreshes on both `INSERT` and `UPDATE` so conversion completion state is reflected without manual refresh
 
 ---
 

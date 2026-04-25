@@ -41,15 +41,21 @@ export function useNotifications() {
 
   // Handle tapping a notification while the app is foregrounded or from cold start
   useEffect(() => {
-    ExpoNotifications.getLastNotificationResponseAsync().then((response) => {
-      if (response) {
-        handleNotificationResponse(response);
-      }
-    });
+    ExpoNotifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (response) {
+          handleNotificationResponse(response).catch((err) =>
+            console.warn('[useNotifications] handleNotificationResponse (cold start) failed:', err),
+          );
+        }
+      })
+      .catch((err) => console.warn('[useNotifications] getLastNotificationResponseAsync failed:', err));
 
     responseListenerRef.current = ExpoNotifications.addNotificationResponseReceivedListener(
       (response) => {
-        handleNotificationResponse(response);
+        handleNotificationResponse(response).catch((err) =>
+          console.warn('[useNotifications] handleNotificationResponse failed:', err),
+        );
       },
     );
 

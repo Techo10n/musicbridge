@@ -32,6 +32,16 @@
 
 ---
 
+## Share Pickers Need Fresh Follow Data
+
+**Problem**: A user who had just become a mutual follow did not appear in the playlist/song share picker immediately.
+
+**Root cause**: The share pickers owned their own `useFollows()` instance and only fetched follow data on mount, so a modal that was already mounted could show a stale mutual-follow list.
+
+**Fix**: Refresh follow data when share UI opens. `FriendPickerModal` now calls `refresh()` on open, and `LibraryPlaylistDetailModal` refreshes follows before showing its inline picker.
+
+---
+
 ## YouTube Channel Name Pollution
 
 **Problem**: YouTube channel names for official tracks include ` - Topic` suffix (e.g. "Drake - Topic"). Using this as a search query on Spotify/Apple Music returns bad results.
@@ -63,7 +73,7 @@
 - Rank on the client by confidence and corroboration rather than auto-keeping every audio hit
 - Penalize standalone intro/interlude-style titles unless another source supports them
 - In the vision prompt, require that both song title and artist name are directly readable on-screen and explicitly forbid album-cover inference
-- When canonicalizing OCR hits, allow small title typos instead of requiring an exact normalized iTunes match, otherwise good frame reads like `Seigiried` get dropped before they ever reach the client
+- When canonicalizing OCR hits, allow small title typos instead of requiring an exact normalized iTunes match; otherwise, good frame reads like `Seigiried` get dropped before they ever reach the client
 
 **Rule**: For reel imports, use cross-source evidence and order hints. Do not treat a single confident source as ground truth by default.
 
@@ -115,6 +125,20 @@
 **Key rule**: If `channelTitle` doesn't end with `" - Topic"`, YouTube Music renders it as a Video, not a Song. Never add non-Topic videos.
 
 **Variant detection caveat**: `isBadVariant` only flags qualifiers absent from the *search* title — so searching for "Live and Let Die" or "Remix" (as an actual song title) won't falsely filter the canonical recording.
+
+## Apple Music Library IDs Are Not Deep Links
+
+**Problem**: Apple Music library playlist IDs are not safe to turn into guessed `music.apple.com/library/playlist/{id}` URLs. A playlist can be created successfully, but opening that guessed URL can still land in Apple Music's "item not available" screen.
+
+**Fix**:
+- Capture the canonical playlist URL returned by Apple Music in `attributes.url`
+- If the create-playlist response omits `attributes.url`, fetch the created library playlist once more to resolve it
+- If the library playlist still has no direct URL, check its `catalog` relationship for a catalog playlist URL
+- If Apple exposes no direct playlist URL at all, fall back to opening the Apple Music Library instead of pretending the raw library playlist ID is deep-linkable
+- Return that URL from the playlist-creation path / conversion edge function
+- Build `music://` + `https://` deep links from the canonical URL instead of from the raw library ID
+
+**Rule**: For Apple Music handoff, prefer canonical URLs returned by Apple over manufactured URL patterns whenever the API provides them. Private library playlists may not be directly deep-linkable.
 
 ---
 

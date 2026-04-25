@@ -17,9 +17,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.musicbridge.app",
+      "buildNumber": "2",
+      "bundleIdentifier": "com.techolon.musicbridge",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "NSAppleMusicUsageDescription": "MusicBridge uses Apple Music to share and discover music with your friends.",
         "LSApplicationQueriesSchemes": [
           "spotify",
           "vnd.youtube",
@@ -31,7 +33,8 @@
       }
     },
     "android": {
-      "package": "com.musicbridge.app",
+      "package": "com.techolon.musicbridge",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -55,7 +58,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/android-icon-monochrome.png",
           "color": "#ffffff",
           "sounds": []
         }

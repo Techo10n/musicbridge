@@ -169,9 +169,84 @@ Created knowledge base from project files, README, SETUP.md, IDEAS.md, CLAUDE.md
 - Reduced OCR batch sizes (late: 3 frames, early: 2 frames) so Claude is less likely to compress several adjacent song cards into one answer.
 - Trimmed noisy Instagram debug output by removing the full media-key dump and shortening caption logging to a preview.
 
+## 2026-04-20 — Harden parse-reel edge function
+
+**Files changed**: `supabase/functions/parse-reel/index.ts`, `hooks/useAuth.tsx`, `hooks/useFollows.ts`, `hooks/useNotifications.ts`, `lib/notifications.ts`, `components/ReelImportModal.tsx`, `app.json`
+
+- **Per-request context**: Removed module-level `debugNotes`/`loggedMalformedAuddResult`/`dbg` (caused race conditions across concurrent Deno.serve requests). Now created fresh per request as a `RequestContext` object threaded through every function.
+- **Video size cap**: `downloadVideoForFingerprinting` now checks `content-length` first and stream-reads with a running byte counter; aborts and returns null if the video exceeds 50 MB.
+- **iTunes enrichment**: `enrichSongCover` now uses `AbortController` with a 5-second timeout; `enrichSongCovers` processes in batches of 3 instead of unbounded `Promise.all`.
+- **Env var validation**: `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are now checked before `createClient`; missing vars return `server_misconfigured` 500 rather than crashing with a non-null assertion.
+- **Auth note**: `--no-verify-jwt` in the deploy command is intentional — the Supabase gateway skips its own JWT pre-check so the function can validate the token itself using the service role key (see handler lines). Auth IS enforced; the function returns 401 for missing or invalid JWTs.
+- **Notification robustness**: `unregisterPushToken` wrapped in try/catch in `signOut`; `sendPushNotification` fire-and-forget in `followUser` gets `.catch()`; `handleNotificationResponse` calls in `useNotifications` guarded with `.catch()`; Supabase upsert in `registerForPushNotifications` now checks `response.error` instead of relying on try/catch.
+- **Schema fix**: `cover_image_url` in `ReelImportModal` share insert now uses `|| null` instead of `?? ''` so missing covers store null rather than an empty string.
+- **Android notification icon**: expo-notifications plugin icon updated to `./assets/android-icon-monochrome.png` (required all-white 96×96 PNG).
+
 ## 2026-04-18 — Add middle OCR pass for dense short reels
 
 **Files changed**: `components/ReelImportModal.tsx`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
 
 - Added a middle-range OCR pass between the late and early passes so short reels with many 1-2 second title cards do not miss the middle third of the timeline.
 - Assigned separate order-hint bands to early, middle, and late OCR batches so merged song ordering better reflects where the card actually appeared in the reel.
+
+## 2026-04-25 — Native Apple Music auth + storefront-aware links + signup connect prompt
+
+**Files changed**: `modules/apple-music/index.ts`, `modules/apple-music/ios/AppleMusicModule.swift`, `modules/apple-music/ios/AppleMusicNative.podspec`, `lib/appleMusic.ts`, `app/(tabs)/home.tsx`, `components/ReelImportModal.tsx`, `components/LibraryPlaylistDetailModal.tsx`, `app/(auth)/register.tsx`, `README.md`, `IDEAS.md`, `knowledge-base/auth.md`, `knowledge-base/features.md`, `knowledge-base/integrations/apple-music.md`, `knowledge-base/preferences.md`, `knowledge-base/roadmap.md`
+
+- Replaced the old browser-based Apple Music auth path with a native iOS Expo module that requests Apple Music permission and exchanges a server-signed developer token for a Music user token.
+- Fixed Apple Music deep links to resolve against the recipient storefront and prefer canonical Apple Music song URLs before opening the app.
+- Moved the initial “connect your default streaming service” prompt into the registration service-selection step so new users can connect before reaching Home.
+- Removed the implemented signup-connect prompt idea from `IDEAS.md` and synced README + knowledge base notes to the current behavior.
+
+## 2026-04-25 — Clear invalid Spotify tokens on refresh failure
+
+**Files changed**: `lib/spotify.ts`, `README.md`, `knowledge-base/auth.md`, `knowledge-base/integrations/spotify.md`
+
+- If Spotify returns a failed refresh response, the app now clears the stored Spotify tokens and treats the service as disconnected.
+- This avoids repeated refresh attempts with a bad refresh token and makes the recovery path explicit: reconnect Spotify once.
+
+## 2026-04-25 — Spotify reconnect popup on login
+
+**Files changed**: `app/_layout.tsx`, `lib/spotify.ts`, `README.md`, `knowledge-base/auth.md`, `knowledge-base/features.md`, `knowledge-base/integrations/spotify.md`
+
+- Added a persistent reconnect-required flag when Spotify refresh fails.
+- On the next login, the app now shows a popup explaining that Spotify needs to be reconnected and can route the user directly to Profile.
+
+## 2026-04-25 — Refresh mutual follows when share pickers open
+
+**Files changed**: `components/FriendPickerModal.tsx`, `components/LibraryPlaylistDetailModal.tsx`, `README.md`, `knowledge-base/features.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Fixed stale mutual-follow share targets by refreshing follow data whenever the reusable share picker opens.
+- The inline playlist share picker now also refreshes follows right before showing mutual-follow share options.
+
+## 2026-04-25 — Use canonical Apple Music playlist URLs after conversion
+
+**Files changed**: `components/PlaylistModal.tsx`, `lib/appleMusic.ts`, `supabase/functions/convert-playlist/index.ts`, `README.md`, `knowledge-base/features.md`, `knowledge-base/integrations/apple-music.md`, `knowledge-base/log.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Fixed Apple Music playlist handoff after successful conversion by propagating the canonical `attributes.url` returned by Apple Music instead of constructing a guessed `library/playlist/{id}` URL from the raw library playlist ID.
+- `convert-playlist` now returns `playlistUrl` for Apple Music when available, and the success modal uses that URL for `Open in Apple Music`.
+- Added a follow-up Apple Music library-playlist lookup because the create-playlist response may omit `attributes.url`; the modal now logs the exact playlist URL handoff payload for debugging.
+- Added a catalog-relationship lookup for Apple Music library playlists. If Apple still does not expose a direct playlist URL, the app now falls back to opening the Apple Music Library instead of the broken `item not available` path.
+- Updated the success modal copy/button for the Apple Music fallback case so users see `Open Apple Music Library` and a note that the new playlist may take a moment to appear.
+
+## 2026-04-25 — Show “Already In Library” for converted shared playlists
+
+**Files changed**: `components/PlaylistModal.tsx`, `hooks/useSharedItems.ts`, `types/index.ts`, `README.md`, `IDEAS.md`, `knowledge-base/features.md`, `knowledge-base/log.md`
+
+- Shared playlist rows now expose `conversion_status` and `tracks_processed` in app types, and the inbox refresh hook now subscribes to `UPDATE` as well as `INSERT`.
+- Reopening a playlist that was already converted for the recipient now shows `Already In Library` instead of another `Add to [service]` button.
+- Fresh in-session conversions still show the success state first; the stable reopened state is now the explicit already-added UI.
+
+## 2026-04-25 — Fix PlaylistModal hook order regression
+
+**Files changed**: `components/PlaylistModal.tsx`, `knowledge-base/log.md`
+
+- Fixed a React Rules of Hooks violation in `PlaylistModal` caused by declaring a `useEffect` after an early `if (!item) return null`.
+- The modal now keeps hook order stable by computing null-safe derived values before the final early return.
+
+## 2026-04-25 — Keep PlaylistModal progress state from regressing to idle
+
+**Files changed**: `components/PlaylistModal.tsx`, `README.md`, `knowledge-base/features.md`, `knowledge-base/log.md`
+
+- Fixed a state-sync bug where `PlaylistModal` could reset from `waiting` / `processing` / `done` back to the idle add button while a conversion was still running.
+- The modal now distinguishes between a fresh conversion started in the current session and a playlist that was already converted earlier, so in-flight progress/success UI is preserved and `Already In Library` only appears on reopen.

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -12,6 +13,9 @@ import {
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
+import * as Spotify from '../../lib/spotify';
+import * as AppleMusic from '../../lib/appleMusic';
+import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { MusicService } from '../../types';
 
 type Step = 'credentials' | 'service';
@@ -46,8 +50,30 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { signUp, setPrimaryService } = useAuth();
+  const { signUp, session, setPrimaryService, refreshUser } = useAuth();
   const router = useRouter();
+
+  const getServiceLabel = (service: MusicService): string => {
+    switch (service) {
+      case 'spotify':
+        return 'Spotify';
+      case 'apple_music':
+        return 'Apple Music';
+      case 'youtube_music':
+        return 'YouTube Music';
+    }
+  };
+
+  const connectSelectedService = async (userId: string, service: MusicService): Promise<boolean> => {
+    switch (service) {
+      case 'spotify':
+        return Spotify.connectSpotify(userId);
+      case 'apple_music':
+        return AppleMusic.connectAppleMusic(userId);
+      case 'youtube_music':
+        return YouTubeMusic.connectYouTubeMusic(userId);
+    }
+  };
 
   const handleRegister = async () => {
     if (!email.trim() || !password || !username.trim() || !displayName.trim()) {
@@ -80,7 +106,48 @@ export default function Register() {
     setError(null);
     try {
       await setPrimaryService(service);
-      router.replace('/(tabs)/home');
+      setLoading(false);
+
+      const userId = session?.user.id;
+      if (!userId) {
+        router.replace('/(tabs)/home');
+        return;
+      }
+
+      Alert.alert(
+        `Connect ${getServiceLabel(service)}?`,
+        'Connecting now gives MusicBridge immediate access to open songs and create playlists on your default service.',
+        [
+          {
+            text: 'Later',
+            style: 'cancel',
+            onPress: () => {
+              router.replace('/(tabs)/home');
+            },
+          },
+          {
+            text: 'Connect now',
+            onPress: () => {
+              setLoading(true);
+              void (async () => {
+                try {
+                  const success = await connectSelectedService(userId, service);
+                  if (success) {
+                    await refreshUser();
+                    router.replace('/(tabs)/home');
+                    return;
+                  }
+                  setError(`Could not connect ${getServiceLabel(service)}. You can connect it later from your profile.`);
+                  setLoading(false);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Connection failed');
+                  setLoading(false);
+                }
+              })();
+            },
+          },
+        ],
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save service selection');
       setLoading(false);

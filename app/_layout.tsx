@@ -1,7 +1,7 @@
 import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Alert, View } from 'react-native';
 import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../hooks/useAuth';
@@ -9,6 +9,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { useClipboardReel } from '../hooks/useClipboardReel';
 import { ReelImportBanner } from '../components/ReelImportBanner';
 import { ReelImportModal } from '../components/ReelImportModal';
+import { getSpotifyReconnectRequired } from '../lib/spotify';
 
 /**
  * Inner navigator — reacts to auth state and redirects accordingly.
@@ -25,6 +26,7 @@ function RootLayoutNav() {
   // Reel import — clipboard detection + banner + modal
   const { pendingUrl, pendingSource, dismiss } = useClipboardReel();
   const [modalUrl, setModalUrl] = useState<string | null>(null);
+  const [shownSpotifyReconnectPrompt, setShownSpotifyReconnectPrompt] = useState(false);
 
   const handleFindSong = () => {
     if (!pendingUrl) return;
@@ -54,6 +56,43 @@ function RootLayoutNav() {
     setModalUrl(pendingUrl);
     dismiss();
   }, [pendingUrl, pendingSource, modalUrl, dismiss]);
+
+  useEffect(() => {
+    setShownSpotifyReconnectPrompt(false);
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!session || !user || loading || shownSpotifyReconnectPrompt) return;
+
+    let cancelled = false;
+
+    const maybePromptSpotifyReconnect = async () => {
+      const reconnectRequired = await getSpotifyReconnectRequired();
+      if (cancelled || !reconnectRequired) return;
+      if (user.spotify_access_token) return;
+
+      setShownSpotifyReconnectPrompt(true);
+      Alert.alert(
+        'Reconnect Spotify',
+        'Your Spotify session expired. Reconnect Spotify from your profile to keep opening songs and using Spotify library features.',
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Open Profile',
+            onPress: () => {
+              router.push('/(tabs)/profile');
+            },
+          },
+        ],
+      );
+    };
+
+    void maybePromptSpotifyReconnect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, router, session, shownSpotifyReconnectPrompt, user]);
 
   // Only show reel import UI when logged in
   const showReelUI = !!session && !!user?.primary_service;

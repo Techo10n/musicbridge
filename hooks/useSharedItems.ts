@@ -52,6 +52,16 @@ export function useSharedItems() {
         },
         () => { fetchItems(); },
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'shared_items',
+          filter: `recipient_id=eq.${session.user.id}`,
+        },
+        () => { fetchItems(); },
+      )
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };

@@ -53,11 +53,15 @@ export default function Home() {
           break;
         }
         case 'apple_music': {
-          let amID = item.apple_music_id;
-          if (!amID && item.title && item.artist) {
-            amID = await withTimeout(AppleMusic.searchTrack(user!.id, item.title, item.artist), 10_000);
-          }
-          if (amID) deepLinks = AppleMusic.getAppleMusicDeepLink(amID);
+          deepLinks = await withTimeout(
+            AppleMusic.resolveAppleMusicTrackLinks(
+              user!.id,
+              item.title,
+              item.artist,
+              item.apple_music_id,
+            ),
+            10_000,
+          );
           break;
         }
         case 'youtube_music': {

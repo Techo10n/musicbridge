@@ -50,13 +50,12 @@ export async function registerForPushNotifications(userId: string): Promise<stri
   const token = tokenData.data;
 
   // Persist to Supabase — ignore errors so registration failures don't block the app
-  try {
-    await supabase.from('push_tokens').upsert(
-      { user_id: userId, token, platform: Platform.OS },
-      { onConflict: 'user_id,token' },
-    );
-  } catch (err) {
-    console.warn('[notifications] failed to save push token:', err);
+  const { error: upsertError } = await supabase.from('push_tokens').upsert(
+    { user_id: userId, token, platform: Platform.OS },
+    { onConflict: 'user_id,token' },
+  );
+  if (upsertError) {
+    console.warn('[notifications] failed to save push token:', upsertError);
   }
 
   return token;

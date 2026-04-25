@@ -70,7 +70,7 @@ export function useFollows() {
         'New follower',
         `${name} started following you`,
         { type: 'new_follower' },
-      );
+      ).catch((err) => console.warn('[useFollows] follow notification failed:', err));
     },
     [userId, fetchFollows],
   );

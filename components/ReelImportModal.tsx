@@ -25,6 +25,7 @@ import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
 import { cleanArtistName, cleanTitle, withTimeout } from '../lib/utils';
+import { saveReelList } from '../lib/reelLists';
 
 type Stage = 'analyzing' | 'songList' | 'pickFriend' | 'sharing' | 'failed';
 
@@ -274,8 +275,10 @@ async function openResolvedTrack(
     const trackId = await withTimeout(Spotify.searchTrack(userId, song.title, song.artist), 10_000);
     if (trackId) deepLinks = Spotify.getSpotifyDeepLink(trackId);
   } else if (service === 'apple_music') {
-    const trackId = await withTimeout(AppleMusic.searchTrack(userId, song.title, song.artist), 10_000);
-    if (trackId) deepLinks = AppleMusic.getAppleMusicDeepLink(trackId);
+    deepLinks = await withTimeout(
+      AppleMusic.resolveAppleMusicTrackLinks(userId, song.title, song.artist),
+      10_000,
+    );
   } else if (service === 'youtube_music') {
     const trackId = await withTimeout(YouTubeMusic.searchTrack(userId, song.title, song.artist), 10_000);
     if (trackId) deepLinks = YouTubeMusic.getYouTubeMusicDeepLink(trackId);
@@ -354,6 +357,8 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
   const [songs, setSongs] = useState<ReelSong[]>([]);
   const [selectedSong, setSelectedSong] = useState<ReelSong | null>(null);
   const [message, setMessage] = useState('');
+  const [savingList, setSavingList] = useState(false);
+  const [savedList, setSavedList] = useState(false);
   const didAnalyze = useRef(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -369,6 +374,8 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
       setSongs([]);
       setSelectedSong(null);
       setMessage('');
+      setSavingList(false);
+      setSavedList(false);
       didAnalyze.current = false;
       if (closeTimer.current) clearTimeout(closeTimer.current);
     }
@@ -518,7 +525,6 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
               });
             }
           }
-        }
       } else {
         mergedSongs = rankSongs({
           audioSongs,
@@ -583,6 +589,22 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
     setStage('pickFriend');
   };
 
+  const handleSaveReelList = async () => {
+    if (!user || !reelUrl || songs.length === 0 || savingList) return;
+
+    setSavingList(true);
+    try {
+      await saveReelList(user.id, reelUrl, songs);
+      setSavedList(true);
+      Alert.alert('Saved', 'This reel song list was saved to your Library.');
+    } catch (err) {
+      console.error('[ReelImportModal] save reel list error:', err);
+      Alert.alert('Error', 'Could not save this reel list. Please try again.');
+    } finally {
+      setSavingList(false);
+    }
+  };
+
   const handleBack = () => {
     setSelectedSong(null);
     setMessage('');
@@ -600,7 +622,7 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
         type: 'song',
         title: selectedSong.title,
         artist: selectedSong.artist,
-        cover_image_url: selectedSong.coverUrl ?? '',
+        cover_image_url: selectedSong.coverUrl || null,
         message: message.trim() || null,
       });
       if (error) throw error;
@@ -668,7 +690,26 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
         {/* Song list */}
         {stage === 'songList' && (
           <>
-            <Text style={styles.sectionLabel}>{songs.length} song{songs.length !== 1 ? 's' : ''} found</Text>
+            <View style={styles.songListHeader}>
+              <Text style={styles.sectionLabel}>{songs.length} song{songs.length !== 1 ? 's' : ''} found</Text>
+              <TouchableOpacity
+                style={[styles.saveListButton, savedList && styles.saveListButtonSaved]}
+                onPress={handleSaveReelList}
+                disabled={savingList || savedList}
+                activeOpacity={0.8}
+                accessibilityLabel="Save reel song list"
+              >
+                {savingList ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons
+                    name={savedList ? 'bookmark' : 'bookmark-outline'}
+                    size={18}
+                    color={savedList ? '#fff' : '#888'}
+                  />
+                )}
+              </TouchableOpacity>
+            </View>
             <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
               {songs.map((song, i) => (
                 <TouchableOpacity
@@ -828,9 +869,28 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
+  },
+  songListHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginHorizontal: 20,
     marginTop: 20,
     marginBottom: 6,
+  },
+  saveListButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a1a',
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+  },
+  saveListButtonSaved: {
+    backgroundColor: '#fc3c44',
+    borderColor: '#fc3c44',
   },
   songRow: {
     flexDirection: 'row',

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   FlatList,
   Modal,
@@ -26,7 +26,12 @@ export function FriendPickerModal({
   onSelect,
 }: FriendPickerModalProps) {
   const [message, setMessage] = useState('');
-  const { mutualFollows: following } = useFollows();
+  const { mutualFollows: following, refresh } = useFollows();
+
+  useEffect(() => {
+    if (!visible) return;
+    void refresh();
+  }, [visible, refresh]);
 
   const handleSelect = (user: User) => {
     onSelect(user, message.trim());

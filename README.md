@@ -25,7 +25,7 @@ Long-term vision: social music platform with feeds, following, collaborative pla
 
 ```bash
 cp .env.example .env.local   # fill in credentials (see SETUP.md)
-npx expo start               # Metro bundler
+npx expo start --dev-client  # Metro bundler for the custom iOS dev client
 npx expo run:ios             # iOS native build
 npx expo run:android         # Android native build
 ```
@@ -43,7 +43,7 @@ musicbridge/
 │   ├── index.tsx               Loading screen while auth resolves
 │   ├── (auth)/
 │   │   ├── login.tsx           Email/password login
-│   │   └── register.tsx        2-step registration: credentials → primary service
+│   │   └── register.tsx        2-step registration: credentials → primary service → optional immediate service connection
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar (Ionicons)
 │       ├── home.tsx            Feed of received shared items
@@ -53,11 +53,11 @@ musicbridge/
 ├── components/
 │   ├── SongCard.tsx
 │   ├── PlaylistCard.tsx
-│   ├── PlaylistModal.tsx       Playlist detail + "Add to [service]" conversion UI
+│   ├── PlaylistModal.tsx       Playlist detail + conversion UI; preserves in-flight progress/success and shows "Already In Library" when reopened later
 │   ├── ShareModal.tsx          Search + share-to-friend modal
 │   ├── FriendListItem.tsx
-│   ├── FriendPickerModal.tsx   Reusable friend picker with optional message
-│   ├── LibraryPlaylistDetailModal.tsx
+│   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
+│   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
 │   ├── ReelImportBanner.tsx    Slim banner shown when a reel URL is in the clipboard
 │   ├── ReelImportModal.tsx     Full reel-import flow: analyze → song card → share
 │   ├── MusicServiceButton.tsx
@@ -65,18 +65,22 @@ musicbridge/
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
 │   ├── useFollows.ts
-│   ├── useSharedItems.ts
+│   ├── useSharedItems.ts       Inbox fetch + realtime insert/update refresh
 │   ├── useLibrary.ts           Playlists, saved tracks, followed artists; lazy track loading
 │   ├── useClipboardReel.ts     Clipboard polling for reel URLs; fires on mount + foreground
 │   └── useNotifications.ts     Push registration + tap handler
 ├── lib/
 │   ├── supabase.ts
 │   ├── spotify.ts
-│   ├── appleMusic.ts           DEFERRED — see limitations
+│   ├── appleMusic.ts           Native Apple Music auth + Apple Music API
 │   ├── youtubeMusic.ts
 │   ├── notifications.ts        Register/unregister tokens, sendPushNotification helper
 │   ├── reelParser.ts           parseReelUrl, isReelUrl, platform/shortcode types
 │   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle()
+├── modules/
+│   └── apple-music/
+│       ├── index.ts            JS bridge for the local Expo module
+│       └── ios/                Native iOS MusicKit / StoreKit module
 ├── types/index.ts
 ├── supabase/
 │   ├── functions/
@@ -97,7 +101,7 @@ musicbridge/
 
 No custom backend server. All logic runs on the client. Supabase handles auth, the database, and RLS. Streaming API calls go directly from the device using stored OAuth tokens.
 
-- **PKCE OAuth on-device**: Spotify + Google via `expo-auth-session`; Apple Music via `expo-web-browser` + hosted MusicKit JS page
+- **On-device auth**: Spotify + Google via `expo-auth-session`; Apple Music via native iOS MusicKit / StoreKit in a local Expo module
 - **Tokens in Supabase**: stored in `public.users`, RLS-protected (owner-only)
 - **Playlist conversion**: runs in `supabase/functions/convert-playlist/` (Edge Function). Progress updates via Supabase Realtime. Client shows live progress bar.
 
@@ -109,15 +113,18 @@ No custom backend server. All logic runs on the client. Supabase handles auth, t
 
 Email + password via `supabase.auth.signInWithPassword`. Sessions persisted in AsyncStorage. An `on_auth_user_created` trigger creates the `public.users` profile row on signup.
 
+Signup is a 2-step flow: credentials first, then primary-service selection. After the user picks a primary service, the app immediately offers to connect that service before routing to Home.
+If a Spotify refresh token has gone bad, the app shows a reconnect prompt on the next login and can route the user straight to Profile to reconnect.
+
 ### Streaming Service OAuth
 
 | Service | Flow | Redirect URI |
 |---|---|---|
 | Spotify | PKCE via `expo-auth-session` | `musicbridge://spotify-callback` |
 | YouTube Music | PKCE via Google OAuth | reverse-DNS from Client ID |
-| Apple Music | MusicKit JS page in `expo-web-browser` | `musicbridge://apple-music-callback` |
+| Apple Music | Native iOS MusicKit / StoreKit auth + server-signed developer token | none |
 
-Spotify + YouTube tokens auto-refresh when within 60s of expiry. Apple Music tokens have no expiry.
+Spotify + YouTube tokens auto-refresh when within 60s of expiry. Apple Music tokens have no expiry. If Spotify refresh fails, the app now clears the invalid stored Spotify tokens and treats Spotify as disconnected until the user reconnects.
 
 **Spotify scopes**: `user-read-private`, `playlist-modify-public`, `playlist-modify-private`, `playlist-read-private`, `user-library-read`, `user-follow-read`
 
@@ -130,7 +137,7 @@ Spotify + YouTube tokens auto-refresh when within 60s of expiry. Apple Music tok
 | Function | Purpose |
 |---|---|
 | `connectSpotify` | PKCE OAuth |
-| `getSpotifyAccessToken` | Auto-refresh |
+| `getSpotifyAccessToken` | Auto-refresh; clears invalid Spotify tokens on refresh failure and triggers a reconnect prompt on next login |
 | `searchTrack` | Single-track match for conversion (retries 3× on 429; aborts if Retry-After > 15s) |
 | `searchTracks` | Free-form search (10 results) |
 | `createPlaylist` | Create + batch-add tracks |
@@ -143,9 +150,22 @@ Deep links: `spotify:track:<id>` / `spotify:playlist:<id>`
 
 ---
 
-### Apple Music (`lib/appleMusic.ts`) — DEFERRED
+### Apple Music (`lib/appleMusic.ts`)
 
-Requires $99/year Apple Developer membership. Code is retained but non-functional. The Edge Function returns HTTP 400 for Apple Music recipients. Will revisit when the app gains traction.
+Requires Apple Developer membership with MusicKit enabled for the app's bundle ID. iOS authorization is handled natively through the local Expo module in `modules/apple-music`, which requests Apple Music permission and exchanges a server-signed developer token for a Music user token. The app then uses storefront-aware catalog lookups so Apple Music links resolve in the recipient's region when possible.
+
+| Function | Purpose |
+|---|---|
+| `connectAppleMusic` | Native iOS Apple Music authorization + user token exchange |
+| `searchTrack` | Single-track match for conversion |
+| `searchTracks` | Free-form catalog search |
+| `createPlaylist` | Create a playlist in the user's Apple Music library and return Apple Music's canonical playlist URL when available |
+| `getUserPlaylists` | User library playlists |
+| `getPlaylistTracks` | Tracks in a library playlist |
+| `getSavedSongs` | User library songs |
+| `resolveAppleMusicTrackLinks` | Resolve a storefront-local song URL before opening Apple Music |
+
+Deep links: canonical Apple Music song URL with `music://` fallback. Shared-playlist conversion tries Apple Music's catalog playlist URL when available; if Apple doesn't expose a direct playlist URL for the created library playlist, the app falls back to opening the user's Apple Music Library instead of a broken `library/playlist/{id}` path, and the success modal explains that the playlist may take a moment to appear.
 
 ---
 
@@ -232,9 +252,9 @@ Unique constraint on `(follower_id, following_id)` and check `(follower_id <> fo
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
 | `EXPO_PUBLIC_SPOTIFY_CLIENT_ID` | Spotify app client ID |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `EXPO_PUBLIC_APPLE_TEAM_ID` | Apple Developer team ID |
-| `EXPO_PUBLIC_APPLE_MUSIC_AUTH_URL` | Hosted MusicKit JS page URL |
-| `EXPO_PUBLIC_APPLE_DEVELOPER_TOKEN` | Apple Music developer JWT |
+
+Apple Music developer tokens are generated server-side by `supabase/functions/apple-music-auth/`.
+Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets; do not expose the `.p8` key or developer JWT in Expo public env.
 
 ---
 
@@ -271,7 +291,7 @@ If all stages miss, the modal shows "Couldn't identify the song" and closes.
 
 2. **Track matching is approximate** — uses `cleanTitle()` + `cleanArtistName()` + service-specific heuristics. No ISRC matching or duration filtering yet.
 
-3. **Apple Music deferred** — entire integration blocked on $99/year Apple Developer membership.
+3. **Apple Music requires Apple Developer setup** — MusicKit must be enabled for the app's bundle ID, the provisioning profile must include that capability, and `apple-music-auth` must be deployed with Apple secrets before Apple Music login/conversion works.
 
 4. **YouTube playlist creation is sequential** — no batch API for `playlistItems`; each track is a separate request.
 

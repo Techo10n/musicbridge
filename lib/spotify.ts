@@ -1,5 +1,6 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 import { supabase } from './supabase';
 import {
@@ -35,6 +36,20 @@ const SCOPES = [
   'user-top-read',
   'user-read-recently-played',
 ];
+
+const SPOTIFY_RECONNECT_REQUIRED_KEY = 'spotify_reconnect_required';
+
+export async function getSpotifyReconnectRequired(): Promise<boolean> {
+  return (await AsyncStorage.getItem(SPOTIFY_RECONNECT_REQUIRED_KEY)) === 'true';
+}
+
+async function setSpotifyReconnectRequired(): Promise<void> {
+  await AsyncStorage.setItem(SPOTIFY_RECONNECT_REQUIRED_KEY, 'true');
+}
+
+async function clearSpotifyReconnectRequired(): Promise<void> {
+  await AsyncStorage.removeItem(SPOTIFY_RECONNECT_REQUIRED_KEY);
+}
 
 // ─── OAuth ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +100,7 @@ export async function connectSpotify(userId: string): Promise<boolean> {
       .eq('id', userId);
 
     if (error) throw error;
+    await clearSpotifyReconnectRequired();
     return true;
   } catch (err) {
     console.error('[Spotify] connectSpotify error:', err);
@@ -104,6 +120,7 @@ export async function disconnectSpotify(userId: string): Promise<void> {
       spotify_token_expiry: null,
     })
     .eq('id', userId);
+  await clearSpotifyReconnectRequired();
 }
 
 // ─── Token management ─────────────────────────────────────────────────────────
@@ -148,6 +165,14 @@ export async function getSpotifyAccessToken(userId: string): Promise<string | nu
     if (!response.ok) {
       const errText = await response.text().catch(() => '(unreadable)');
       console.error(`[Spotify] token refresh failed: ${response.status} ${errText}`);
+      // Treat a failed refresh as a disconnected Spotify account so the app
+      // stops retrying with a bad refresh token on every Spotify API call.
+      await setSpotifyReconnectRequired().catch((flagErr) => {
+        console.error('[Spotify] failed to flag reconnect requirement:', flagErr);
+      });
+      await disconnectSpotify(userId).catch((disconnectErr) => {
+        console.error('[Spotify] failed to clear invalid tokens after refresh failure:', disconnectErr);
+      });
       return null;
     }
 
@@ -169,7 +194,8 @@ export async function getSpotifyAccessToken(userId: string): Promise<string | nu
       .eq('id', userId);
 
     return token.access_token;
-  } catch {
+  } catch (err) {
+    console.error('[Spotify] unexpected token refresh error:', err);
     return null;
   }
 }

@@ -18,6 +18,7 @@
 - Prefers knowing about required re-auth when adding new OAuth scopes
 - Likes features explained at a high level before implementation starts
 - Prefer editing existing files over creating new ones
+- Wants `README.md`, `IDEAS.md`, and the knowledge base updated whenever a feature is added or changed
 
 ## Claude Code Settings
 
