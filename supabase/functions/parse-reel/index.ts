@@ -7,6 +7,10 @@ const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50 MB hard cap
 const ITUNES_ENRICH_TIMEOUT_MS = 5_000;
 const ENRICH_BATCH_SIZE = 3;
 
+const MAX_FRAMES = 10;                        // max number of frames per request
+const MAX_FRAME_BASE64_CHARS = 500_000;       // ~375 KB per frame (base64)
+const MAX_TOTAL_FRAMES_CHARS = 4_000_000;     // ~3 MB total across all frames
+
 const IG_GRAPHQL_ENDPOINT = 'https://www.instagram.com/api/graphql';
 const IG_GRAPHQL_DOC_ID_FALLBACK = '10015901848480474';
 const IG_LSD = 'AVqbxe3J_YA';
@@ -797,9 +801,26 @@ Deno.serve(async (req) => {
       frames?: string[];
       vision_only?: boolean;
     };
-    const clientFrames = Array.isArray(body.frames)
+    const rawFrames = Array.isArray(body.frames)
       ? body.frames.filter((frame): frame is string => typeof frame === 'string' && frame.length > 0)
       : [];
+
+    if (rawFrames.length > MAX_FRAMES) {
+      return jsonResp({ error: `too_many_frames: max ${MAX_FRAMES}` }, 400);
+    }
+    let totalFrameChars = 0;
+    for (let i = 0; i < rawFrames.length; i++) {
+      const len = rawFrames[i].length;
+      if (len > MAX_FRAME_BASE64_CHARS) {
+        return jsonResp({ error: `frame_too_large: frame ${i} exceeds ${MAX_FRAME_BASE64_CHARS} chars` }, 400);
+      }
+      totalFrameChars += len;
+    }
+    if (totalFrameChars > MAX_TOTAL_FRAMES_CHARS) {
+      return jsonResp({ error: `frames_payload_too_large: total exceeds ${MAX_TOTAL_FRAMES_CHARS} chars` }, 400);
+    }
+
+    const clientFrames = rawFrames;
     const visionOnly = body.vision_only === true;
 
     if (!visionOnly && !body.url) return jsonResp({ error: 'missing url' }, 400);
