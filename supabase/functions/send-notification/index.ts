@@ -4,6 +4,8 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 type NotificationType = 'new_share' | 'new_follower';
 
+const ALLOWED_TYPES: NotificationType[] = ['new_share', 'new_follower'];
+
 interface NotificationRequest {
   notification_type: NotificationType;
   recipient_id: string;
@@ -50,7 +52,6 @@ Deno.serve(async (req) => {
     const { notification_type, recipient_id, shared_item_id } = payload;
 
     // Validate notification type against allowlist
-    const ALLOWED_TYPES: NotificationType[] = ['new_share', 'new_follower'];
     if (!notification_type || !ALLOWED_TYPES.includes(notification_type)) {
       return new Response(JSON.stringify({ error: 'invalid_notification_type' }), { status: 400 });
     }

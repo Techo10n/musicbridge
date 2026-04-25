@@ -681,7 +681,7 @@ serve(async (req) => {
   }
 
   if (primaryService === 'apple_music') {
-    storefront = await getAppleMusicStorefront(appleDeveloperToken!, accessToken);
+    storefront = await getAppleMusicStorefront(appleDeveloperToken as string, accessToken);
   }
 
   // Mark as processing so the client's realtime subscription fires immediately
