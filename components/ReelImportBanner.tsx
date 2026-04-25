@@ -10,7 +10,7 @@ interface ReelImportBannerProps {
 }
 
 /**
- * A slim persistent banner that appears at the top of every screen when an
+ * A slim persistent banner that appears near the bottom of the screen when an
  * Instagram reel URL is detected in the clipboard.
  */
 export function ReelImportBanner({ url, onFindSong, onDismiss }: ReelImportBannerProps) {
