@@ -250,3 +250,21 @@ Created knowledge base from project files, README, SETUP.md, IDEAS.md, CLAUDE.md
 
 - Fixed a state-sync bug where `PlaylistModal` could reset from `waiting` / `processing` / `done` back to the idle add button while a conversion was still running.
 - The modal now distinguishes between a fresh conversion started in the current session and a playlist that was already converted earlier, so in-flight progress/success UI is preserved and `Already In Library` only appears on reopen.
+
+## 2026-04-25 — Harden Apple Music token flow and supporting client/runtime edges
+
+**Files changed**: `SETUP.md`, `README.md`, `app/(tabs)/library.tsx`, `components/ReelImportModal.tsx`, `knowledge-base/architecture.md`, `knowledge-base/auth.md`, `knowledge-base/integrations/apple-music.md`, `knowledge-base/log.md`, `lib/appleMusic.ts`, `lib/reelLists.ts`, `lib/spotify.ts`, `modules/apple-music/index.ts`, `modules/apple-music/ios/AppleMusicModule.swift`, `supabase/functions/apple-music-auth/index.ts`, `supabase/functions/convert-playlist/index.ts`, `types/index.ts`
+
+- Removed the stale browser-based Apple Music auth page from `apple-music-auth`; the function is now an authenticated POST-only token signer again, so current setup docs no longer tell users to deploy it with `--no-verify-jwt`.
+- `convert-playlist` now resolves Apple Music track matches against the recipient storefront from `/v1/me/storefront` instead of hardcoding `us`.
+- Apple Music recent-played rows now use the API’s playback timestamp when available instead of recording request time.
+- Reel list AsyncStorage writes are now serialized per user to avoid read-modify-write races, and library reel-list loading now handles read errors explicitly.
+- Spotify refresh failure no longer clears the reconnect-required flag by accident when invalid tokens are purged.
+- Native Apple Music JS/Swift bridges now fail more defensively for authorization/storefront errors instead of returning ambiguous values.
+
+## 2026-04-25 — Scope app TypeScript away from Deno edge functions
+
+**Files changed**: `tsconfig.json`, `package.json`, `README.md`, `knowledge-base/log.md`
+
+- The root app `tsconfig.json` now explicitly includes React Native app sources and excludes `supabase/functions`, so app typechecking no longer gets polluted by Deno-specific edge-function imports.
+- Added `npm run typecheck` as the clean app TypeScript check to use during normal development.

@@ -12,10 +12,11 @@ Apple Music auth now runs natively on iOS through the local Expo module in `modu
 - Need: Team ID, Key ID, `.p8` private key in Supabase secrets
 - Need: MusicKit enabled on the Apple App ID for `com.techolon.musicbridge`
 - Need: provisioning profile regenerated after enabling MusicKit
-- Deploy: `supabase functions deploy apple-music-auth --no-verify-jwt`
+- Deploy: `supabase functions deploy apple-music-auth`
 - Native module: `modules/apple-music/index.ts` + `modules/apple-music/ios/AppleMusicModule.swift`
 - Podspec: `modules/apple-music/ios/AppleMusicNative.podspec`
-- Auth flow: native iOS authorization prompt via MusicKit / StoreKit → fetch server-signed developer token from `apple-music-auth` → exchange for Music user token
+- Auth flow: native iOS authorization prompt via MusicKit / StoreKit → authenticated POST to `apple-music-auth` for a short-lived developer token → exchange for Music user token
+- `apple-music-auth` should stay behind Supabase JWT verification for the current native flow. It should accept authenticated POSTs only, validate the Supabase user, validate the request body strictly, and return only `token` + `expiresAt`
 - All API requests need two headers: `Authorization: Bearer <DEVELOPER_TOKEN>` + `Music-User-Token: <userToken>`
 - Playlist conversion is handled by `supabase/functions/convert-playlist/`
 - Successful Apple Music playlist conversion should use a direct Apple Music URL only when Apple exposes one: prefer `attributes.url`, then the library playlist's `catalog` relationship URL when present. If Apple doesn't expose a direct URL for the created library playlist, fall back to opening the user's Apple Music Library and tell the user the playlist may take a moment to appear. Do not guess a `music.apple.com/library/playlist/{id}` URL from the raw library playlist ID

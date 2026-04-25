@@ -1,7 +1,9 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 const TOKEN_TTL_SECONDS = 60 * 60;
@@ -70,72 +72,38 @@ async function createDeveloperToken(): Promise<{ token: string; expiresAt: numbe
   };
 }
 
-function htmlPage(): string {
-  const appName = 'MusicBridge';
-  const callbackUrl = 'musicbridge://apple-music-callback';
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${appName} Apple Music</title>
-  <style>
-    body { background: #111; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; }
-    main { max-width: 320px; padding: 32px; text-align: center; }
-    p { color: #bbb; line-height: 1.4; }
-  </style>
-  <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"></script>
-</head>
-<body>
-  <main>
-    <h1>Connecting Apple Music...</h1>
-    <p id="status">A secure Apple Music authorization window should appear.</p>
-  </main>
-  <script>
-    const statusEl = document.getElementById('status');
-    function setStatus(message) { statusEl.textContent = message; }
-
-    document.addEventListener('musickitloaded', async () => {
-      try {
-        const tokenResponse = await fetch(window.location.pathname + '?token=1');
-        if (!tokenResponse.ok) throw new Error('Could not create developer token');
-        const { token } = await tokenResponse.json();
-
-        await MusicKit.configure({
-          developerToken: token,
-          app: { name: '${appName}', build: '1.0.0' },
-        });
-
-        const music = MusicKit.getInstance();
-        const userToken = await music.authorize();
-        window.location.href = '${callbackUrl}?token=' + encodeURIComponent(userToken);
-      } catch (error) {
-        console.error(error);
-        setStatus('Apple Music authorization failed. Close this page and try again.');
-      }
-    });
-  </script>
-</body>
-</html>`;
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-
-  const url = new URL(req.url);
-  if (req.method === 'GET' && !url.searchParams.has('token')) {
-    return new Response(htmlPage(), {
-      headers: {
-        'content-type': 'text/html; charset=utf-8',
-        'access-control-allow-origin': '*',
-        'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
-        'access-control-allow-methods': 'GET, POST, OPTIONS',
-      },
-    });
+  if (req.method !== 'POST') {
+    return json({ error: 'Method not allowed' }, 405);
   }
 
   try {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return json({ error: 'Unauthorized' }, 401);
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('missing_supabase_env');
+    }
+
+    const jwt = authHeader.replace('Bearer ', '');
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: { user }, error: authError } = await supabase.auth.getUser(jwt);
+    if (authError || !user) {
+      return json({ error: 'Unauthorized' }, 401);
+    }
+
+    const body = await req.json().catch(() => null) as { action?: string } | null;
+    if (body?.action !== 'token') {
+      return json({ error: 'Invalid request body' }, 400);
+    }
+
     const token = await createDeveloperToken();
     return json(token);
   } catch (err) {

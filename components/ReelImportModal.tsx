@@ -275,10 +275,10 @@ async function openResolvedTrack(
     const trackId = await withTimeout(Spotify.searchTrack(userId, song.title, song.artist), 10_000);
     if (trackId) deepLinks = Spotify.getSpotifyDeepLink(trackId);
   } else if (service === 'apple_music') {
-    deepLinks = await withTimeout(
+    deepLinks = (await withTimeout(
       AppleMusic.resolveAppleMusicTrackLinks(userId, song.title, song.artist),
       10_000,
-    );
+    )) ?? [];
   } else if (service === 'youtube_music') {
     const trackId = await withTimeout(YouTubeMusic.searchTrack(userId, song.title, song.artist), 10_000);
     if (trackId) deepLinks = YouTubeMusic.getYouTubeMusicDeepLink(trackId);

@@ -40,7 +40,12 @@ export function getAppleMusicModuleVersion(): string | null {
 
 export async function requestMusicAuthorization(): Promise<MusicAuthorizationStatus> {
   if (!native) return 'denied';
-  return native.requestAuthorization();
+  try {
+    return await native.requestAuthorization();
+  } catch (err) {
+    console.error('[AppleMusic] requestAuthorization failed:', err);
+    return 'denied';
+  }
 }
 
 export async function getAppleMusicDiagnostics(): Promise<AppleMusicDiagnostics | null> {

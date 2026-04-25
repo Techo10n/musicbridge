@@ -111,7 +111,7 @@ export async function connectSpotify(userId: string): Promise<boolean> {
 /**
  * Disconnects Spotify by clearing stored tokens.
  */
-export async function disconnectSpotify(userId: string): Promise<void> {
+export async function disconnectSpotify(userId: string, skipClearReconnect = false): Promise<void> {
   await supabase
     .from('users')
     .update({
@@ -120,7 +120,9 @@ export async function disconnectSpotify(userId: string): Promise<void> {
       spotify_token_expiry: null,
     })
     .eq('id', userId);
-  await clearSpotifyReconnectRequired();
+  if (!skipClearReconnect) {
+    await clearSpotifyReconnectRequired();
+  }
 }
 
 // ─── Token management ─────────────────────────────────────────────────────────
@@ -170,7 +172,7 @@ export async function getSpotifyAccessToken(userId: string): Promise<string | nu
       await setSpotifyReconnectRequired().catch((flagErr) => {
         console.error('[Spotify] failed to flag reconnect requirement:', flagErr);
       });
-      await disconnectSpotify(userId).catch((disconnectErr) => {
+      await disconnectSpotify(userId, true).catch((disconnectErr) => {
         console.error('[Spotify] failed to clear invalid tokens after refresh failure:', disconnectErr);
       });
       return null;

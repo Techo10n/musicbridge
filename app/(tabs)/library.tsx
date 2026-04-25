@@ -50,8 +50,13 @@ export default function LibraryScreen() {
       setSavedReelLists([]);
       return;
     }
-    const lists = await getSavedReelLists(user.id);
-    setSavedReelLists(lists);
+    try {
+      const lists = await getSavedReelLists(user.id);
+      setSavedReelLists(lists);
+    } catch (err) {
+      console.error('[LibraryScreen] loadReelLists error:', err);
+      setSavedReelLists([]);
+    }
   }, [user]);
 
   useFocusEffect(

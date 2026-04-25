@@ -329,6 +329,7 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
 async function searchAppleMusic(
   developerToken: string,
   userToken: string,
+  storefront: string,
   title: string,
   artist: string,
 ): Promise<string | null> {
@@ -337,7 +338,7 @@ async function searchAppleMusic(
   const term = encodeURIComponent(`${t} ${a}`);
 
   const res = await fetch(
-    `https://api.music.apple.com/v1/catalog/us/search?term=${term}&types=songs&limit=10`,
+    `https://api.music.apple.com/v1/catalog/${storefront}/search?term=${term}&types=songs&limit=10`,
     {
       headers: {
         Authorization: `Bearer ${developerToken}`,
@@ -359,6 +360,29 @@ async function searchAppleMusic(
     artists: [{ name: item.attributes?.artistName ?? '' }],
   }));
   return pickBest(mapped, title, artist) ?? items[0]?.id ?? null;
+}
+
+async function getAppleMusicStorefront(
+  developerToken: string,
+  userToken: string,
+): Promise<string> {
+  try {
+    const res = await fetch('https://api.music.apple.com/v1/me/storefront', {
+      headers: {
+        Authorization: `Bearer ${developerToken}`,
+        'Music-User-Token': userToken,
+      },
+    });
+
+    if (!res.ok) return 'us';
+
+    const data = await res.json() as {
+      data?: Array<{ id?: string }>;
+    };
+    return data.data?.[0]?.id?.toLowerCase() ?? 'us';
+  } catch {
+    return 'us';
+  }
 }
 
 // ─── Playlist cleanup ─────────────────────────────────────────────────────────
@@ -627,6 +651,7 @@ serve(async (req) => {
   // Resolve access token (refreshing if expired)
   let accessToken: string | null = null;
   let appleDeveloperToken: string | null = null;
+  let storefront = 'us';
   if (primaryService === 'spotify') {
     accessToken = await getSpotifyToken(supabase, authUser.id, recipient);
   } else if (primaryService === 'youtube_music') {
@@ -646,6 +671,10 @@ serve(async (req) => {
     console.error(`[convert-playlist] No access token for ${primaryService}. hasToken=${hasToken}, errMsg=${errMsg}`);
     await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     return json({ error: errMsg }, 400);
+  }
+
+  if (primaryService === 'apple_music' && appleDeveloperToken) {
+    storefront = await getAppleMusicStorefront(appleDeveloperToken, accessToken);
   }
 
   // Mark as processing so the client's realtime subscription fires immediately
@@ -677,7 +706,13 @@ serve(async (req) => {
         id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
       } else if (primaryService === 'apple_music' && appleDeveloperToken) {
         id = track.apple_music_id
-          ?? await searchAppleMusic(appleDeveloperToken, accessToken, track.title, track.artist);
+          ?? await searchAppleMusic(
+            appleDeveloperToken,
+            accessToken,
+            storefront,
+            track.title,
+            track.artist,
+          );
       }
 
       if (id) resolvedIds.push(id);

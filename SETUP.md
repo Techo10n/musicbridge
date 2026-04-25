@@ -104,17 +104,23 @@ supabase secrets set APPLE_KEY_ID=<your-key-id>
 supabase secrets set APPLE_PRIVATE_KEY="$(cat AuthKey_<your-key-id>.p8)"
 ```
 
-Deploy the auth page/token function without JWT verification so MusicKit JS can load in Safari:
+Deploy the token-signing function with default JWT verification enabled. The current Apple Music flow is native iOS auth, so `apple-music-auth` is invoked by the authenticated app via `supabase.functions.invoke(...)` and does not need a public browser endpoint.
 
 ```bash
-supabase functions deploy apple-music-auth --no-verify-jwt
+supabase functions deploy apple-music-auth
 supabase secrets set SPOTIFY_CLIENT_ID=<spotify-client-id>
 supabase secrets set GOOGLE_CLIENT_ID=<google-client-id>
 supabase functions deploy convert-playlist
 ```
 
-Set the deployed function URL as:
-- `EXPO_PUBLIC_APPLE_MUSIC_AUTH_URL` = `https://<project-ref>.functions.supabase.co/apple-music-auth`
+Security checklist for `apple-music-auth`:
+- Keep Supabase JWT verification enabled. Do not use `--no-verify-jwt` for the current native flow.
+- Accept authenticated `POST` requests only, and validate the Supabase user inside the function before returning a token.
+- Validate the request body strictly. MusicBridge only accepts `{ "action": "token" }`.
+- Return only the short-lived developer token payload (`token`, `expiresAt`). Never return Apple private key material or other secrets.
+- Keep token TTL short and log/monitor unusual request volume.
+
+If you later reintroduce a separate public browser-based MusicKit JS page, treat it as a new public endpoint and add compensating controls before considering `--no-verify-jwt`: rate limiting, strict origin/referrer allowlists, CSRF/nonces, strict input validation, and minimal responses with no sensitive data.
 
 ---
 

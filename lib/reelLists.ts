@@ -10,6 +10,7 @@ export interface SavedReelList {
 }
 
 const keyForUser = (userId: string) => `saved_reel_lists_${userId}`;
+const writeLocks = new Map<string, Promise<void>>();
 
 function makeTitle(createdAt: Date, songCount: number): string {
   const date = createdAt.toLocaleDateString(undefined, {
@@ -32,29 +33,55 @@ export async function getSavedReelLists(userId: string): Promise<SavedReelList[]
   }
 }
 
+async function withReelListWriteLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const storageKey = keyForUser(userId);
+  const previous = writeLocks.get(storageKey) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const next = previous.catch(() => {}).then(() => gate);
+  writeLocks.set(storageKey, next);
+
+  await previous.catch(() => {});
+
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (writeLocks.get(storageKey) === next) {
+      writeLocks.delete(storageKey);
+    }
+  }
+}
+
 export async function saveReelList(
   userId: string,
   reelUrl: string,
   songs: ReelSong[],
 ): Promise<SavedReelList> {
-  const existing = await getSavedReelLists(userId);
-  const now = new Date();
-  const saved: SavedReelList = {
-    id: `${now.getTime()}`,
-    title: makeTitle(now, songs.length),
-    reelUrl,
-    songs,
-    createdAt: now.toISOString(),
-  };
+  return withReelListWriteLock(userId, async () => {
+    const existing = await getSavedReelLists(userId);
+    const now = new Date();
+    const saved: SavedReelList = {
+      id: `${now.getTime()}`,
+      title: makeTitle(now, songs.length),
+      reelUrl,
+      songs,
+      createdAt: now.toISOString(),
+    };
 
-  const withoutSameReel = existing.filter((list) => list.reelUrl !== reelUrl);
-  const next = [saved, ...withoutSameReel];
-  await AsyncStorage.setItem(keyForUser(userId), JSON.stringify(next));
-  return saved;
+    const withoutSameReel = existing.filter((list) => list.reelUrl !== reelUrl);
+    const next = [saved, ...withoutSameReel];
+    await AsyncStorage.setItem(keyForUser(userId), JSON.stringify(next));
+    return saved;
+  });
 }
 
 export async function deleteReelList(userId: string, listId: string): Promise<void> {
-  const existing = await getSavedReelLists(userId);
-  const next = existing.filter((list) => list.id !== listId);
-  await AsyncStorage.setItem(keyForUser(userId), JSON.stringify(next));
+  await withReelListWriteLock(userId, async () => {
+    const existing = await getSavedReelLists(userId);
+    const next = existing.filter((list) => list.id !== listId);
+    await AsyncStorage.setItem(keyForUser(userId), JSON.stringify(next));
+  });
 }

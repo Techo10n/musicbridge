@@ -20,15 +20,14 @@ import {
 import { cleanArtistName, cleanTitle } from './utils';
 
 /**
- * Apple Music integration via MusicKit.
+ * Apple Music integration via native iOS MusicKit / StoreKit.
  *
  * HOW IT WORKS:
- * Apple Music auth uses MusicKit, which requires:
- *   1. A server-signed Developer Token JWT (ES256, signed with your Apple Music key)
- *   2. MusicKit JS running in a web context to prompt the user for their iCloud account
- *
- * The app opens the apple-music-auth Supabase Edge Function, which serves the
- * MusicKit JS page and signs short-lived developer tokens server-side.
+ * Apple Music auth uses the local Expo module for the user-facing permission
+ * prompt and Music user-token exchange. The app fetches a short-lived
+ * server-signed Developer Token JWT from the authenticated
+ * `apple-music-auth` Supabase Edge Function so the Apple private key never
+ * ships in the client.
  */
 
 const APPLE_MUSIC_API = 'https://api.music.apple.com/v1';
@@ -44,6 +43,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function normalizeApplePlaybackTimestamp(
+  value: string | undefined,
+  fallback: string,
+): string {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
 }
 
 /**
@@ -550,7 +558,10 @@ export async function getRecentlyPlayed(userId: string, limit = 10): Promise<Rec
       coverUrl: track.attributes.artwork
         ? resolveArtworkUrl(track.attributes.artwork.url, 150)
         : '',
-      playedAt: new Date().toISOString(),
+      playedAt: normalizeApplePlaybackTimestamp(
+        track.attributes.lastPlayedDate ?? track.attributes.playedDate,
+        new Date().toISOString(),
+      ),
       service: 'apple_music' as MusicService,
     }));
   } catch {

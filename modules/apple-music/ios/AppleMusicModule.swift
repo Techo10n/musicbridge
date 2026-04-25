@@ -102,7 +102,14 @@ public class AppleMusicModule: Module {
           promise.reject("APPLE_MUSIC_ERROR", error.localizedDescription)
           return
         }
-        promise.resolve(countryCode ?? "")
+        guard let countryCode else {
+          promise.reject(
+            "APPLE_MUSIC_NO_COUNTRY_CODE",
+            "Apple Music did not return a storefront country code."
+          )
+          return
+        }
+        promise.resolve(countryCode)
       }
     }
 

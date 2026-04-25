@@ -30,6 +30,7 @@ If Spotify had to be disconnected because refresh failed, the app stores a recon
 - Token stored in: `apple_music_user_token`
 - No expiry/refresh mechanism — Apple Music user tokens don't expire like OAuth tokens
 - Requires server-signed Developer JWT from `apple-music-auth`; Apple private key is stored in Supabase secrets, not Expo public env.
+- `apple-music-auth` is an authenticated Supabase Edge Function in the current native flow: keep JWT verification enabled, accept POST only, validate the Supabase user, and strictly validate the request body before returning `token` + `expiresAt`.
 - Requires MusicKit enabled on the Apple Developer App ID and `apple-music-auth` deployed with Apple secrets.
 
 ### YouTube Music

@@ -181,6 +181,8 @@ export interface AppleMusicTrack {
     name: string;
     artistName: string;
     albumName: string;
+    lastPlayedDate?: string;
+    playedDate?: string;
     artwork: {
       url: string; // contains {w} and {h} placeholders
       width: number;

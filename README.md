@@ -28,6 +28,7 @@ cp .env.example .env.local   # fill in credentials (see SETUP.md)
 npx expo start --dev-client  # Metro bundler for the custom iOS dev client
 npx expo run:ios             # iOS native build
 npx expo run:android         # Android native build
+npm run typecheck            # app TypeScript check (excludes Deno edge functions)
 ```
 
 See `SETUP.md` for full credential setup (Supabase, Spotify, Google, Apple Music).
@@ -254,7 +255,7 @@ Unique constraint on `(follower_id, following_id)` and check `(follower_id <> fo
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth client ID |
 
 Apple Music developer tokens are generated server-side by `supabase/functions/apple-music-auth/`.
-Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets; do not expose the `.p8` key or developer JWT in Expo public env.
+Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets; do not expose the `.p8` key or developer JWT in Expo public env. The current native Apple Music flow calls `apple-music-auth` as an authenticated Supabase Edge Function, so there is no public `EXPO_PUBLIC_APPLE_MUSIC_AUTH_URL` browser auth page in use.
 
 ---
 

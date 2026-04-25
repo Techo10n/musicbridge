@@ -8,7 +8,7 @@ No custom backend server. All logic runs on the client. Supabase handles auth, D
 
 ## Key Decisions
 
-- **PKCE OAuth on-device**: Spotify + Google via `expo-auth-session`; Apple Music via `expo-web-browser` opening a hosted MusicKit JS page
+- **On-device auth**: Spotify + Google via `expo-auth-session`; Apple Music via native iOS MusicKit / StoreKit plus an authenticated Edge Function that signs short-lived developer tokens
 - **Tokens in Supabase**: stored in `public.users`, RLS-protected (owner-only access)
 - **Playlist conversion is client-side**: recipient's device does all track searching and playlist creation
 - **Edge Function available**: `supabase/functions/convert-playlist/` for server-side conversion with progress tracking
