@@ -19,7 +19,7 @@ export interface AppleMusicDiagnostics {
 interface AppleMusicNativeModule {
   getModuleVersion(): string;
   requestAuthorization(): Promise<MusicAuthorizationStatus>;
-  getDiagnostics(): Promise<AppleMusicDiagnostics>;
+  getDiagnostics(): AppleMusicDiagnostics;
   requestStorefrontCountryCode(): Promise<string>;
   requestSubscriptionStatus(): Promise<AppleMusicDiagnostics['capabilities']>;
   requestUserToken(developerToken: string): Promise<string>;

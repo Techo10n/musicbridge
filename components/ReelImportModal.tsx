@@ -614,7 +614,7 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
     setStage('sharing');
 
     try {
-      const { error } = await supabase.from('shared_items').insert({
+      const { data: insertedItem, error } = await supabase.from('shared_items').insert({
         sender_id: user.id,
         recipient_id: friend.id,
         type: 'song',
@@ -622,15 +622,10 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
         artist: selectedSong.artist,
         cover_image_url: selectedSong.coverUrl || null,
         message: message.trim() || null,
-      });
+      }).select('id').single();
       if (error) throw error;
 
-      sendPushNotification(
-        friend.id,
-        `${user.display_name ?? user.username} shared a song`,
-        selectedSong.title,
-        { type: 'new_share' },
-      );
+      sendPushNotification(friend.id, 'new_share', insertedItem.id);
 
       Alert.alert('Sent!', `Shared "${selectedSong.title}" with ${friend.display_name}.`);
       onClose();

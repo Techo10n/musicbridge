@@ -173,7 +173,7 @@ export function LibraryPlaylistDetailModal({
       if (trackSnapshot) {
         // ── Share a single song ──────────────────────────────────────────
         const payload = toTrackPayload(trackSnapshot);
-        const { error } = await supabase
+        const { data: insertedItem, error } = await supabase
           .from('shared_items')
           .insert({
             sender_id: user.id,
@@ -187,19 +187,16 @@ export function LibraryPlaylistDetailModal({
             youtube_music_id: payload.youtube_music_id,
             message: msgSnapshot || null,
           })
+          .select('id')
+          .single()
           .abortSignal(abort.signal);
         if (error) throw error;
-        sendPushNotification(
-          friend.id,
-          `${user.display_name ?? user.username} shared a song`,
-          trackSnapshot.title,
-          { type: 'new_share' },
-        );
+        sendPushNotification(friend.id, 'new_share', insertedItem.id);
         Alert.alert('Sent!', `Shared "${trackSnapshot.title}" with ${friend.display_name}.`);
       } else {
         // ── Share whole playlist ─────────────────────────────────────────
         const trackPayloads = tracksSnapshot.map(toTrackPayload);
-        const { error } = await supabase
+        const { data: insertedItem, error } = await supabase
           .from('shared_items')
           .insert({
             sender_id: user.id,
@@ -214,14 +211,11 @@ export function LibraryPlaylistDetailModal({
             tracks: trackPayloads,
             message: msgSnapshot || null,
           })
+          .select('id')
+          .single()
           .abortSignal(abort.signal);
         if (error) throw error;
-        sendPushNotification(
-          friend.id,
-          `${user.display_name ?? user.username} shared a playlist`,
-          `${playlist.name} · ${tracksSnapshot.length} tracks`,
-          { type: 'new_share' },
-        );
+        sendPushNotification(friend.id, 'new_share', insertedItem.id);
         Alert.alert(
           'Sent!',
           `Shared "${playlist.name}" (${tracksSnapshot.length} tracks) with ${friend.display_name}.`,

@@ -59,17 +59,9 @@ export function useFollows() {
       if (error) throw error;
       await fetchFollows();
       // Notify the person being followed — fire-and-forget
-      const follower = (await supabase
-        .from('users')
-        .select('display_name, username')
-        .eq('id', userId)
-        .single()).data;
-      const name = follower?.display_name ?? follower?.username ?? 'Someone';
       sendPushNotification(
         targetId,
-        'New follower',
-        `${name} started following you`,
-        { type: 'new_follower' },
+        'new_follower',
       ).catch((err) => console.warn('[useFollows] follow notification failed:', err));
     },
     [userId, fetchFollows],

@@ -84,16 +84,19 @@ export async function unregisterPushToken(userId: string): Promise<void> {
  * Sends a push notification to another user via the send-notification edge function.
  * Fire-and-forget: errors are logged but not re-thrown so they never break
  * the action that triggered the notification.
+ *
+ * @param recipientId  - The user ID of the notification recipient.
+ * @param notificationType - Must be 'new_share' or 'new_follower'.
+ * @param sharedItemId - Required when notificationType is 'new_share'.
  */
 export async function sendPushNotification(
   recipientId: string,
-  title: string,
-  body: string,
-  data?: Record<string, unknown>,
+  notificationType: 'new_share' | 'new_follower',
+  sharedItemId?: string,
 ): Promise<void> {
   try {
     await supabase.functions.invoke('send-notification', {
-      body: { recipientId, title, body, data },
+      body: { notification_type: notificationType, recipient_id: recipientId, shared_item_id: sharedItemId },
     });
   } catch (err) {
     console.warn('[notifications] sendPushNotification failed:', err);

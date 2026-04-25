@@ -661,7 +661,14 @@ serve(async (req) => {
     appleDeveloperToken = await createAppleDeveloperToken();
   }
 
-  if (!accessToken || (primaryService === 'apple_music' && !appleDeveloperToken)) {
+  // Apple developer token missing is a server-side misconfiguration — not a client-fixable issue
+  if (primaryService === 'apple_music' && !appleDeveloperToken) {
+    console.error('[convert-playlist] Apple developer token unavailable — APPLE_TEAM_ID / APPLE_KEY_ID / APPLE_PRIVATE_KEY not set');
+    await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
+    return json({ error: 'server_misconfigured' }, 500);
+  }
+
+  if (!accessToken) {
     const hasToken = primaryService === 'spotify'
       ? !!recipient.spotify_access_token
       : primaryService === 'youtube_music'
@@ -673,8 +680,8 @@ serve(async (req) => {
     return json({ error: errMsg }, 400);
   }
 
-  if (primaryService === 'apple_music' && appleDeveloperToken) {
-    storefront = await getAppleMusicStorefront(appleDeveloperToken, accessToken);
+  if (primaryService === 'apple_music') {
+    storefront = await getAppleMusicStorefront(appleDeveloperToken!, accessToken);
   }
 
   // Mark as processing so the client's realtime subscription fires immediately

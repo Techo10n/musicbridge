@@ -120,7 +120,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
       const appleMusicId = primaryService === 'apple_music' ? result.id : null;
       const youtubeMusicId = primaryService === 'youtube_music' ? result.id : null;
 
-      const { error } = await supabase.from('shared_items').insert({
+      const { data: insertedItem, error } = await supabase.from('shared_items').insert({
         sender_id: user.id,
         recipient_id: recipient.id,
         type: 'song',
@@ -131,15 +131,14 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
         apple_music_id: appleMusicId,
         youtube_music_id: youtubeMusicId,
         message: message.trim() || null,
-      }).abortSignal(abort.signal);
+      }).select('id').single().abortSignal(abort.signal);
 
       if (error) throw error;
 
       sendPushNotification(
         recipient.id,
-        `${user.display_name ?? user.username} shared a song`,
-        result.title,
-        { type: 'new_share' },
+        'new_share',
+        insertedItem.id,
       );
 
       Alert.alert('Sent!', `Shared "${result.title}" with ${recipient.display_name}.`);
