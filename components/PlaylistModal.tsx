@@ -13,6 +13,7 @@ import { supabase } from '../lib/supabase';
 import { SharedItem, Track } from '../types';
 import { serviceName } from './ServiceBadge';
 import { useAuth } from '../hooks/useAuth';
+import * as AppleMusic from '../lib/appleMusic';
 
 type ConversionState = 'idle' | 'waiting' | 'processing' | 'done' | 'failed';
 
@@ -22,6 +23,12 @@ interface PlaylistModalProps {
   onClose: () => void;
 }
 
+interface ConvertPlaylistResult {
+  playlistId?: string;
+  playlistUrl?: string | null;
+  error?: string;
+}
+
 export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const { user } = useAuth();
 
@@ -29,9 +36,11 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const [tracksProcessed, setTracksProcessed] = useState(0);
   const [failureReason, setFailureReason] = useState<string | null>(null);
   const [createdPlaylistId, setCreatedPlaylistId] = useState<string | null>(null);
+  const [createdPlaylistUrl, setCreatedPlaylistUrl] = useState<string | null>(null);
 
   // Hold a ref to the realtime channel so we can unsubscribe on cleanup or close
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const convertingItemIdRef = useRef<string | null>(null);
 
   // Clean up the channel when the modal unmounts
   useEffect(() => {
@@ -42,29 +51,63 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       }
     };
   }, []);
+  const primaryService = user?.primary_service ?? null;
+  const totalTracks = item?.tracks?.length ?? 0;
+  const alreadyInLibrary = item?.conversion_status === 'done';
+  const appleMusicHasDirectPlaylistUrl = primaryService === 'apple_music' && !!createdPlaylistUrl;
+
+  useEffect(() => {
+    if (!item || !primaryService) return;
+
+    const isFreshConversion = convertingItemIdRef.current === item.id;
+
+    if (item.conversion_status === 'done' && !isFreshConversion) {
+      setConversionState('idle');
+      setTracksProcessed(item.tracks_processed ?? item.tracks?.length ?? 0);
+      setFailureReason(null);
+      setCreatedPlaylistId(
+        primaryService === 'spotify'
+          ? item.spotify_playlist_id
+          : primaryService === 'apple_music'
+            ? item.apple_music_playlist_id
+            : item.youtube_music_playlist_id,
+      );
+      setCreatedPlaylistUrl(null);
+      return;
+    }
+
+    if (!isFreshConversion && item.conversion_status !== 'done') {
+      setConversionState('idle');
+      setTracksProcessed(item.tracks_processed ?? 0);
+      setFailureReason(null);
+      setCreatedPlaylistId(null);
+      setCreatedPlaylistUrl(null);
+    }
+  }, [item, primaryService]);
 
   if (!item) return null;
-
-  const primaryService = user?.primary_service ?? null;
-  const totalTracks = item.tracks?.length ?? 0;
 
   const handleClose = () => {
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
+    convertingItemIdRef.current = null;
     setConversionState('idle');
     setTracksProcessed(0);
     setFailureReason(null);
     setCreatedPlaylistId(null);
+    setCreatedPlaylistUrl(null);
     onClose();
   };
 
   const handleRetry = () => {
+    convertingItemIdRef.current = null;
     setConversionState('idle');
     setTracksProcessed(0);
     setFailureReason(null);
     setCreatedPlaylistId(null);
+    setCreatedPlaylistUrl(null);
   };
 
   const openCreatedPlaylist = async () => {
@@ -72,17 +115,26 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     const urls =
       primaryService === 'spotify'
         ? [`spotify:playlist:${createdPlaylistId}`, `https://open.spotify.com/playlist/${createdPlaylistId}`]
-        : [`https://music.youtube.com/playlist?list=${createdPlaylistId}`];
+        : primaryService === 'apple_music'
+          ? AppleMusic.getAppleMusicPlaylistDeepLink(createdPlaylistId, createdPlaylistUrl)
+          : [`https://music.youtube.com/playlist?list=${createdPlaylistId}`];
+    console.log('[PlaylistModal] opening created playlist', {
+      primaryService,
+      createdPlaylistId,
+      createdPlaylistUrl,
+      urls,
+    });
     for (const url of urls) {
       try {
         if (await Linking.canOpenURL(url)) { await Linking.openURL(url); return; }
-      } catch {}
+      } catch { }
     }
   };
 
   const handleAddToService = async () => {
     if (!user || !primaryService || !item.tracks?.length) return;
 
+    convertingItemIdRef.current = item.id;
     setConversionState('waiting');
     setTracksProcessed(0);
     setFailureReason(null);
@@ -124,13 +176,16 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     // Invoke the edge function. The client's JWT is sent automatically.
     // This call blocks until the function returns, but progress is visible
     // in real-time via the Supabase channel above.
-    const { data: fnData, error: fnError } = await supabase.functions.invoke(
+    const { data: fnData, error: fnError } = await supabase.functions.invoke<ConvertPlaylistResult>(
       'convert-playlist',
       { body: { sharedItemId: item.id } },
     );
 
     // Capture the created playlist ID from the response regardless of which path finished first.
-    if (fnData?.playlistId) setCreatedPlaylistId(fnData.playlistId);
+    if (fnData?.playlistId) {
+      setCreatedPlaylistId(fnData.playlistId);
+      setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
+    }
 
     // If the realtime event already marked it done, we're finished.
     if (succeededViaRealtime) return;
@@ -140,6 +195,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     channelRef.current = null;
 
     if (fnError) {
+      convertingItemIdRef.current = null;
       const ctx = fnError.context;
       let reason: string | null = null;
       let rawBody = '';
@@ -162,8 +218,10 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       setConversionState('failed');
     } else if (fnData?.playlistId) {
       setCreatedPlaylistId(fnData.playlistId);
+      setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
       setConversionState('done');
     } else {
+      convertingItemIdRef.current = null;
       console.error('[PlaylistModal] unexpected fnData:', fnData);
       setFailureReason(fnData?.error ?? null);
       setConversionState('failed');
@@ -187,9 +245,58 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const renderFooter = () => {
     if (!primaryService) return null;
 
+    if (alreadyInLibrary && conversionState === 'idle') {
+      return (
+        <View style={styles.doneContainer}>
+          <Text style={styles.doneText}>
+            Already In Library
+            {'\n'}
+            <Text style={styles.doneSubtext}>
+              This playlist was already added to {serviceName(primaryService)}.
+              {primaryService === 'apple_music' && !appleMusicHasDirectPlaylistUrl
+                ? '\nApple Music may take a moment to surface it in Library.'
+                : ''}
+            </Text>
+          </Text>
+          <View style={styles.doneButtons}>
+            <TouchableOpacity style={styles.closeActionButton} onPress={handleClose} activeOpacity={0.8}>
+              <Text style={styles.closeActionText}>Close</Text>
+            </TouchableOpacity>
+            {createdPlaylistId && (
+              <TouchableOpacity
+                style={[
+                  styles.openServiceButton,
+                  {
+                    backgroundColor:
+                      primaryService === 'spotify'
+                        ? '#1DB954'
+                        : primaryService === 'apple_music'
+                          ? '#fc3c44'
+                          : '#FF0000',
+                  },
+                ]}
+                onPress={openCreatedPlaylist}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.openServiceText, { color: primaryService === 'spotify' ? '#000' : '#fff' }]}>
+                  {primaryService === 'apple_music' && !appleMusicHasDirectPlaylistUrl
+                    ? 'Open Apple Music Library'
+                    : `Open in ${serviceName(primaryService)}`}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      );
+    }
+
     if (conversionState === 'idle') {
       return (
-        <TouchableOpacity style={styles.addButton} onPress={handleAddToService} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={handleAddToService}
+          activeOpacity={0.8}
+        >
           <Text style={styles.addButtonText}>Add to {serviceName(primaryService)}</Text>
         </TouchableOpacity>
       );
@@ -213,13 +320,22 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
               <TouchableOpacity
                 style={[
                   styles.openServiceButton,
-                  { backgroundColor: primaryService === 'youtube_music' ? '#FF0000' : '#1DB954' },
+                  {
+                    backgroundColor:
+                      primaryService === 'spotify'
+                        ? '#1DB954'
+                        : primaryService === 'apple_music'
+                          ? '#fc3c44'
+                          : '#FF0000',
+                  },
                 ]}
                 onPress={openCreatedPlaylist}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.openServiceText, { color: primaryService === 'youtube_music' ? '#fff' : '#000' }]}>
-                  Open in {serviceName(primaryService)}
+                <Text style={[styles.openServiceText, { color: primaryService === 'spotify' ? '#000' : '#fff' }]}>
+                  {primaryService === 'apple_music' && !appleMusicHasDirectPlaylistUrl
+                    ? 'Open Apple Music Library'
+                    : `Open in ${serviceName(primaryService)}`}
                 </Text>
               </TouchableOpacity>
             )}
@@ -233,8 +349,8 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       if (failureReason === 'spotify_rate_limit_exceeded') {
         errorMsg =
           "Spotify's daily search quota has been reached (Development Mode limit). Please wait ~12 hours and try again.";
-      } else if (failureReason?.includes('Apple Music')) {
-        errorMsg = 'Apple Music conversion is not yet supported.';
+      } else if (failureReason === 'apple_music_token_unavailable') {
+        errorMsg = 'Apple Music authorization is unavailable. Go to Profile and reconnect Apple Music.';
       } else if (failureReason === 'No tracks could be matched on the destination service') {
         errorMsg = `None of the tracks could be found on ${serviceName(primaryService)}.`;
       } else if (failureReason === 'spotify_token_refresh_failed') {

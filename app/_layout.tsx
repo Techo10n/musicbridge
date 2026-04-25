@@ -1,9 +1,15 @@
 import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Alert, View } from 'react-native';
 import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../hooks/useAuth';
+import { useNotifications } from '../hooks/useNotifications';
+import { useClipboardReel } from '../hooks/useClipboardReel';
+import { ReelImportBanner } from '../components/ReelImportBanner';
+import { ReelImportModal } from '../components/ReelImportModal';
+import { getSpotifyReconnectRequired } from '../lib/spotify';
 
 /**
  * Inner navigator — reacts to auth state and redirects accordingly.
@@ -11,12 +17,26 @@ import { AuthProvider, useAuth } from '../hooks/useAuth';
  */
 function RootLayoutNav() {
   const { session, user, loading } = useAuth();
+  useNotifications();
+
   const segments = useSegments();
   const router = useRouter();
-  // useRootNavigationState gives us the navigator's key once it is fully mounted.
-  // Without this guard, router.replace() can fire before the navigator is ready
-  // and throw "Attempted to navigate before mounting the Root Layout component".
   const navState = useRootNavigationState();
+
+  // Reel import — clipboard detection + banner + modal
+  const { pendingUrl, pendingSource, dismiss } = useClipboardReel();
+  const [modalUrl, setModalUrl] = useState<string | null>(null);
+  const [shownSpotifyReconnectPrompt, setShownSpotifyReconnectPrompt] = useState(false);
+
+  const handleFindSong = () => {
+    if (!pendingUrl) return;
+    setModalUrl(pendingUrl);
+    dismiss();
+  };
+
+  const handleModalClose = () => {
+    setModalUrl(null);
+  };
 
   useEffect(() => {
     if (!navState?.key || loading) return;
@@ -25,22 +45,81 @@ function RootLayoutNav() {
     const inTabsGroup = segments[0] === '(tabs)';
 
     if (!session && !inAuthGroup) {
-      // No session — always send to login
       router.replace('/(auth)/login');
     } else if (session && user?.primary_service && (inAuthGroup || (!inAuthGroup && !inTabsGroup))) {
-      // Fully registered user on wrong screen — send to home feed
       router.replace('/(tabs)/home');
     }
   }, [navState?.key, session, user, loading, segments, router]);
 
+  useEffect(() => {
+    if (!pendingUrl || pendingSource !== 'link' || modalUrl) return;
+    setModalUrl(pendingUrl);
+    dismiss();
+  }, [pendingUrl, pendingSource, modalUrl, dismiss]);
+
+  useEffect(() => {
+    setShownSpotifyReconnectPrompt(false);
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!session || !user || loading || shownSpotifyReconnectPrompt) return;
+
+    let cancelled = false;
+
+    const maybePromptSpotifyReconnect = async () => {
+      const reconnectRequired = await getSpotifyReconnectRequired();
+      if (cancelled || !reconnectRequired) return;
+      if (user.spotify_access_token) return;
+
+      setShownSpotifyReconnectPrompt(true);
+      Alert.alert(
+        'Reconnect Spotify',
+        'Your Spotify session expired. Reconnect Spotify from your profile to keep opening songs and using Spotify library features.',
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Open Profile',
+            onPress: () => {
+              router.push('/(tabs)/profile');
+            },
+          },
+        ],
+      );
+    };
+
+    void maybePromptSpotifyReconnect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, router, session, shownSpotifyReconnectPrompt, user]);
+
+  // Only show reel import UI when logged in
+  const showReelUI = !!session && !!user?.primary_service;
+
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: '#0f0f0f' },
-        animation: 'fade',
-      }}
-    />
+    <View style={{ flex: 1 }}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: '#0f0f0f' },
+          animation: 'fade',
+        }}
+      />
+      {showReelUI && (
+        <ReelImportBanner
+          url={pendingUrl}
+          onFindSong={handleFindSong}
+          onDismiss={dismiss}
+        />
+      )}
+      {showReelUI && (
+        <ReelImportModal
+          reelUrl={modalUrl}
+          onClose={handleModalClose}
+        />
+      )}
+    </View>
   );
 }
 

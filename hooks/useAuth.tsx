@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { unregisterPushToken } from '../lib/notifications';
 import { MusicService, User } from '../types';
 
 interface AuthContextType {
@@ -99,6 +100,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   };
 
   const signOut = async () => {
+    const currentUser = user;
+    if (currentUser?.id) {
+      try {
+        await unregisterPushToken(currentUser.id);
+      } catch (err) {
+        console.warn('[useAuth] unregisterPushToken failed during sign-out:', err);
+      }
+    }
     await supabase.auth.signOut({ scope: 'local' });
     setUser(null);
   };

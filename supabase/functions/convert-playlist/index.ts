@@ -11,6 +11,9 @@
  *   SUPABASE_ANON_KEY         — injected automatically by Supabase
  *   SPOTIFY_CLIENT_ID         — same value as EXPO_PUBLIC_SPOTIFY_CLIENT_ID
  *   GOOGLE_CLIENT_ID          — same value as EXPO_PUBLIC_GOOGLE_CLIENT_ID
+ *   APPLE_TEAM_ID             — Apple Developer team ID
+ *   APPLE_KEY_ID              — MusicKit key ID
+ *   APPLE_PRIVATE_KEY         — MusicKit .p8 private key contents
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
@@ -28,6 +31,63 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS, 'Content-Type': 'application/json' },
   });
+}
+
+const APPLE_MUSIC_PLAYLIST_URL_RETRY_ATTEMPTS = 5;
+const APPLE_MUSIC_PLAYLIST_URL_RETRY_DELAY_MS = 1_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ─── Apple Music developer token ─────────────────────────────────────────────
+
+function base64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlJson(value: unknown): string {
+  return base64Url(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function pemToArrayBuffer(pem: string): ArrayBuffer {
+  const base64 = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/\s/g, '');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function createAppleDeveloperToken(): Promise<string | null> {
+  const teamId = Deno.env.get('APPLE_TEAM_ID');
+  const keyId = Deno.env.get('APPLE_KEY_ID');
+  const privateKey = Deno.env.get('APPLE_PRIVATE_KEY');
+  if (!teamId || !keyId || !privateKey) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const signingInput = [
+    base64UrlJson({ alg: 'ES256', kid: keyId, typ: 'JWT' }),
+    base64UrlJson({ iss: teamId, iat: now, exp: now + 60 * 60 }),
+  ].join('.');
+
+  const key = await crypto.subtle.importKey(
+    'pkcs8',
+    pemToArrayBuffer(privateKey.replace(/\\n/g, '\n')),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+  return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
 }
 
 // ─── Artist / title normalisation (mirrors lib/utils.ts) ──────────────────────
@@ -136,6 +196,13 @@ async function getYouTubeToken(
 // ─── Track search ─────────────────────────────────────────────────────────────
 
 interface SpotifyItem { id: string; name: string; artists: { name: string }[] }
+interface AppleMusicItem {
+  id: string;
+  attributes?: {
+    name?: string;
+    artistName?: string;
+  };
+}
 
 // Normalise a string for loose word-level matching
 function normForMatch(s: string): string {
@@ -259,6 +326,65 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
   return best?.id?.videoId ?? null;
 }
 
+async function searchAppleMusic(
+  developerToken: string,
+  userToken: string,
+  storefront: string,
+  title: string,
+  artist: string,
+): Promise<string | null> {
+  const t = cleanTitle(title);
+  const a = cleanArtistName(artist);
+  const term = encodeURIComponent(`${t} ${a}`);
+
+  const res = await fetch(
+    `https://api.music.apple.com/v1/catalog/${storefront}/search?term=${term}&types=songs&limit=10`,
+    {
+      headers: {
+        Authorization: `Bearer ${developerToken}`,
+        'Music-User-Token': userToken,
+      },
+    },
+  );
+  if (!res.ok) return null;
+
+  const data = await res.json() as {
+    results?: { songs?: { data?: AppleMusicItem[] } };
+  };
+  const items = data.results?.songs?.data ?? [];
+  if (items.length === 0) return null;
+
+  const mapped: SpotifyItem[] = items.map((item) => ({
+    id: item.id,
+    name: item.attributes?.name ?? '',
+    artists: [{ name: item.attributes?.artistName ?? '' }],
+  }));
+  return pickBest(mapped, title, artist) ?? items[0]?.id ?? null;
+}
+
+async function getAppleMusicStorefront(
+  developerToken: string,
+  userToken: string,
+): Promise<string> {
+  try {
+    const res = await fetch('https://api.music.apple.com/v1/me/storefront', {
+      headers: {
+        Authorization: `Bearer ${developerToken}`,
+        'Music-User-Token': userToken,
+      },
+    });
+
+    if (!res.ok) return 'us';
+
+    const data = await res.json() as {
+      data?: Array<{ id?: string }>;
+    };
+    return data.data?.[0]?.id?.toLowerCase() ?? 'us';
+  } catch {
+    return 'us';
+  }
+}
+
 // ─── Playlist cleanup ─────────────────────────────────────────────────────────
 
 // Unfollow removes an owned playlist from the user's library (Spotify has no hard-delete API).
@@ -378,6 +504,84 @@ async function createYouTubePlaylist(
   return playlist.id;
 }
 
+async function createAppleMusicPlaylist(
+  developerToken: string,
+  userToken: string,
+  name: string,
+  songIds: string[],
+): Promise<{ id: string; url?: string | null } | null> {
+  const headers = {
+    Authorization: `Bearer ${developerToken}`,
+    'Music-User-Token': userToken,
+  };
+  const createRes = await fetch('https://api.music.apple.com/v1/me/library/playlists', {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      attributes: { name, description: 'Shared via MusicBridge' },
+      relationships: {
+        tracks: {
+          data: songIds.map((id) => ({ id, type: 'songs' })),
+        },
+      },
+    }),
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text().catch(() => '(unreadable)');
+    console.error(`[convert-playlist] Apple Music playlist create failed: ${createRes.status} ${errText}`);
+    return null;
+  }
+
+  const payload = await createRes.json() as {
+    data?: Array<{ id: string; attributes?: { url?: string } }>;
+  };
+  const playlist = payload.data?.[0];
+  if (!playlist?.id) return null;
+  let canonicalUrl = playlist.attributes?.url ?? null;
+
+  for (let attempt = 0; !canonicalUrl && attempt < APPLE_MUSIC_PLAYLIST_URL_RETRY_ATTEMPTS; attempt += 1) {
+    const catalogRes = await fetch(
+      `https://api.music.apple.com/v1/me/library/playlists/${playlist.id}/catalog`,
+      { headers },
+    );
+    if (catalogRes.ok) {
+      const catalogPayload = await catalogRes.json() as {
+        data?: Array<{ attributes?: { url?: string } }>;
+      };
+      canonicalUrl = catalogPayload.data?.[0]?.attributes?.url ?? null;
+    }
+
+    if (!canonicalUrl) {
+      const detailRes = await fetch(
+        `https://api.music.apple.com/v1/me/library/playlists/${playlist.id}`,
+        { headers },
+      );
+      if (detailRes.ok) {
+        const detailPayload = await detailRes.json() as {
+          data?: Array<{ attributes?: { url?: string } }>;
+        };
+        canonicalUrl = detailPayload.data?.[0]?.attributes?.url ?? null;
+      }
+    }
+
+    if (!canonicalUrl && attempt < APPLE_MUSIC_PLAYLIST_URL_RETRY_ATTEMPTS - 1) {
+      await sleep(APPLE_MUSIC_PLAYLIST_URL_RETRY_DELAY_MS);
+    }
+  }
+
+  console.log(
+    `[convert-playlist] Apple Music playlist created id=${playlist.id} canonicalUrl=${canonicalUrl ?? 'null'}`,
+  );
+  return {
+    id: playlist.id,
+    url: canonicalUrl,
+  };
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -432,7 +636,7 @@ serve(async (req) => {
   const { data: recipient, error: recipientErr } = await supabase
     .from('users')
     .select(
-      'primary_service, spotify_access_token, spotify_refresh_token, spotify_token_expiry, youtube_access_token, youtube_refresh_token, youtube_token_expiry',
+      'primary_service, spotify_access_token, spotify_refresh_token, spotify_token_expiry, apple_music_user_token, youtube_access_token, youtube_refresh_token, youtube_token_expiry',
     )
     .eq('id', authUser.id)
     .single();
@@ -444,26 +648,40 @@ serve(async (req) => {
 
   const primaryService: string = recipient.primary_service;
 
-  if (primaryService === 'apple_music') {
-    return json({ error: 'Apple Music playlist conversion is not yet supported.' }, 400);
-  }
-
   // Resolve access token (refreshing if expired)
   let accessToken: string | null = null;
+  let appleDeveloperToken: string | null = null;
+  let storefront = 'us';
   if (primaryService === 'spotify') {
     accessToken = await getSpotifyToken(supabase, authUser.id, recipient);
   } else if (primaryService === 'youtube_music') {
     accessToken = await getYouTubeToken(supabase, authUser.id, recipient);
+  } else if (primaryService === 'apple_music') {
+    accessToken = recipient.apple_music_user_token;
+    appleDeveloperToken = await createAppleDeveloperToken();
+  }
+
+  // Apple developer token missing is a server-side misconfiguration — not a client-fixable issue
+  if (primaryService === 'apple_music' && !appleDeveloperToken) {
+    console.error('[convert-playlist] Apple developer token unavailable — APPLE_TEAM_ID / APPLE_KEY_ID / APPLE_PRIVATE_KEY not set');
+    await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
+    return json({ error: 'server_misconfigured' }, 500);
   }
 
   if (!accessToken) {
     const hasToken = primaryService === 'spotify'
       ? !!recipient.spotify_access_token
-      : !!recipient.youtube_access_token;
-    const errMsg = hasToken ? 'spotify_token_refresh_failed' : 'not_connected';
+      : primaryService === 'youtube_music'
+        ? !!recipient.youtube_access_token
+        : !!recipient.apple_music_user_token;
+    const errMsg = hasToken ? `${primaryService}_token_unavailable` : 'not_connected';
     console.error(`[convert-playlist] No access token for ${primaryService}. hasToken=${hasToken}, errMsg=${errMsg}`);
     await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     return json({ error: errMsg }, 400);
+  }
+
+  if (primaryService === 'apple_music') {
+    storefront = await getAppleMusicStorefront(appleDeveloperToken as string, accessToken);
   }
 
   // Mark as processing so the client's realtime subscription fires immediately
@@ -478,6 +696,7 @@ serve(async (req) => {
     title: string;
     artist: string;
     spotify_id: string | null;
+    apple_music_id: string | null;
     youtube_music_id: string | null;
   }>;
 
@@ -492,6 +711,15 @@ serve(async (req) => {
         id = track.spotify_id ?? await searchSpotify(accessToken, track.title, track.artist);
       } else if (primaryService === 'youtube_music') {
         id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
+      } else if (primaryService === 'apple_music' && appleDeveloperToken) {
+        id = track.apple_music_id
+          ?? await searchAppleMusic(
+            appleDeveloperToken,
+            accessToken,
+            storefront,
+            track.title,
+            track.artist,
+          );
       }
 
       if (id) resolvedIds.push(id);
@@ -525,6 +753,7 @@ serve(async (req) => {
   // ── Create the playlist ────────────────────────────────────────────────────
 
   let playlistId: string | null = null;
+  let playlistUrl: string | null = null;
   let tracksAdded = 0;
   let addError: string | null = null;
 
@@ -541,6 +770,18 @@ serve(async (req) => {
   } else if (primaryService === 'youtube_music') {
     playlistId = await createYouTubePlaylist(accessToken, item.title, resolvedIds);
     if (playlistId) tracksAdded = resolvedIds.length;
+  } else if (primaryService === 'apple_music' && appleDeveloperToken) {
+    const result = await createAppleMusicPlaylist(
+      appleDeveloperToken,
+      accessToken,
+      item.title,
+      resolvedIds,
+    );
+    if (result) {
+      playlistId = result.id;
+      playlistUrl = result.url ?? null;
+      tracksAdded = resolvedIds.length;
+    }
   }
 
   if (!playlistId) {
@@ -568,8 +809,9 @@ serve(async (req) => {
   const playlistUpdate: Record<string, string> = { conversion_status: 'done' };
   if (primaryService === 'spotify') playlistUpdate.spotify_playlist_id = playlistId;
   else if (primaryService === 'youtube_music') playlistUpdate.youtube_music_playlist_id = playlistId;
+  else if (primaryService === 'apple_music') playlistUpdate.apple_music_playlist_id = playlistId;
 
   await supabase.from('shared_items').update(playlistUpdate).eq('id', sharedItemId);
 
-  return json({ playlistId, matchedTracks: tracksAdded, totalTracks: tracks.length });
+  return json({ playlistId, playlistUrl, matchedTracks: tracksAdded, totalTracks: tracks.length });
 });

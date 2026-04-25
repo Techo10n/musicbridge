@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -20,6 +21,7 @@ import { LibraryArtist, LibraryPlaylist, LibraryTrack, User } from '../../types'
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
 import { FriendPickerModal } from '../../components/FriendPickerModal';
 import { serviceName } from '../../components/ServiceBadge';
+import { deleteReelList, getSavedReelLists, SavedReelList } from '../../lib/reelLists';
 
 const SERVICE_COLOR: Record<string, string> = {
   spotify: '#1DB954',
@@ -33,6 +35,8 @@ export default function LibraryScreen() {
 
   const [selectedPlaylist, setSelectedPlaylist] = useState<LibraryPlaylist | null>(null);
   const [playlistModalVisible, setPlaylistModalVisible] = useState(false);
+  const [savedReelLists, setSavedReelLists] = useState<SavedReelList[]>([]);
+  const [selectedReelList, setSelectedReelList] = useState<SavedReelList | null>(null);
 
   // Saved-song sharing state
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -41,17 +45,32 @@ export default function LibraryScreen() {
 
   // Load on tab focus (but only once per session unless refreshed)
   const [hasFetched, setHasFetched] = useState(false);
+  const loadReelLists = useCallback(async () => {
+    if (!user) {
+      setSavedReelLists([]);
+      return;
+    }
+    try {
+      const lists = await getSavedReelLists(user.id);
+      setSavedReelLists(lists);
+    } catch (err) {
+      console.error('[LibraryScreen] loadReelLists error:', err);
+      setSavedReelLists([]);
+    }
+  }, [user]);
+
   useFocusEffect(
     useCallback(() => {
+      loadReelLists();
       if (!hasFetched) {
         fetchLibrary();
         setHasFetched(true);
       }
-    }, [hasFetched, fetchLibrary]),
+    }, [hasFetched, fetchLibrary, loadReelLists]),
   );
 
   const handleRefresh = async () => {
-    await fetchLibrary();
+    await Promise.all([fetchLibrary(), loadReelLists()]);
   };
 
   const openPlaylist = (playlist: LibraryPlaylist) => {
@@ -62,6 +81,28 @@ export default function LibraryScreen() {
   const openSongShare = (track: LibraryTrack) => {
     setPendingSongShare(track);
     setPickerVisible(true);
+  };
+
+  const handleDeleteReelList = async () => {
+    if (!user || !selectedReelList) return;
+
+    Alert.alert('Delete reel list?', 'This removes the saved list from your Library.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteReelList(user.id, selectedReelList.id);
+            setSelectedReelList(null);
+            await loadReelLists();
+          } catch (err) {
+            console.error('[LibraryScreen] delete reel list error:', err);
+            Alert.alert('Error', 'Could not delete this reel list.');
+          }
+        },
+      },
+    ]);
   };
 
   const handleSongShareFriendSelected = async (friend: User, message: string) => {
@@ -136,6 +177,21 @@ export default function LibraryScreen() {
         <Ionicons name="paper-plane-outline" size={18} color="#555" />
       </TouchableOpacity>
     </View>
+  );
+
+  const renderReelListRow = ({ item }: { item: SavedReelList }) => (
+    <TouchableOpacity style={styles.playlistRow} onPress={() => setSelectedReelList(item)} activeOpacity={0.8}>
+      <View style={[styles.playlistCover, styles.reelListCover]}>
+        <Ionicons name="film-outline" size={22} color="#fff" />
+      </View>
+      <View style={styles.playlistInfo}>
+        <Text style={styles.playlistName} numberOfLines={1}>{item.title}</Text>
+        <Text style={styles.playlistMeta}>
+          {item.songs.length} song{item.songs.length === 1 ? '' : 's'} - Reel
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#555" />
+    </TouchableOpacity>
   );
 
   const renderArtistChip = ({ item: artist }: { item: LibraryArtist }) => (
@@ -230,6 +286,20 @@ export default function LibraryScreen() {
             </View>
           )}
 
+          {/* Saved reel song lists */}
+          {savedReelLists.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Reel Lists</Text>
+              <FlatList
+                data={savedReelLists}
+                renderItem={renderReelListRow}
+                keyExtractor={(list) => list.id}
+                scrollEnabled={false}
+                ItemSeparatorComponent={() => <View style={styles.rowSeparator} />}
+              />
+            </View>
+          )}
+
           {/* Followed artists (Spotify only) */}
           {followedArtists.length > 0 && (
             <View style={styles.section}>
@@ -246,7 +316,7 @@ export default function LibraryScreen() {
           )}
 
           {/* Empty state */}
-          {!playlists.length && !savedTracks.length && !followedArtists.length && (
+          {!playlists.length && !savedTracks.length && !followedArtists.length && !savedReelLists.length && (
             <View style={styles.emptyInline}>
               <Ionicons name="library-outline" size={40} color="#333" />
               <Text style={styles.emptyInlineText}>Your library is empty.</Text>
@@ -276,6 +346,50 @@ export default function LibraryScreen() {
         }}
         onSelect={handleSongShareFriendSelected}
       />
+
+      <Modal
+        visible={selectedReelList !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSelectedReelList(null)}
+      >
+        <View style={styles.reelModal}>
+          <View style={styles.reelModalHeader}>
+            <View style={styles.reelModalTitleWrap}>
+              <Text style={styles.reelModalTitle} numberOfLines={1}>
+                {selectedReelList?.title ?? 'Reel list'}
+              </Text>
+              <Text style={styles.reelModalSubtitle}>
+                {selectedReelList?.songs.length ?? 0} song{selectedReelList?.songs.length === 1 ? '' : 's'}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={handleDeleteReelList} style={styles.reelHeaderButton}>
+              <Ionicons name="trash-outline" size={20} color="#888" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setSelectedReelList(null)} style={styles.reelHeaderButton}>
+              <Text style={styles.reelCloseText}>x</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.reelSongList}>
+            {selectedReelList?.songs.map((song, index) => (
+              <View key={`${song.title}-${song.artist}-${index}`} style={styles.trackRow}>
+                {song.coverUrl ? (
+                  <Image source={{ uri: song.coverUrl }} style={styles.trackCover} />
+                ) : (
+                  <View style={[styles.trackCover, styles.trackCoverPlaceholder]}>
+                    <Ionicons name="musical-note" size={16} color="#555" />
+                  </View>
+                )}
+                <View style={styles.trackInfo}>
+                  <Text style={styles.trackTitle} numberOfLines={1}>{song.title}</Text>
+                  <Text style={styles.trackArtist} numberOfLines={1}>{song.artist}</Text>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -353,6 +467,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  reelListCover: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fc3c44',
+  },
   playlistInfo: {
     flex: 1,
   },
@@ -428,6 +547,44 @@ const styles = StyleSheet.create({
   rowSeparator: {
     height: 1,
     backgroundColor: '#1a1a1a',
+  },
+  reelModal: {
+    flex: 1,
+    backgroundColor: '#0f0f0f',
+  },
+  reelModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a1a',
+  },
+  reelModalTitleWrap: {
+    flex: 1,
+  },
+  reelModalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  reelModalSubtitle: {
+    color: '#666',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  reelHeaderButton: {
+    padding: 6,
+  },
+  reelCloseText: {
+    color: '#888',
+    fontSize: 18,
+  },
+  reelSongList: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
   // Empty states
   emptyScreen: {

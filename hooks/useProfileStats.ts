@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './useAuth';
 import * as Spotify from '../lib/spotify';
+import * as AppleMusic from '../lib/appleMusic';
 import * as YouTube from '../lib/youtubeMusic';
-import { TopTrack, TopArtist, RecentTrack, WrappedStats, LibraryPlaylist } from '../types';
+import { MusicService, TopTrack, RecentTrack, WrappedStats, LibraryPlaylist } from '../types';
 
 const getPinnedKey = (userId: string) => `profile_pinned_playlists_${userId}`;
 const getHistoryOptInKey = (userId: string) => `profile_history_opt_in_${userId}`;
@@ -116,10 +117,26 @@ export function useProfileStats() {
     hasFetched.current = true;
 
     const hasSpotify = !!user.spotify_access_token;
+    const hasAppleMusic = !!user.apple_music_user_token;
     const hasYouTube = !!user.youtube_access_token;
+    const servicePreference: MusicService[] = [
+      user.primary_service,
+      'spotify',
+      'apple_music',
+      'youtube_music',
+    ].filter((service, index, services): service is MusicService =>
+      !!service && services.indexOf(service) === index,
+    );
+    const selectedService = servicePreference.find((service) =>
+      service === 'spotify'
+        ? hasSpotify
+        : service === 'apple_music'
+          ? hasAppleMusic
+          : hasYouTube,
+    );
 
     try {
-      if (hasSpotify) {
+      if (selectedService === 'spotify') {
         // Fetch all Spotify stats in parallel
         const [tracks, artists, recent] = await Promise.all([
           Spotify.getTopTracks(user.id, 5),
@@ -145,7 +162,27 @@ export function useProfileStats() {
           savedCount,
           playlistCount: playlists.length,
         });
-      } else if (hasYouTube) {
+      } else if (selectedService === 'apple_music') {
+        const [tracks, artists, recent, savedCount, playlists] = await Promise.all([
+          AppleMusic.getTopTracks(user.id, 5),
+          AppleMusic.getTopArtists(user.id, 5),
+          historyOptIn ? AppleMusic.getRecentlyPlayed(user.id, 10) : Promise.resolve([]),
+          AppleMusic.getSavedSongsCount(user.id),
+          AppleMusic.getUserPlaylists(user.id),
+        ]);
+
+        setTopTracks(tracks);
+        setTopArtists(artists);
+        setRecentTracks(recent);
+        setTasteTags([]);
+        setWrappedStats({
+          topGenre: null,
+          topTrackTitle: tracks[0]?.title ?? null,
+          topTrackArtist: tracks[0]?.artist ?? null,
+          savedCount,
+          playlistCount: playlists.length,
+        });
+      } else if (selectedService === 'youtube_music') {
         const [channels, analysis] = await Promise.all([
           YouTube.getSubscribedChannels(user.id, 5),
           YouTube.analyzeYouTubeLibrary(user.id),
@@ -185,6 +222,12 @@ export function useProfileStats() {
 
         setTasteTags([]); // YouTube has no genre data
         setRecentTracks([]); // Not available on YouTube
+      } else {
+        setTopTracks([]);
+        setTopArtists([]);
+        setRecentTracks([]);
+        setTasteTags([]);
+        setWrappedStats(null);
       }
     } catch (err) {
       console.error('[useProfileStats] fetch error:', err);
@@ -206,9 +249,13 @@ export function useProfileStats() {
 
   // Re-fetch recent tracks when opt-in changes (and we've already fetched once)
   useEffect(() => {
-    if (hasFetched.current && user?.spotify_access_token) {
+    if (hasFetched.current && user) {
       if (historyOptIn) {
-        Spotify.getRecentlyPlayed(user.id, 20).then(setRecentTracks).catch(() => {});
+        if (user.primary_service === 'apple_music' && user.apple_music_user_token) {
+          AppleMusic.getRecentlyPlayed(user.id, 10).then(setRecentTracks).catch(() => {});
+        } else if (user.spotify_access_token) {
+          Spotify.getRecentlyPlayed(user.id, 20).then(setRecentTracks).catch(() => {});
+        }
       } else {
         setRecentTracks([]);
       }

@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { sendPushNotification } from '../lib/notifications';
 import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
@@ -74,7 +75,9 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
             id: t.id,
             title: t.attributes.name,
             artist: t.attributes.artistName,
-            coverUrl: resolveAppleMusicArtwork(t.attributes.artwork.url, 300),
+            coverUrl: t.attributes.artwork
+              ? resolveAppleMusicArtwork(t.attributes.artwork.url, 300)
+              : '',
             raw: t,
           }));
           break;
@@ -117,7 +120,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
       const appleMusicId = primaryService === 'apple_music' ? result.id : null;
       const youtubeMusicId = primaryService === 'youtube_music' ? result.id : null;
 
-      const { error } = await supabase.from('shared_items').insert({
+      const { data: insertedItem, error } = await supabase.from('shared_items').insert({
         sender_id: user.id,
         recipient_id: recipient.id,
         type: 'song',
@@ -128,9 +131,15 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
         apple_music_id: appleMusicId,
         youtube_music_id: youtubeMusicId,
         message: message.trim() || null,
-      }).abortSignal(abort.signal);
+      }).select('id').single().abortSignal(abort.signal);
 
       if (error) throw error;
+
+      sendPushNotification(
+        recipient.id,
+        'new_share',
+        insertedItem.id,
+      );
 
       Alert.alert('Sent!', `Shared "${result.title}" with ${recipient.display_name}.`);
       onShared();

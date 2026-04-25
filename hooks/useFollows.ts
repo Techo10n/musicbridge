@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Follow, User } from '../types';
 import { useAuth } from './useAuth';
+import { sendPushNotification } from '../lib/notifications';
 
 export function useFollows() {
   const { session } = useAuth();
@@ -57,6 +58,11 @@ export function useFollows() {
         .insert({ follower_id: userId, following_id: targetId });
       if (error) throw error;
       await fetchFollows();
+      // Notify the person being followed — fire-and-forget
+      sendPushNotification(
+        targetId,
+        'new_follower',
+      ).catch((err) => console.warn('[useFollows] follow notification failed:', err));
     },
     [userId, fetchFollows],
   );

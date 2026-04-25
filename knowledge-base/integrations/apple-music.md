@@ -1,20 +1,29 @@
 # Apple Music Integration
 
 **File**: `lib/appleMusic.ts`  
-**Status**: DEFERRED — code exists but non-functional without credentials
+**Status**: Enabled after Apple Developer + Supabase secret setup
 
-**Why deferred**: Requires $99/year Apple Developer membership to generate the Developer Token JWT. Will revisit after the app gains traction.
-
-The `convert-playlist` Edge Function explicitly rejects Apple Music users with an explanatory error.
+Apple Music auth now runs natively on iOS through the local Expo module in `modules/apple-music/`. Supabase still signs short-lived developer tokens server-side in `supabase/functions/apple-music-auth/`, but the user permission prompt and Music user token exchange happen in native iOS code.
 
 ---
 
-## When Re-enabling
+## Setup
 
-- Need: Team ID, Key ID, `.p8` private key → generate a Developer Token JWT (valid up to 6 months)
-- Auth flow: open hosted MusicKit JS page in `expo-web-browser` → user authorizes → redirects to `musicbridge://apple-music-callback?token=<userToken>`
+- Need: Team ID, Key ID, `.p8` private key in Supabase secrets
+- Need: MusicKit enabled on the Apple App ID for `com.techolon.musicbridge`
+- Need: provisioning profile regenerated after enabling MusicKit
+- Deploy: `supabase functions deploy apple-music-auth`
+- Native module: `modules/apple-music/index.ts` + `modules/apple-music/ios/AppleMusicModule.swift`
+- Podspec: `modules/apple-music/ios/AppleMusicNative.podspec`
+- Auth flow: native iOS authorization prompt via MusicKit / StoreKit → authenticated POST to `apple-music-auth` for a short-lived developer token → exchange for Music user token
+- `apple-music-auth` should stay behind Supabase JWT verification for the current native flow. It should accept authenticated POSTs only, validate the Supabase user, validate the request body strictly, and return only `token` + `expiresAt`
 - All API requests need two headers: `Authorization: Bearer <DEVELOPER_TOKEN>` + `Music-User-Token: <userToken>`
+- Playlist conversion is handled by `supabase/functions/convert-playlist/`
+- Successful Apple Music playlist conversion should use a direct Apple Music URL only when Apple exposes one: prefer `attributes.url`, then the library playlist's `catalog` relationship URL when present. If Apple doesn't expose a direct URL for the created library playlist, fall back to opening the user's Apple Music Library and tell the user the playlist may take a moment to appear. Do not guess a `music.apple.com/library/playlist/{id}` URL from the raw library playlist ID
 - Artwork URLs contain `{w}` and `{h}` placeholders — use `resolveArtworkUrl(url, size)` to fill them
+- Storefront is resolved natively via `requestStorefrontCountryCode()` and cached in AsyncStorage
+- Shared-song opens should use storefront-local resolution by title/artist first, then fall back to a raw Apple Music ID
+- Current Apple Music open behavior: opens to the album page with the target song selected, not a standalone song detail screen
 
 See `SETUP.md` for full credential setup steps.
 

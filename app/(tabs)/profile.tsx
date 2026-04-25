@@ -111,12 +111,15 @@ export default function Profile() {
     getFollowCounts(user.id).then(setFollowCounts).catch(() => {});
 
     // Count items this user has shared
-    supabase
-      .from('shared_items')
-      .select('id', { count: 'exact', head: true })
-      .eq('sender_id', user.id)
-      .then(({ count }) => setSharedCount(count ?? 0))
-      .catch(() => {});
+    void (async () => {
+      try {
+        const { count } = await supabase
+          .from('shared_items')
+          .select('id', { count: 'exact', head: true })
+          .eq('sender_id', user.id);
+        setSharedCount(count ?? 0);
+      } catch {}
+    })();
   }, [user, getFollowCounts]);
 
   // Keep counts in sync with follow changes
@@ -257,6 +260,10 @@ export default function Profile() {
       if (user.spotify_access_token) {
         const sp = await Spotify.getUserPlaylists(user.id);
         playlists.push(...sp);
+      }
+      if (user.apple_music_user_token) {
+        const am = await AppleMusic.getUserPlaylists(user.id);
+        playlists.push(...am);
       }
       if (user.youtube_access_token) {
         const yt = await YouTubeMusic.getUserPlaylists(user.id);

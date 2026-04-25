@@ -22,6 +22,7 @@ import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
 import { LibraryPlaylist, LibraryTrack, Track, User } from '../types';
 import { withTimeout } from '../lib/utils';
+import { sendPushNotification } from '../lib/notifications';
 
 interface LibraryPlaylistDetailModalProps {
   playlist: LibraryPlaylist | null;
@@ -39,10 +40,12 @@ function toTrackPayload(t: LibraryTrack): Track {
   };
 }
 
-async function openTrackInService(track: LibraryTrack) {
+async function openTrackInService(userId: string | undefined, track: LibraryTrack) {
   let urls: string[] = [];
   if (track.service === 'spotify') urls = Spotify.getSpotifyDeepLink(track.id);
-  else if (track.service === 'apple_music') urls = AppleMusic.getAppleMusicDeepLink(track.id);
+  else if (track.service === 'apple_music' && userId) {
+    urls = await AppleMusic.resolveAppleMusicTrackLinks(userId, track.title, track.artist, track.id);
+  }
   else if (track.service === 'youtube_music') urls = YouTubeMusic.getYouTubeMusicDeepLink(track.id);
   for (const url of urls) {
     try {
@@ -58,7 +61,7 @@ export function LibraryPlaylistDetailModal({
   onClose,
 }: LibraryPlaylistDetailModalProps) {
   const { user } = useAuth();
-  const { mutualFollows: friends } = useFollows();
+  const { mutualFollows: friends, refresh: refreshFollows } = useFollows();
 
   const [tracks, setTracks] = useState<LibraryTrack[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
@@ -132,12 +135,14 @@ export function LibraryPlaylistDetailModal({
   }, [visible, playlist?.id, user?.id, user?.primary_service]);
 
   const openPickerForPlaylist = () => {
+    void refreshFollows();
     setPendingTrack(null);
     setPickerMessage('');
     setPickerVisible(true);
   };
 
   const openPickerForTrack = (track: LibraryTrack) => {
+    void refreshFollows();
     setPendingTrack(track);
     setPickerMessage('');
     setPickerVisible(true);
@@ -168,7 +173,7 @@ export function LibraryPlaylistDetailModal({
       if (trackSnapshot) {
         // ── Share a single song ──────────────────────────────────────────
         const payload = toTrackPayload(trackSnapshot);
-        const { error } = await supabase
+        const { data: insertedItem, error } = await supabase
           .from('shared_items')
           .insert({
             sender_id: user.id,
@@ -182,13 +187,16 @@ export function LibraryPlaylistDetailModal({
             youtube_music_id: payload.youtube_music_id,
             message: msgSnapshot || null,
           })
+          .select('id')
+          .single()
           .abortSignal(abort.signal);
         if (error) throw error;
+        sendPushNotification(friend.id, 'new_share', insertedItem.id);
         Alert.alert('Sent!', `Shared "${trackSnapshot.title}" with ${friend.display_name}.`);
       } else {
         // ── Share whole playlist ─────────────────────────────────────────
         const trackPayloads = tracksSnapshot.map(toTrackPayload);
-        const { error } = await supabase
+        const { data: insertedItem, error } = await supabase
           .from('shared_items')
           .insert({
             sender_id: user.id,
@@ -203,8 +211,11 @@ export function LibraryPlaylistDetailModal({
             tracks: trackPayloads,
             message: msgSnapshot || null,
           })
+          .select('id')
+          .single()
           .abortSignal(abort.signal);
         if (error) throw error;
+        sendPushNotification(friend.id, 'new_share', insertedItem.id);
         Alert.alert(
           'Sent!',
           `Shared "${playlist.name}" (${tracksSnapshot.length} tracks) with ${friend.display_name}.`,
@@ -230,7 +241,7 @@ export function LibraryPlaylistDetailModal({
     <View style={styles.trackRow}>
       <TouchableOpacity
         style={styles.trackTappableArea}
-        onPress={() => openTrackInService(track)}
+        onPress={() => openTrackInService(user?.id, track)}
         activeOpacity={0.7}
       >
         {track.coverUrl ? (

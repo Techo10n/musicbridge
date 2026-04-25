@@ -70,8 +70,8 @@
 1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new project
 2. Go to **APIs & Services → Library** and enable **YouTube Data API v3**
 3. Go to **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**
-   - For iOS: choose **iOS**, set bundle ID to `com.musicbridge.app`
-   - For Android: choose **Android**, set package name to `com.musicbridge.app`
+   - For iOS: choose **iOS**, set bundle ID to `com.techolon.musicbridge`
+   - For Android: choose **Android**, set package name to `com.techolon.musicbridge`
 4. Add redirect URI: `musicbridge://youtube-callback`
 5. Copy the **Client ID**:
    - `EXPO_PUBLIC_GOOGLE_CLIENT_ID` = Client ID
@@ -87,71 +87,57 @@ Apple Music auth is different from the others. It uses **MusicKit**, not standar
 #### Step 1 — Apple Developer Setup
 1. Go to [developer.apple.com](https://developer.apple.com) and sign in ($99/year membership required)
 2. Go to **Certificates, Identifiers & Profiles → Identifiers**
-3. Find or create your App ID (`com.musicbridge.app`) and enable **MusicKit** capability
+3. Find or create your App ID (`com.techolon.musicbridge`) and enable **MusicKit** capability
 4. Go to **Keys → Create a Key**, enable **Media Services (MusicKit)**, and download the `.p8` private key file
 5. Note your **Team ID** (top right of your developer account):
    - `EXPO_PUBLIC_APPLE_TEAM_ID` = Team ID
 
-#### Step 2 — Generate a Developer Token
-Apple Music API calls require a signed JWT called a **Developer Token**. You generate this using your `.p8` key.
+#### Step 2 — Deploy Apple Music Auth
 
-You can generate one using a simple Node.js script (run this once, tokens last up to 6 months):
+Apple Music API calls require a signed **Developer Token** JWT. MusicBridge generates this server-side in the `apple-music-auth` Supabase Edge Function so your `.p8` private key is never embedded in the app.
 
-```js
-const jwt = require('jsonwebtoken');
-const fs = require('fs');
+Set Supabase secrets:
 
-const privateKey = fs.readFileSync('./AuthKey_XXXXXXXXXX.p8');
-
-const token = jwt.sign({}, privateKey, {
-  algorithm: 'ES256',
-  expiresIn: '180d',
-  issuer: 'YOUR_TEAM_ID',        // from Apple Developer account
-  header: {
-    alg: 'ES256',
-    kid: 'YOUR_KEY_ID',          // the 10-char ID of the key you created
-  },
-});
-
-console.log(token);
+```bash
+supabase secrets set APPLE_TEAM_ID=<your-team-id>
+supabase secrets set APPLE_KEY_ID=<your-key-id>
+supabase secrets set APPLE_PRIVATE_KEY="$(cat AuthKey_<your-key-id>.p8)"
 ```
 
-Set the output as:
-- `EXPO_PUBLIC_APPLE_DEVELOPER_TOKEN` = the generated JWT
+Deploy the token-signing function with default JWT verification enabled. The current Apple Music flow is native iOS auth, so `apple-music-auth` is invoked by the authenticated app via `supabase.functions.invoke(...)` and does not need a public browser endpoint.
 
-> ⚠️ For production, generate this token server-side so your `.p8` private key is never exposed in the app or in source control.
-
-#### Step 3 — Host a MusicKit Auth Page
-
-The app opens a web page to handle the Apple Music user authorization flow. You need to host this page yourself (Vercel, Netlify, or any static host works).
-
-Create an `index.html` like this:
-
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"></script>
-</head>
-<body>
-<script>
-  document.addEventListener('musickitloaded', async () => {
-    await MusicKit.configure({
-      developerToken: 'YOUR_DEVELOPER_TOKEN_HERE',
-      app: { name: 'MusicBridge', build: '1.0' },
-    });
-    const music = MusicKit.getInstance();
-    const userToken = await music.authorize();
-    // Redirect back to the app with the user token
-    window.location.href = `musicbridge://apple-music-callback?token=${userToken}`;
-  });
-</script>
-</body>
-</html>
+```bash
+supabase functions deploy apple-music-auth
+supabase secrets set SPOTIFY_CLIENT_ID=<spotify-client-id>
+supabase secrets set GOOGLE_CLIENT_ID=<google-client-id>
+supabase functions deploy convert-playlist
 ```
 
-Set the hosted URL as:
-- `EXPO_PUBLIC_APPLE_MUSIC_AUTH_URL` = your hosted page URL (e.g. `https://musicbridge-auth.vercel.app`)
+Security checklist for `apple-music-auth`:
+- Keep Supabase JWT verification enabled. Do not use `--no-verify-jwt` for the current native flow.
+- Accept authenticated `POST` requests only, and validate the Supabase user inside the function before returning a token.
+- Validate the request body strictly. MusicBridge only accepts `{ "action": "token" }`.
+- Return only the short-lived developer token payload (`token`, `expiresAt`). Never return Apple private key material or other secrets.
+- Keep token TTL short and log/monitor unusual request volume.
+
+If you later reintroduce a separate public browser-based MusicKit JS page, treat it as a new public endpoint and add compensating controls before considering `--no-verify-jwt`: rate limiting, strict origin/referrer allowlists, CSRF/nonces, strict input validation, and minimal responses with no sensitive data.
+
+---
+
+## TestFlight Build
+
+1. In Apple Developer, create or confirm the explicit App ID `com.techolon.musicbridge` and enable MusicKit.
+2. In App Store Connect, create the iOS app record for `com.techolon.musicbridge`.
+3. Add the Expo public environment variables to EAS for production builds.
+4. Build and submit:
+
+```bash
+npx eas login
+npx eas build --platform ios --profile production
+npx eas submit --platform ios
+```
+
+After Apple processes the build, open App Store Connect → your app → TestFlight, create an internal testing group, and add yourself or selected App Store Connect users.
 
 ---
 

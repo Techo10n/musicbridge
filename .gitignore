@@ -46,6 +46,7 @@ yarn-error.*
 supabase/.temp
 
 # ai agent instructions
+AGENTS.md
 CLAUDE.md
 /.claude
 /.juno_task
