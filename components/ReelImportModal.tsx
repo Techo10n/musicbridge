@@ -62,8 +62,6 @@ function normalizeSongKey(song: Pick<ReelSong, 'title' | 'artist'>): string {
       .replace(/\s+/g, ' ')
       .trim();
 
-  const norm = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   return `${normalizeTitle(song.title)}::${normalizeArtist(song.artist)}`;
 }
 
