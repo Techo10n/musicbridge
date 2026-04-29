@@ -102,12 +102,12 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#2c2822',
     alignItems: 'center',
     justifyContent: 'center',
   },
   initials: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -115,13 +115,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   displayName: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 2,
   },
   username: {
-    color: '#666',
+    color: '#6a6258',
     fontSize: 13,
   },
   actions: {
@@ -130,18 +130,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   shareButton: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#2c2822',
     borderRadius: 8,
     paddingVertical: 7,
     paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#332e28',
   },
   shareButtonText: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 13,
     fontWeight: '600',
   },
   followButton: {
-    backgroundColor: '#fff',
+    backgroundColor: '#7C5BF4',
     borderRadius: 8,
     paddingVertical: 7,
     paddingHorizontal: 16,
@@ -149,14 +151,14 @@ const styles = StyleSheet.create({
   followingButton: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: '#3e3932',
   },
   followButtonText: {
-    color: '#000',
+    color: '#f5f3ff',
     fontSize: 13,
     fontWeight: '700',
   },
   followingButtonText: {
-    color: '#888',
+    color: '#8a8075',
   },
 });

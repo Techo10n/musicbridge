@@ -78,13 +78,15 @@ export function MusicServiceButton({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: '#26221d',
+    borderRadius: 14,
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#332e28',
   },
   left: {
     flexDirection: 'row',
@@ -104,25 +106,27 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   label: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 15,
     fontWeight: '600',
   },
   primaryBadge: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: 'rgba(124,91,244,0.15)',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(124,91,244,0.3)',
   },
   primaryText: {
-    color: '#888',
+    color: '#9b80f8',
     fontSize: 10,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   description: {
-    color: '#666',
+    color: '#8a8075',
     fontSize: 12,
   },
   button: {
@@ -133,19 +137,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   disconnectButton: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#2c2822',
     borderWidth: 1,
-    borderColor: '#3a3a3a',
+    borderColor: '#3e3932',
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   buttonText: {
-    color: '#fff',
+    color: '#f5f3ff',
     fontSize: 13,
     fontWeight: '600',
   },
   disconnectText: {
-    color: '#888',
+    color: '#8a8075',
   },
 });

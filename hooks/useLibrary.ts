@@ -7,6 +7,8 @@ import * as YouTubeMusic from '../lib/youtubeMusic';
 
 export function useLibrary() {
   const { user } = useAuth();
+  const userId = user?.id;
+  const primaryService = user?.primary_service;
   const [playlists, setPlaylists] = useState<LibraryPlaylist[]>([]);
   const [savedTracks, setSavedTracks] = useState<LibraryTrack[]>([]);
   const [followedArtists, setFollowedArtists] = useState<LibraryArtist[]>([]);
@@ -14,19 +16,19 @@ export function useLibrary() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchLibrary = useCallback(async () => {
-    if (!user?.primary_service) return;
+    if (!userId || !primaryService) return;
     setLoading(true);
     setError(null);
 
     try {
-      const service = user.primary_service as MusicService;
+      const service = primaryService as MusicService;
 
       switch (service) {
         case 'spotify': {
           const [p, count, a] = await Promise.all([
-            Spotify.getUserPlaylists(user.id),
-            Spotify.getSavedTracksCount(user.id),
-            Spotify.getFollowedArtists(user.id),
+            Spotify.getUserPlaylists(userId),
+            Spotify.getSavedTracksCount(userId),
+            Spotify.getFollowedArtists(userId),
           ]);
           const likedSongs: LibraryPlaylist = {
             id: '__liked_songs__',
@@ -42,8 +44,8 @@ export function useLibrary() {
         }
         case 'apple_music': {
           const [p, t] = await Promise.all([
-            AppleMusic.getUserPlaylists(user.id),
-            AppleMusic.getSavedSongs(user.id),
+            AppleMusic.getUserPlaylists(userId),
+            AppleMusic.getSavedSongs(userId),
           ]);
           setPlaylists(p);
           setSavedTracks(t);
@@ -52,8 +54,8 @@ export function useLibrary() {
         }
         case 'youtube_music': {
           const [p, channels] = await Promise.all([
-            YouTubeMusic.getUserPlaylists(user.id),
-            YouTubeMusic.getSubscribedChannels(user.id, 50),
+            YouTubeMusic.getUserPlaylists(userId),
+            YouTubeMusic.getSubscribedChannels(userId, 50),
           ]);
           const likedMusic: LibraryPlaylist = {
             id: '__liked_music__',
@@ -79,30 +81,34 @@ export function useLibrary() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [primaryService, userId]);
 
   const getPlaylistTracks = useCallback(
-    async (playlistId: string): Promise<LibraryTrack[]> => {
-      if (!user?.primary_service) return [];
-      const service = user.primary_service as MusicService;
+    async (playlistId: string, maxTracks?: number): Promise<LibraryTrack[]> => {
+      if (!userId || !primaryService) return [];
+      const service = primaryService as MusicService;
 
       switch (service) {
         case 'spotify':
           if (playlistId === '__liked_songs__') {
             const tracks: LibraryTrack[] = [];
-            await Spotify.streamSavedTracks(user.id, (page) => tracks.push(...page), () => false);
+            await Spotify.streamSavedTracks(
+              userId,
+              (page) => tracks.push(...page.slice(0, Math.max(0, (maxTracks ?? Infinity) - tracks.length))),
+              () => maxTracks !== undefined && tracks.length >= maxTracks,
+            );
             return tracks;
           }
-          return Spotify.getPlaylistTracks(user.id, playlistId);
+          return Spotify.getPlaylistTracks(userId, playlistId, maxTracks);
         case 'apple_music':
-          return AppleMusic.getPlaylistTracks(user.id, playlistId);
+          return AppleMusic.getPlaylistTracks(userId, playlistId, maxTracks);
         case 'youtube_music':
-          return YouTubeMusic.getPlaylistTracks(user.id, playlistId);
+          return YouTubeMusic.getPlaylistTracks(userId, playlistId, maxTracks);
         default:
           return [];
       }
     },
-    [user],
+    [primaryService, userId],
   );
 
   return {

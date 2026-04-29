@@ -205,7 +205,7 @@ export default function Register() {
         <TextInput
           style={styles.input}
           placeholder="Display Name"
-          placeholderTextColor="#555"
+          placeholderTextColor="#5a5248"
           value={displayName}
           onChangeText={setDisplayName}
           autoCapitalize="words"
@@ -214,7 +214,7 @@ export default function Register() {
         <TextInput
           style={styles.input}
           placeholder="Username (e.g. jsmith)"
-          placeholderTextColor="#555"
+          placeholderTextColor="#5a5248"
           value={username}
           onChangeText={(t) => setUsername(t.replace(/[^a-zA-Z0-9_]/g, ''))}
           autoCapitalize="none"
@@ -224,7 +224,7 @@ export default function Register() {
         <TextInput
           style={styles.input}
           placeholder="Email"
-          placeholderTextColor="#555"
+          placeholderTextColor="#5a5248"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
@@ -235,7 +235,7 @@ export default function Register() {
         <TextInput
           style={styles.input}
           placeholder="Password (min 6 characters)"
-          placeholderTextColor="#555"
+          placeholderTextColor="#5a5248"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -271,7 +271,7 @@ export default function Register() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f0f0f',
+    backgroundColor: '#1a1813',
   },
   inner: {
     flexGrow: 1,
@@ -283,45 +283,45 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 38,
     fontWeight: '800',
-    color: '#ffffff',
+    color: '#f5f0e8',
     letterSpacing: -1.5,
     marginBottom: 8,
   },
   stepTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#f5f0e8',
     marginBottom: 8,
     textAlign: 'center',
   },
   stepSubtitle: {
     fontSize: 14,
-    color: '#888',
+    color: '#8a8075',
     textAlign: 'center',
     marginBottom: 32,
     lineHeight: 20,
   },
   error: {
-    color: '#ff4444',
+    color: '#e8704a',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
   input: {
     width: '100%',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#26221d',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 18,
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: '#332e28',
   },
   button: {
     width: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#7C5BF4',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -332,7 +332,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   buttonText: {
-    color: '#000',
+    color: '#f5f3ff',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -340,17 +340,16 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   linkText: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 14,
   },
   linkHighlight: {
-    color: '#ffffff',
+    color: '#9b80f8',
     fontWeight: '600',
   },
-  // ── Service selection step ──
   serviceCard: {
     width: '100%',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#26221d',
     borderRadius: 12,
     borderWidth: 1.5,
     padding: 18,
@@ -368,13 +367,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   serviceLabel: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 2,
   },
   serviceDescription: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 13,
   },
 });

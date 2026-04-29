@@ -6,8 +6,8 @@ import { ActivityIndicator, View } from 'react-native';
  */
 export default function Index() {
   return (
-    <View style={{ flex: 1, backgroundColor: '#0f0f0f', alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator color="#ffffff" size="large" />
+    <View style={{ flex: 1, backgroundColor: '#1a1813', alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator color="#7C5BF4" size="large" />
     </View>
   );
 }

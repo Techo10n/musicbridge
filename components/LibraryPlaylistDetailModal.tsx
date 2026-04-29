@@ -28,6 +28,7 @@ interface LibraryPlaylistDetailModalProps {
   playlist: LibraryPlaylist | null;
   visible: boolean;
   onClose: () => void;
+  preloadedTracks?: LibraryTrack[] | null;
 }
 
 function toTrackPayload(t: LibraryTrack): Track {
@@ -59,6 +60,7 @@ export function LibraryPlaylistDetailModal({
   playlist,
   visible,
   onClose,
+  preloadedTracks,
 }: LibraryPlaylistDetailModalProps) {
   const { user } = useAuth();
   const { mutualFollows: friends, refresh: refreshFollows } = useFollows();
@@ -85,6 +87,10 @@ export function LibraryPlaylistDetailModal({
       setStreamingMore(false);
       setTracks([]);
       try {
+        if (preloadedTracks) {
+          setTracks(preloadedTracks);
+          return;
+        }
         const service = user.primary_service;
         if (service === 'spotify' && playlist.id === '__liked_songs__') {
           setStreamingMore(true);
@@ -132,7 +138,7 @@ export function LibraryPlaylistDetailModal({
     })();
 
     return () => { cancelled = true; };
-  }, [visible, playlist?.id, user?.id, user?.primary_service]);
+  }, [preloadedTracks, visible, playlist?.id, user?.id, user?.primary_service]);
 
   const openPickerForPlaylist = () => {
     void refreshFollows();
@@ -166,54 +172,59 @@ export function LibraryPlaylistDetailModal({
     closePicker();
     setSharing(true);
 
-    const abort = new AbortController();
-    const timeoutId = setTimeout(() => abort.abort(), 15_000);
-
     try {
       if (trackSnapshot) {
         // ── Share a single song ──────────────────────────────────────────
         const payload = toTrackPayload(trackSnapshot);
-        const { data: insertedItem, error } = await supabase
-          .from('shared_items')
-          .insert({
-            sender_id: user.id,
-            recipient_id: friend.id,
-            type: 'song',
-            title: trackSnapshot.title,
-            artist: trackSnapshot.artist,
-            cover_image_url: trackSnapshot.coverUrl || '',
-            spotify_id: payload.spotify_id,
-            apple_music_id: payload.apple_music_id,
-            youtube_music_id: payload.youtube_music_id,
-            message: msgSnapshot || null,
-          })
-          .select('id')
-          .single()
-          .abortSignal(abort.signal);
+        const { data: insertedItem, error } = await withTimeout(
+          Promise.resolve(
+            supabase
+              .from('shared_items')
+              .insert({
+                sender_id: user.id,
+                recipient_id: friend.id,
+                type: 'song',
+                title: trackSnapshot.title,
+                artist: trackSnapshot.artist,
+                cover_image_url: trackSnapshot.coverUrl || '',
+                spotify_id: payload.spotify_id,
+                apple_music_id: payload.apple_music_id,
+                youtube_music_id: payload.youtube_music_id,
+                message: msgSnapshot || null,
+              })
+              .select('id')
+              .single(),
+          ),
+          15_000,
+        );
         if (error) throw error;
         sendPushNotification(friend.id, 'new_share', insertedItem.id);
         Alert.alert('Sent!', `Shared "${trackSnapshot.title}" with ${friend.display_name}.`);
       } else {
         // ── Share whole playlist ─────────────────────────────────────────
         const trackPayloads = tracksSnapshot.map(toTrackPayload);
-        const { data: insertedItem, error } = await supabase
-          .from('shared_items')
-          .insert({
-            sender_id: user.id,
-            recipient_id: friend.id,
-            type: 'playlist',
-            title: playlist.name,
-            artist: null,
-            cover_image_url: playlist.coverUrl || '',
-            spotify_playlist_id: playlist.service === 'spotify' ? playlist.id : null,
-            apple_music_playlist_id: playlist.service === 'apple_music' ? playlist.id : null,
-            youtube_music_playlist_id: playlist.service === 'youtube_music' ? playlist.id : null,
-            tracks: trackPayloads,
-            message: msgSnapshot || null,
-          })
-          .select('id')
-          .single()
-          .abortSignal(abort.signal);
+        const { data: insertedItem, error } = await withTimeout(
+          Promise.resolve(
+            supabase
+              .from('shared_items')
+              .insert({
+                sender_id: user.id,
+                recipient_id: friend.id,
+                type: 'playlist',
+                title: playlist.name,
+                artist: null,
+                cover_image_url: playlist.coverUrl || '',
+                spotify_playlist_id: playlist.service === 'spotify' ? playlist.id : null,
+                apple_music_playlist_id: playlist.service === 'apple_music' ? playlist.id : null,
+                youtube_music_playlist_id: playlist.service === 'youtube_music' ? playlist.id : null,
+                tracks: trackPayloads,
+                message: msgSnapshot || null,
+              })
+              .select('id')
+              .single(),
+          ),
+          15_000,
+        );
         if (error) throw error;
         sendPushNotification(friend.id, 'new_share', insertedItem.id);
         Alert.alert(
@@ -223,16 +234,14 @@ export function LibraryPlaylistDetailModal({
         onClose();
       }
     } catch (err: any) {
-      const timedOut = abort.signal.aborted;
       Alert.alert(
         'Error',
-        timedOut
+        err instanceof Error && err.message === 'timeout'
           ? 'Share timed out. Check your connection and try again.'
           : 'Failed to share. Please try again.',
       );
       console.error('[LibraryPlaylistDetailModal] share error:', err);
     } finally {
-      clearTimeout(timeoutId);
       setSharing(false);
     }
   };
@@ -288,9 +297,9 @@ export function LibraryPlaylistDetailModal({
           ) : (
             <View style={[styles.cover, styles.coverPlaceholder]}>
               <Ionicons
-                name={(playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? 'heart' : 'musical-notes'}
+                name={playlist.id === '__all_songs__' ? 'albums' : (playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? 'heart' : 'musical-notes'}
                 size={28}
-                color={(playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? (playlist.id === '__liked_music__' ? '#FF0000' : '#1DB954') : '#555'}
+                color={playlist.id === '__all_songs__' ? '#7C5BF4' : (playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? (playlist.id === '__liked_music__' ? '#FF0000' : '#1DB954') : '#555'}
               />
             </View>
           )}
@@ -375,7 +384,7 @@ export function LibraryPlaylistDetailModal({
                 <TextInput
                   style={styles.pickerMessageInput}
                   placeholder="Add a message (optional)"
-                  placeholderTextColor="#555"
+                  placeholderTextColor="#5a5248"
                   value={pickerMessage}
                   onChangeText={setPickerMessage}
                   maxLength={200}
@@ -425,7 +434,7 @@ export function LibraryPlaylistDetailModal({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f0f0f',
+    backgroundColor: '#1a1813',
   },
   header: {
     flexDirection: 'row',
@@ -433,13 +442,13 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: '#332e28',
   },
   cover: {
     width: 72,
     height: 72,
     borderRadius: 10,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#332e28',
   },
   coverPlaceholder: {
     alignItems: 'center',
@@ -449,20 +458,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   playlistTitle: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 4,
   },
   trackCount: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 13,
   },
   closeButton: {
     padding: 4,
   },
   closeText: {
-    color: '#666',
+    color: '#5a5248',
     fontSize: 18,
   },
   list: {
@@ -485,27 +494,27 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 6,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#332e28',
   },
   trackCoverPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   trackIndexFallback: {
-    color: '#555',
+    color: '#8a8075',
     fontSize: 13,
   },
   trackInfo: {
     flex: 1,
   },
   trackTitle: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 14,
     fontWeight: '500',
     marginBottom: 2,
   },
   trackArtist: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 13,
   },
   shareTrackButton: {
@@ -513,11 +522,11 @@ const styles = StyleSheet.create({
   },
   separator: {
     height: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#332e28',
     marginLeft: 72,
   },
   emptyText: {
-    color: '#555',
+    color: '#8a8075',
     fontSize: 14,
     textAlign: 'center',
     marginTop: 40,
@@ -525,10 +534,10 @@ const styles = StyleSheet.create({
   footer: {
     padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#1a1a1a',
+    borderTopColor: '#332e28',
   },
   shareButton: {
-    backgroundColor: '#fff',
+    backgroundColor: '#7C5BF4',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -540,23 +549,22 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   shareButtonText: {
-    color: '#000',
+    color: '#f5f3ff',
     fontSize: 16,
     fontWeight: '700',
   },
-  // Inline friend picker overlay
   pickerOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
     justifyContent: 'flex-end',
   },
   pickerSheet: {
-    backgroundColor: '#0f0f0f',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: '#201d18',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     maxHeight: '75%',
     borderTopWidth: 1,
-    borderTopColor: '#2a2a2a',
+    borderTopColor: '#332e28',
   },
   pickerHeader: {
     flexDirection: 'row',
@@ -564,10 +572,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: '#332e28',
   },
   pickerTitle: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 18,
     fontWeight: '700',
     flex: 1,
@@ -578,17 +586,17 @@ const styles = StyleSheet.create({
     paddingTop: 14,
   },
   pickerMessageInput: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
+    backgroundColor: '#26221d',
+    borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 14,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: '#332e28',
   },
   pickerSectionLabel: {
-    color: '#555',
+    color: '#8a8075',
     fontSize: 12,
     fontWeight: '600',
     textTransform: 'uppercase',
@@ -601,7 +609,7 @@ const styles = StyleSheet.create({
     flexGrow: 0,
   },
   pickerEmptyText: {
-    color: '#555',
+    color: '#8a8075',
     fontSize: 14,
     textAlign: 'center',
     marginTop: 24,
@@ -618,12 +626,12 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#2c2822',
     alignItems: 'center',
     justifyContent: 'center',
   },
   pickerAvatarText: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -631,13 +639,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pickerFriendName: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 2,
   },
   pickerFriendUsername: {
-    color: '#666',
+    color: '#6a6258',
     fontSize: 13,
   },
 });

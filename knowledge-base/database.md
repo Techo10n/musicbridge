@@ -11,6 +11,8 @@ MusicBridge uses **Supabase** (hosted PostgreSQL) with Row Level Security.
 | `001_initial.sql` | Full schema: enums, tables, RLS policies, indexes, auth trigger |
 | `003_conversion_progress.sql` | Adds `conversion_status` + `tracks_processed` to `shared_items` |
 | `004_follows_and_profile.sql` | Drops `friendships`, creates `follows` (directed), adds `bio`/`favorite_song` to `users`, creates `avatars` storage bucket |
+| `005_push_tokens.sql` | Push token storage for Expo notifications |
+| `006_reel_import_history.sql` | Durable saved reel song-list history |
 
 ---
 
@@ -81,6 +83,42 @@ Unique constraint on `(follower_id, following_id)`. Check constraint: `follower_
 | `created_at` | timestamptz | |
 
 **RLS**: Sender can insert. Recipient can read and update `is_opened`.
+
+---
+
+### `public.reel_imports`
+
+Saved reel import history, one row per saved reel URL per user.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | |
+| `user_id` | uuid | FK → users.id |
+| `title` | text | generated display title |
+| `reel_url` | text | source reel URL |
+| `created_at` | timestamptz | |
+
+Unique constraint on `(user_id, reel_url)`.
+
+**RLS**: Owner-only select/insert/update/delete.
+
+### `public.reel_import_songs`
+
+Ordered songs scraped from a saved reel import.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | |
+| `reel_import_id` | uuid | FK → reel_imports.id |
+| `position` | int | display order |
+| `title` | text | |
+| `artist` | text | |
+| `cover_url` | text | nullable |
+| `created_at` | timestamptz | |
+
+Unique constraint on `(reel_import_id, position)`.
+
+**RLS**: Owner-only through the parent `reel_imports` row.
 
 ---
 

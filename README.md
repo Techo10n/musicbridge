@@ -29,6 +29,7 @@ npx expo start --dev-client  # Metro bundler for the custom iOS dev client
 npx expo run:ios             # iOS native build
 npx expo run:android         # Android native build
 npm run typecheck            # app TypeScript check (excludes Deno edge functions)
+supabase db push             # apply new Supabase migrations to linked dev project
 ```
 
 See `SETUP.md` for full credential setup (Supabase, Spotify, Google, Apple Music).
@@ -47,10 +48,13 @@ musicbridge/
 │   │   └── register.tsx        2-step registration: credentials → primary service → optional immediate service connection
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar (Ionicons)
-│       ├── home.tsx            Feed of received shared items
-│       ├── friends.tsx         People tab (following/followers), user search
-│       ├── library.tsx         User's streaming library
-│       └── profile.tsx         Profile + service connections + sign out
+│       ├── home.tsx            Feed of received shared items with working inbox/following/mixes filters, story posting/reactions, editable story captions, and top-bar search/notifications/share actions
+│       ├── friends.tsx         People tab with auto-search, suggested follows, and data-based taste match scores
+│       ├── library.tsx         User's streaming library with sort controls, All Songs/Reel Songs pseudo-playlists, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
+│       ├── notifications.tsx   Notification inbox for recent shares and new followers
+│       ├── profile.tsx         Profile + avatar picker + service connections, quick connect/share profile, favorite-song search + sign out
+│       ├── settings.tsx        Settings screen with keyboard-aware profile editing, avatar upload, password reset, toggles, and placeholder legal/rating rows
+│       └── share.tsx           Center-tab reel paste screen for manual reel identification
 ├── components/
 │   ├── SongCard.tsx
 │   ├── PlaylistCard.tsx
@@ -60,15 +64,17 @@ musicbridge/
 │   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
 │   ├── ReelImportBanner.tsx    Slim banner shown when a reel URL is in the clipboard
-│   ├── ReelImportModal.tsx     Full reel-import flow: analyze → song card → share
+│   ├── ReelImportModal.tsx     Full reel-import flow: analyze → song list → save/share/open; best-match previews are tappable and YTM opens fall back to web search if no safe song match exists
+│   ├── StoryViewer.tsx         Story playback with reactions, open-in-service, and placeholder more/reply handling
 │   ├── MusicServiceButton.tsx
-│   └── ServiceBadge.tsx
+│   ├── ServiceBadge.tsx
+│   └── ui.tsx                  Shared app bar, avatar, chip, icon-button, and cover-art primitives
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
-│   ├── useFollows.ts
+│   ├── useFollows.ts           Following/follower graph, search, and suggested users
 │   ├── useSharedItems.ts       Inbox fetch + realtime insert/update refresh
-│   ├── useLibrary.ts           Playlists, saved tracks, followed artists; lazy track loading
-│   ├── useClipboardReel.ts     Clipboard polling for reel URLs; fires on mount + foreground
+│   ├── useLibrary.ts           Playlists, saved tracks, followed artists; bounded/lazy playlist-track loading
+│   ├── useClipboardReel.ts     Clipboard polling for reel URLs after auth hydration; resets dismissed/pending reel state per signed-in user
 │   └── useNotifications.ts     Push registration + tap handler
 ├── lib/
 │   ├── supabase.ts
@@ -77,6 +83,7 @@ musicbridge/
 │   ├── youtubeMusic.ts
 │   ├── notifications.ts        Register/unregister tokens, sendPushNotification helper
 │   ├── reelParser.ts           parseReelUrl, isReelUrl, platform/shortcode types
+│   ├── theme.ts                Shared colors and radius tokens
 │   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle()
 ├── modules/
 │   └── apple-music/
@@ -116,6 +123,7 @@ Email + password via `supabase.auth.signInWithPassword`. Sessions persisted in A
 
 Signup is a 2-step flow: credentials first, then primary-service selection. After the user picks a primary service, the app immediately offers to connect that service before routing to Home.
 If a Spotify refresh token has gone bad, the app shows a reconnect prompt on the next login and can route the user straight to Profile to reconnect.
+Reel import, clipboard polling, and push-token registration all wait for hydrated auth/session state before making Supabase-backed requests so account switching does not race session transport.
 
 ### Streaming Service OAuth
 
@@ -143,7 +151,7 @@ Spotify + YouTube tokens auto-refresh when within 60s of expiry. Apple Music tok
 | `searchTracks` | Free-form search (10 results) |
 | `createPlaylist` | Create + batch-add tracks |
 | `getUserPlaylists` | All pages (50/page) |
-| `getPlaylistTracks` | All pages (100/page) |
+| `getPlaylistTracks` | Playlist tracks with optional max-track cap for bounded library search preloads; all pages when uncapped |
 | `getSavedTracks` | All pages (50/page) |
 | `getFollowedArtists` | Followed artists |
 
@@ -162,7 +170,7 @@ Requires Apple Developer membership with MusicKit enabled for the app's bundle I
 | `searchTracks` | Free-form catalog search |
 | `createPlaylist` | Create a playlist in the user's Apple Music library and return Apple Music's canonical playlist URL when available |
 | `getUserPlaylists` | User library playlists |
-| `getPlaylistTracks` | Tracks in a library playlist |
+| `getPlaylistTracks` | Tracks in a library playlist with optional max-track cap for bounded library search preloads |
 | `getSavedSongs` | User library songs |
 | `resolveAppleMusicTrackLinks` | Resolve a storefront-local song URL before opening Apple Music |
 
@@ -176,11 +184,11 @@ Deep links: canonical Apple Music song URL with `music://` fallback. Shared-play
 |---|---|
 | `connectYouTubeMusic` | PKCE via Google OAuth |
 | `getYouTubeAccessToken` | Auto-refresh |
-| `searchTrack` | Music topic filtered (`topicId=/m/04rlf`, `videoCategoryId=10`) |
+| `searchTrack` | Topic-channel song match only; preserves non-Latin title matching and rejects zero-title-match guesses |
 | `searchTracks` | Free-form (25 results) |
 | `createPlaylist` | Create playlist, then add each video individually (no batch API) |
 | `getUserPlaylists` | `mine=true`, batch-check first video per playlist for Music category |
-| `getPlaylistTracks` | Paginated, Music category only |
+| `getPlaylistTracks` | Paginated, Music category only, with optional max-track cap for bounded library search preloads |
 | `getLikedMusic` | Playlist ID `LM` (YouTube Music Liked Music, not `LL` Liked Videos) |
 
 All library data is filtered to `videoCategoryId=10`. Artist names are extracted via a multi-stage pipeline: parse from video title (`"Artist - Song"` format) → recover from video description (IIP-DDS pipe format, `아티스트:` fields, `Performed by`) → fall back to tags → cleaned channel title. This correctly handles distributor/aggregator channels (e.g. "release", IIP-DDS) that upload OST content without being the performing artist.
@@ -243,6 +251,30 @@ Unique constraint on `(follower_id, following_id)` and check `(follower_id <> fo
 | `conversion_status` | text (added in migration 003) |
 | `tracks_processed` | int (added in migration 003) |
 
+### `public.reel_imports`
+
+| Column | Type |
+|---|---|
+| `id` | uuid |
+| `user_id` | uuid FK → users |
+| `title` | text |
+| `reel_url` | text |
+| `created_at` | timestamptz |
+
+Unique constraint on `(user_id, reel_url)`. RLS: owner-only. Stores saved reel song-list history.
+
+### `public.reel_import_songs`
+
+| Column | Type |
+|---|---|
+| `id` | uuid |
+| `reel_import_id` | uuid FK → reel_imports |
+| `position` | int |
+| `title`, `artist`, `cover_url` | text |
+| `created_at` | timestamptz |
+
+RLS: owner-only through the parent `reel_imports` row.
+
 ---
 
 ## Environment Variables
@@ -261,14 +293,16 @@ Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets
 
 ## Instagram Reel Import
 
-Users can share an Instagram reel URL to MusicBridge (or simply copy it to the clipboard). The app detects the URL on foreground and shows a slim banner.
+Users can paste an Instagram/TikTok reel URL from the center-tab share action, share an Instagram reel URL to MusicBridge, or copy it to the clipboard. The app detects clipboard/shared URLs on foreground and shows a slim banner for any authenticated user.
 
 **Flow**:
-1. `useClipboardReel` polls the clipboard on mount and every time the app returns to the foreground.
+1. `useClipboardReel` polls the clipboard once auth/profile hydration finishes and every time the app returns to the foreground after that. Dismissed/pending reel state is scoped to the current signed-in user so switching accounts does not suppress the same reel on another profile.
 2. `ReelImportBanner` appears at the top of every screen with a "Find Song" button.
-3. Tapping "Find Song" opens `ReelImportModal`, which calls the `parse-reel` Edge Function.
-4. On success: shows the identified song card (title, artist, cover art) with an inline friend picker and optional message field.
+3. Tapping "Find Song" or submitting the center-tab reel paste screen opens `ReelImportModal`, which calls the `parse-reel` Edge Function.
+4. On success: shows an ordered song list that can be opened in the user's primary service, saved as a reel list in Library, or shared with a friend. The live "Best match so far" card is also tappable.
 5. On failure: shows a brief error state and auto-closes after 2 seconds.
+
+Saved reel lists are persisted in Supabase via `reel_imports` + `reel_import_songs` (migration `006_reel_import_history.sql`). The app falls back to local storage only if those tables are unavailable.
 
 **Reel analysis pipeline**:
 

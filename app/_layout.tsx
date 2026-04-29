@@ -22,9 +22,10 @@ function RootLayoutNav() {
   const segments = useSegments();
   const router = useRouter();
   const navState = useRootNavigationState();
+  const reelUiReady = !!session && !!user && !loading;
 
   // Reel import — clipboard detection + banner + modal
-  const { pendingUrl, pendingSource, dismiss } = useClipboardReel();
+  const { pendingUrl, pendingSource, dismiss } = useClipboardReel(user?.id ?? null, reelUiReady);
   const [modalUrl, setModalUrl] = useState<string | null>(null);
   const [shownSpotifyReconnectPrompt, setShownSpotifyReconnectPrompt] = useState(false);
 
@@ -95,14 +96,14 @@ function RootLayoutNav() {
   }, [loading, router, session, shownSpotifyReconnectPrompt, user]);
 
   // Only show reel import UI when logged in
-  const showReelUI = !!session && !!user?.primary_service;
+  const showReelUI = reelUiReady;
 
   return (
     <View style={{ flex: 1 }}>
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#0f0f0f' },
+          contentStyle: { backgroundColor: '#1a1813' },
           animation: 'fade',
         }}
       />

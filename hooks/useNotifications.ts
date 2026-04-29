@@ -11,7 +11,7 @@ import { useAuth } from './useAuth';
  * Call once at the root layout level.
  */
 export function useNotifications() {
-  const { user } = useAuth();
+  const { session, user, loading } = useAuth();
   const router = useRouter();
   const responseListenerRef = useRef<ExpoNotifications.EventSubscription | null>(null);
 
@@ -35,9 +35,9 @@ export function useNotifications() {
 
   // Register / re-register whenever the user changes (login / account switch)
   useEffect(() => {
-    if (!user?.id) return;
+    if (!session || !user?.id || loading) return;
     registerForPushNotifications(user.id);
-  }, [user?.id]);
+  }, [loading, session, user?.id]);
 
   // Handle tapping a notification while the app is foregrounded or from cold start
   useEffect(() => {

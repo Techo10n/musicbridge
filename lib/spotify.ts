@@ -452,7 +452,7 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
 /**
  * Fetches all tracks in a Spotify playlist, paginating as needed.
  */
-export async function getPlaylistTracks(userId: string, playlistId: string): Promise<LibraryTrack[]> {
+export async function getPlaylistTracks(userId: string, playlistId: string, maxTracks?: number): Promise<LibraryTrack[]> {
   const accessToken = await getSpotifyAccessToken(userId);
   if (!accessToken) return [];
 
@@ -477,14 +477,16 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
           coverUrl: item.track.album.images[0]?.url ?? '',
           service: 'spotify',
         });
+        if (maxTracks !== undefined && tracks.length >= maxTracks) break;
       }
+      if (maxTracks !== undefined && tracks.length >= maxTracks) break;
       url = data.next;
     } catch {
       break;
     }
   }
 
-  return tracks;
+  return maxTracks === undefined ? tracks : tracks.slice(0, maxTracks);
 }
 
 /**

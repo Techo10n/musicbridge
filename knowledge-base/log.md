@@ -4,6 +4,42 @@ Append-only. Each entry records what changed and why.
 
 ---
 
+## 2026-04-26 — Full pixel-perfect screen rebuilds + new functionality
+
+Complete screen rebuilds matching the MusicBridge.html design exactly:
+- **Home**: story tray (post/view stories), Inbox/Following/Mixes tabs, feed rows with cover art + service badge overlay + message bubbles, emoji reaction system (🔥❤️🤯😮) with picker and Supabase reactions table
+- **People** (was Friends): taste match bars (color-coded by %), streak badges, Send button on mutual follows, Suggested tab
+- **Library**: filter chips (All/Spotify/Apple/Saved/Friends), design-matched playlist list, reel lists section
+- **Profile**: IG-style stats row, avatar with camera badge, bio + genre tags, service chips, favorite song banner, Wrapped stats card (2×2 grid), pinned playlists grid, "Public shares" list section with play button header
+- **Settings**: new screen — edit profile bottom sheet, privacy/notification toggles, account/app sections
+
+New functionality:
+- **Stories**: `hooks/useStories.ts` + `components/StoryViewer.tsx` — post stories from home, view full-screen with hollow-circle segment progress, react with emoji, open in native service
+- **Reactions**: `hooks/useReactions.ts` + inline emoji picker on every feed item (requires `shared_item_reactions` table)
+- **Reel import pipeline**: 4-step visualization (metadata → audio fingerprint → frame OCR → confidence merge) with live best-match preview card
+- **Playlist conversion**: cross-service diagram (source → shuffle → destination), live progress bar, per-track resolution status (matched/searching/queued)
+- **`components/ui.tsx`**: shared design primitives (Avatar, AppBar, Chip, CoverArt, IconBtn, TasteBar, ServiceDot, etc.)
+
+New Supabase tables needed (graceful fallback if missing):
+- `stories` (id, user_id, song_title, song_artist, song_cover_url, service, caption, expires_at)
+- `story_reactions` (story_id, user_id, emoji)
+- `shared_item_reactions` (item_id, user_id, emoji)
+
+---
+
+## 2026-04-26 — Full UI redesign from Claude Design handoff
+
+Implemented MusicBridge.html design across the entire app:
+- **Design tokens**: added `lib/theme.ts` with warm near-black bg (`#1a1813`) and bluish-purple primary accent (`#7C5BF4`); all hardcoded `#0f0f0f`/`#1a1a1a`/`#fff` replaced with warm palette.
+- **Tab bar**: redesigned from 4 tabs to 5 (Home, Library, Share, People, You); center Share tab is a purple pill with paper-plane icon; opens a CreateMenuModal bottom sheet. Created `app/(tabs)/share.tsx` as an empty route placeholder.
+- **Branding**: Home screen header now shows musicbridge wave-mark logo (purple square + `∿` glyph) + inline unread count pill.
+- **Cards**: SongCard/PlaylistCard unread indicator changed from white to purple; warm card background; slightly larger border-radius.
+- **ReelImportBanner**: purple-bordered banner with purple "Find Song" button.
+- **Buttons/CTAs**: primary action buttons app-wide changed from white → purple; auth screens, SaveProfile, AddToLibrary, Follow, etc.
+- **All screens**: home, library, friends, profile, auth login/register, all modals (ShareModal, PlaylistModal, FriendPickerModal, LibraryPlaylistDetailModal, UserProfileModal, ReelImportModal) updated to warm palette.
+
+---
+
 ## 2026-04-07 — Initial population
 
 Created knowledge base from project files, README, SETUP.md, IDEAS.md, CLAUDE.md, and session memory.
@@ -219,6 +255,64 @@ Created knowledge base from project files, README, SETUP.md, IDEAS.md, CLAUDE.md
 - Fixed stale mutual-follow share targets by refreshing follow data whenever the reusable share picker opens.
 - The inline playlist share picker now also refreshes follows right before showing mutual-follow share options.
 
+## 2026-04-25 — Fix reel banner suppression across account switches
+
+**Files changed**: `app/_layout.tsx`, `hooks/useClipboardReel.ts`, `README.md`, `knowledge-base/features.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Reel clipboard state is now scoped per signed-in user instead of persisting across the whole app session.
+- Switching accounts no longer leaves a dismissed reel URL stuck in memory and hidden for the next account.
+- Reel banner/modal mounting now follows authenticated-session state rather than requiring `primary_service`, matching the intended behavior for all logged-in users.
+
+## 2026-04-25 — Wait for auth hydration before reel parsing
+
+**Files changed**: `app/_layout.tsx`, `hooks/useClipboardReel.ts`, `hooks/useNotifications.ts`, `components/ReelImportModal.tsx`, `README.md`, `knowledge-base/features.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Reel clipboard polling now starts only after auth/profile hydration is complete.
+- `ReelImportModal` now waits for a fully available session/user before invoking `parse-reel` and passes the current bearer token explicitly to the edge function.
+- Push-token registration is also gated on hydrated auth state to avoid firing Supabase requests during account-switch races.
+
+## 2026-04-25 — Stop YouTube Music from opening wrong same-artist tracks
+
+**Files changed**: `lib/youtubeMusic.ts`, `README.md`, `knowledge-base/integrations/youtube-music.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- YTM title normalization now preserves Unicode letters/numbers instead of collapsing non-Latin titles to empty strings.
+- Topic candidates with zero title match are now rejected even if the artist channel matches strongly.
+- This makes YTM fail safely and fall back instead of opening the wrong song for same-artist searches.
+
+## 2026-04-25 — Reel YTM open now falls back on safe-match failure
+
+**Files changed**: `components/ReelImportModal.tsx`, `knowledge-base/features.md`
+
+- When YTM cannot verify a safe Topic-song match for a reel result, the reel opener now returns `false` and falls back to the existing web search path instead of surfacing a hard error or opening a guessed same-artist song.
+
+## 2026-04-26 — Fix avatar picker preview and redesign library filters
+
+**Files changed**: `lib/avatarUpload.ts`, `app/(tabs)/profile.tsx`, `app/(tabs)/library.tsx`, `README.md`, `knowledge-base/features.md`, `knowledge-base/mistakes-and-learnings.md`, `knowledge-base/log.md`
+
+- Swapped the avatar picker off deprecated `ImagePicker.MediaTypeOptions` to the current media-types API.
+- Avatar uploads now use an `ArrayBuffer`, stable storage path, cache-busting URL, and immediate local preview after image selection.
+- Replaced the old library chip row with clearer content filters for playlists, songs, reel lists, and artists, and wired the empty state to the active filter.
+
+## 2026-04-26 — Remove manual top spacer from library screen
+
+**Files changed**: `app/(tabs)/library.tsx`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Replaced the library screen's hard-coded top spacer with `SafeAreaView`.
+- This removes the oversized blank area above the playlist list and keeps the header aligned to the real device inset.
+
+## 2026-04-26 — Constrain library filter ScrollView height
+
+**Files changed**: `app/(tabs)/library.tsx`, `README.md`, `knowledge-base/mistakes-and-learnings.md`
+
+- Added an explicit height/flex constraint to the horizontal filter `ScrollView`.
+- This prevents the filter rail from expanding vertically and pushing the playlist list down the page.
+
+## 2026-04-26 — Loosen library filter height cap slightly
+
+**Files changed**: `app/(tabs)/library.tsx`, `README.md`
+
+- Increased the filter rail height cap a bit so chip text no longer clips at the bottom while keeping the row from expanding vertically.
+
 ## 2026-04-25 — Use canonical Apple Music playlist URLs after conversion
 
 **Files changed**: `components/PlaylistModal.tsx`, `lib/appleMusic.ts`, `supabase/functions/convert-playlist/index.ts`, `README.md`, `knowledge-base/features.md`, `knowledge-base/integrations/apple-music.md`, `knowledge-base/log.md`, `knowledge-base/mistakes-and-learnings.md`
@@ -268,3 +362,72 @@ Created knowledge base from project files, README, SETUP.md, IDEAS.md, CLAUDE.md
 
 - The root app `tsconfig.json` now explicitly includes React Native app sources and excludes `supabase/functions`, so app typechecking no longer gets polluted by Deno-specific edge-function imports.
 - Added `npm run typecheck` as the clean app TypeScript check to use during normal development.
+
+## 2026-04-26 — Complete IDEAS.md NOTES cleanup pass
+
+**Files changed**: `IDEAS.md`, `README.md`, `app/(tabs)/_layout.tsx`, `app/(tabs)/friends.tsx`, `app/(tabs)/home.tsx`, `app/(tabs)/library.tsx`, `app/(tabs)/notifications.tsx`, `app/(tabs)/profile.tsx`, `app/(tabs)/settings.tsx`, `components/LibraryPlaylistDetailModal.tsx`, `components/ShareModal.tsx`, `hooks/useFollows.ts`, `knowledge-base/features.md`, `knowledge-base/log.md`, `knowledge-base/mistakes-and-learnings.md`, `knowledge-base/roadmap.md`
+
+- Completed the app-side NOTES cleanup from `IDEAS.md`: favorite-song search now covers Apple Music and cleaned YouTube Music results; People search and share search auto-populate; taste-match percentages are data-based; suggested follows exclude already-followed users; and home/library/profile top bars now route into search/notification/share entry points.
+- Added a hidden `notifications` tab route that shows recent shares and new followers in one in-app inbox.
+- Fixed the remaining TypeScript issues in the related share flows by replacing unsupported Supabase `abortSignal` chaining with the existing `withTimeout()` helper.
+
+## 2026-04-26 — Complete IDEAS.md FIXES pass
+
+**Files changed**: `IDEAS.md`, `README.md`, `app/(tabs)/_layout.tsx`, `app/(tabs)/home.tsx`, `app/(tabs)/library.tsx`, `app/(tabs)/share.tsx`, `components/ReelImportModal.tsx`, `components/ShareModal.tsx`, `hooks/useLibrary.ts`, `lib/appleMusic.ts`, `lib/spotify.ts`, `lib/youtubeMusic.ts`, `knowledge-base/features.md`, `knowledge-base/log.md`, `knowledge-base/mistakes-and-learnings.md`, `knowledge-base/roadmap.md`
+
+- Library search now indexes a bounded slice of playlist tracks so songs inside playlists can be found without fetching entire large playlists in the background.
+- Library filters now include real songs and reel-sourced songs, reel lists remain browsable, and sort controls apply to playlists, songs, reel lists, and artists.
+- Home feed rows now say `opens in your ...` based on the recipient's primary service instead of the sender's service.
+- The center-tab share menu now fades in and routes `Identify a reel` to a paste screen; reel best-match previews are tappable.
+- Removed the completed `FIXES` section from `IDEAS.md`.
+
+## 2026-04-26 — Refine library song and reel presentation
+
+**Files changed**: `app/(tabs)/library.tsx`, `README.md`, `knowledge-base/features.md`, `knowledge-base/log.md`
+
+- Moved reel-imported songs into their own `Reel Songs` section, visible under the Reels filter instead of mixed into normal Songs.
+- Changed the normal Songs section to stay collapsed outside the Songs filter, with an expandable preview and a path to the full Songs filter.
+- Library search now deduplicates matching songs across multiple playlists and suppresses playlist results when the query matches a song title in the library.
+
+## 2026-04-26 — Stabilize library refresh and All Songs row
+
+**Files changed**: `app/(tabs)/library.tsx`, `components/LibraryPlaylistDetailModal.tsx`, `hooks/useLibrary.ts`, `README.md`, `knowledge-base/features.md`, `knowledge-base/log.md`
+
+- Stabilized library fetch/preload dependencies so tab focus and playlist-track indexing do not repeatedly restart library loading.
+- Batched playlist-track preload updates instead of setting library index state after every playlist.
+- Replaced the collapsed songs preview with an `All Songs` pseudo-playlist row that opens the playlist detail modal with deduped song tracks.
+- Made reel-imported song rows tappable from the Reels filter while keeping them separate from normal library songs.
+- No database changes were made; this remains a UI/local-state refinement.
+
+## 2026-04-26 — Persist reel import history in Supabase
+
+**Files changed**: `supabase/migrations/006_reel_import_history.sql`, `lib/reelLists.ts`, `README.md`, `knowledge-base/database.md`, `knowledge-base/features.md`, `knowledge-base/log.md`
+
+- Added `reel_imports` and `reel_import_songs` tables with owner-only RLS so saved reel song lists are durable across sessions/devices.
+- Rewired `lib/reelLists.ts` to read/save/delete Supabase reel history first and fall back to AsyncStorage only when the migration has not been applied yet.
+- Existing local reel lists remain readable as fallback, but new durable history requires applying migration `006_reel_import_history.sql`.
+
+## 2026-04-27 — Make library filters functional when empty
+
+**Files changed**: `app/(tabs)/library.tsx`, `README.md`, `knowledge-base/features.md`, `knowledge-base/log.md`, `knowledge-base/preferences.md`
+
+- Added the design law that no visible UI element should be completely nonfunctional; empty controls must open a placeholder or explicit empty state.
+- Library filter chips are always clickable, even when their count is zero.
+- Empty filtered library views now show `No Results.` instead of disabling the filter or hiding the route.
+- `All Songs` remains a playlist-style row even when no indexed songs are present.
+- `Reel Songs` now appears as a playlist-style row; single-song reel saves appear as song rows inside it, while multi-song reel saves appear as sub-list rows inside it.
+
+## 2026-04-27 — Expand reels directly in Reels filter
+
+**Files changed**: `app/(tabs)/library.tsx`, `knowledge-base/log.md`
+
+- In the main Library view, Reels still appears as a single playlist-style `Reel Songs` row.
+- When the Reels filter is active, the Library page expands directly into saved reel song rows and multi-song reel sub-list rows without requiring an extra click into `Reel Songs`.
+
+## 2026-04-29 — Wire inert UI controls and track placeholders
+
+**Files changed**: `IDEAS.md`, `README.md`, `app/(tabs)/home.tsx`, `app/(tabs)/library.tsx`, `app/(tabs)/profile.tsx`, `app/(tabs)/settings.tsx`, `components/PlaylistModal.tsx`, `components/StoryViewer.tsx`, `components/UserProfileModal.tsx`, `knowledge-base/features.md`, `knowledge-base/log.md`, `knowledge-base/mistakes-and-learnings.md`, `knowledge-base/roadmap.md`
+
+- Added real behavior for story caption entry, profile quick-connect, profile sharing, settings photo changes, password reset, playlist run-in-background, and library artist taps.
+- Added explicit placeholder alerts for deferred story replies/options, profile notifications/options, Friend Blend, artist pages, block list, legal docs, and app rating.
+- Added a new `Placeholder UI Follow-ups` section to `IDEAS.md` so placeholder-only behavior can be replaced later.

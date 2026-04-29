@@ -96,6 +96,56 @@
 
 ---
 
+## Reel Clipboard State Should Not Leak Across Accounts
+
+**Problem**: The iOS paste permission prompt could appear, but the reel banner still would not show after switching accounts and testing the same reel again. This was especially confusing when comparing behavior across Spotify / Apple Music / YouTube Music accounts in one app session.
+
+**Root cause**: `useClipboardReel` kept its dismissed URL cache in memory for the lifetime of the root layout. The cache was not reset when the signed-in user changed, so one account could suppress the same reel for the next account. The reel UI was also mounted only when `primary_service` existed, which was stricter than the intended "authenticated user" behavior. A second issue showed up after loosening that gate: the reel flow could start during auth/profile hydration, which made Supabase requests race the still-settling session during account switches.
+
+**Fix**: Scope clipboard reel state to the current signed-in user. Clear `seenUrls`, `pendingUrl`, and `pendingSource` whenever the auth user changes, mount the reel banner/modal for any authenticated loaded user instead of requiring `primary_service`, and delay reel polling / reel-function calls until auth hydration is complete. The reel function now also sends the current bearer token explicitly after a short session-readiness retry.
+
+---
+
+## Storage-Backed Avatars Need Local Preview And Cache Busting
+
+**Problem**: Picking a new profile image could succeed but still leave the old avatar on screen, which looked like the upload failed. The picker also emitted an Expo deprecation warning because it still used `ImagePicker.MediaTypeOptions`.
+
+**Root cause**: The UI waited on the remote storage URL to be visible before showing anything new, while the stored avatar file path stayed stable and could still be cached. The picker call also used Expo's deprecated enum wrapper instead of the current `mediaTypes` shape.
+
+**Fix**: Use the current image-picker API (`mediaTypes: ['images']`), upload avatar bytes as an `ArrayBuffer` with `cacheControl: '0'`, append a cache-busting query param to the public URL, and show the picked local image immediately on the profile screen while the refreshed profile row catches up.
+
+---
+
+## Manual Safe-Area Spacers Drift Out Of Sync
+
+**Problem**: The library playlists started rendering much lower on the screen than intended, leaving a large empty band above the content.
+
+**Root cause**: The screen used a hard-coded top spacer (`safeTop: 52`) instead of a real safe-area wrapper. Once the rest of the tab layout evolved, that manual spacer no longer matched the actual device inset and header sizing.
+
+**Fix**: Wrap the library screen in `SafeAreaView` with `edges={['top']}` and remove the manual spacer. Use real safe-area primitives for top layout instead of guessed pixel offsets.
+
+---
+
+## Horizontal ScrollViews Need Explicit Height Constraints
+
+**Problem**: The library filter rail still occupied a huge vertical block even after fixing the top spacer, pushing the actual playlist list down the screen.
+
+**Root cause**: In React Native, a horizontal `ScrollView` inside a vertical flex layout can still expand vertically if its own height/flex behavior is left implicit. The chip content looked like the problem, but the actual offender was the scroll container.
+
+**Fix**: Constrain the horizontal filter `ScrollView` itself (`flexGrow: 0`, bounded height) and align its content vertically. When a row of chips looks absurdly tall, inspect the scroll container before redesigning the chips.
+
+---
+
+## Library Search Needs Bounded Playlist Indexing
+
+**Problem**: Searching only top-level playlist names misses songs inside playlists, but fetching every track from every playlist can be expensive and slow on large libraries.
+
+**Fix**: Let playlist-track loaders accept an optional max-track cap, then preload a bounded slice per playlist for library search/indexing while keeping playlist detail modals uncapped. Use the indexed slice for search text and display counts when a service does not provide playlist counts in list responses.
+
+**Rule**: For cross-service library search, keep background indexing bounded and leave full pagination to explicit detail views.
+
+---
+
 ---
 
 ## Liked Songs Streaming — No In-Progress Indicator
@@ -126,6 +176,26 @@
 
 **Variant detection caveat**: `isBadVariant` only flags qualifiers absent from the *search* title — so searching for "Live and Let Die" or "Remix" (as an actual song title) won't falsely filter the canonical recording.
 
+---
+
+## YouTube Music Must Not Guess From Artist Alone
+
+**Problem**: A reel/import result could show the right song in MusicBridge, but tapping it on YouTube Music opened the wrong track by the same artist. Example: searching for `1111` by `HANRORO` incorrectly accepted a different HANRORO Topic-track.
+
+**Root cause**: The YTM title matcher normalized titles with an ASCII-only regex. Non-Latin titles could collapse to an empty string, and the prefix/contains checks then accidentally treated the empty string as a strong match. The picker also allowed Topic candidates with zero title match as long as the artist score was high enough.
+
+**Fix**: Preserve Unicode letters/numbers during normalization, return `0` when either normalized title is empty, and reject Topic candidates whose title score is `0`. If title matching fails, prefer throwing `youtube_music_topic_not_found` over opening the wrong song.
+
+---
+
+## Debounced Search Effects Need Stable Callbacks
+
+**Problem**: Auto-populating search UIs can accidentally re-fire their debounce effect on every render if the async search function is recreated inline and also listed as an effect dependency.
+
+**Root cause**: The debounce looked correct, but the callback identity changed after each `setState`, which retriggered the effect and produced extra searches.
+
+**Fix**: Wrap async search handlers used by debounced `useEffect` hooks in `useCallback` and keep the dependency list explicit. This keeps type-ahead search responsive without turning every state update into another network call.
+
 ## Apple Music Library IDs Are Not Deep Links
 
 **Problem**: Apple Music library playlist IDs are not safe to turn into guessed `music.apple.com/library/playlist/{id}` URLs. A playlist can be created successfully, but opening that guessed URL can still land in Apple Music's "item not available" screen.
@@ -139,6 +209,16 @@
 - Build `music://` + `https://` deep links from the canonical URL instead of from the raw library ID
 
 **Rule**: For Apple Music handoff, prefer canonical URLs returned by Apple over manufactured URL patterns whenever the API provides them. Private library playlists may not be directly deep-linkable.
+
+---
+
+## Visible Touch Targets Need Explicit Outcomes
+
+**Problem**: Several visible buttons and rows had either no `onPress` handler or an empty handler, which made the UI feel broken even when the intended product feature was not ready yet.
+
+**Fix**: Wire obvious actions to real behavior and route ambiguous/deferred features to a clear placeholder alert. Track those placeholders in `IDEAS.md` so they are not forgotten.
+
+**Rule**: A visible touch target must either perform the action, open a relevant empty/placeholder state, or clearly explain that the feature is not currently available.
 
 ---
 

@@ -12,7 +12,7 @@
 
 **Liked Music vs Liked Videos**: Library uses playlist ID `LM` (YouTube Music "Liked Music"), NOT `LL` (YouTube "Liked Videos"). `LM` avoids non-music videos.
 
-**Search heuristic**: Filter to music videos only, prefer Topic channels, and score by both title match and artist-token match. Avoid hardcoded artist aliases; matching stays generic.
+**Search heuristic**: Filter to music videos only, prefer Topic channels, and score by both title match and artist-token match. Unicode letters/numbers are preserved during normalization so non-Latin titles still compare correctly. Zero-title-match Topic candidates are rejected instead of guessing from artist alone.
 
 **Artist name cleaning**: Strip ` - Topic` suffix from YouTube channel names via `cleanArtistName()` in `lib/utils.ts` before using as search query on other platforms.
 

@@ -13,6 +13,11 @@
 - Ionicons for tab bar icons
 - `npm install --legacy-peer-deps` for all package installs (react-dom peer dep conflict)
 
+## Design Laws
+
+- Never leave any UI element completely nonfunctional. Every visible control must open a real flow, modal, placeholder page, or explicit empty state.
+- Filters, tabs, buttons, and menu items must remain clickable even with no data; show `No Results.` or an equivalent empty state instead of disabling the control.
+
 ## Workflow Preferences
 
 - Prefers knowing about required re-auth when adding new OAuth scopes

@@ -26,6 +26,7 @@ import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
 import { cleanArtistName, cleanTitle, withTimeout } from '../lib/utils';
 import { saveReelList } from '../lib/reelLists';
+import { colors } from '../lib/theme';
 
 type Stage = 'analyzing' | 'songList' | 'pickFriend' | 'sharing' | 'failed';
 
@@ -42,6 +43,38 @@ interface ParseReelResponse {
   audioSongs?: Array<ReelSong & { orderHint?: number; matchCount?: number }>;
   metadataSong?: ReelSong | null;
   textSongs?: ReelSong[];
+}
+
+async function getCurrentAccessToken(retries = 3): Promise<string> {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (accessToken) return accessToken;
+    if (attempt < retries) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  throw new Error('auth_session_unavailable');
+}
+
+async function invokeParseReel(body: {
+  url?: string;
+  frames?: string[];
+  vision_only?: boolean;
+}): Promise<ParseReelResponse> {
+  const accessToken = await getCurrentAccessToken();
+  const visionResp = await supabase.functions.invoke('parse-reel', {
+    body,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (visionResp.error) throw visionResp.error;
+  return typeof visionResp.data === 'string'
+    ? JSON.parse(visionResp.data) as ParseReelResponse
+    : visionResp.data as ParseReelResponse;
 }
 
 function normalizeSongKey(song: Pick<ReelSong, 'title' | 'artist'>): string {
@@ -278,8 +311,15 @@ async function openResolvedTrack(
       10_000,
     )) ?? [];
   } else if (service === 'youtube_music') {
-    const trackId = await withTimeout(YouTubeMusic.searchTrack(userId, song.title, song.artist), 10_000);
-    if (trackId) deepLinks = YouTubeMusic.getYouTubeMusicDeepLink(trackId);
+    try {
+      const trackId = await withTimeout(YouTubeMusic.searchTrack(userId, song.title, song.artist), 10_000);
+      if (trackId) deepLinks = YouTubeMusic.getYouTubeMusicDeepLink(trackId);
+    } catch (err) {
+      if ((err as Error)?.message?.startsWith('youtube_music_topic_not_found')) {
+        return false;
+      }
+      throw err;
+    }
   }
 
   for (const link of deepLinks) {
@@ -313,18 +353,11 @@ async function collectVisionSongs(params: {
   let consecutiveEmptyBatches = 0;
 
   for (let i = 0; i < params.frameBatches.length; i += 1) {
-    const visionResp = await supabase.functions.invoke('parse-reel', {
-      body: {
-        url: params.reelUrl,
-        frames: params.frameBatches[i],
-        vision_only: true,
-      },
+    const visionParsed = await invokeParseReel({
+      url: params.reelUrl,
+      frames: params.frameBatches[i],
+      vision_only: true,
     });
-
-    if (visionResp.error) throw visionResp.error;
-    const visionParsed = (
-      typeof visionResp.data === 'string' ? JSON.parse(visionResp.data) : visionResp.data
-    ) as ParseReelResponse;
 
     if (Array.isArray(visionParsed.debug) && visionParsed.debug.length > 0) {
       console.log(
@@ -347,8 +380,12 @@ async function collectVisionSongs(params: {
   return visionSongs;
 }
 
+// Pipeline step type for the analyzing visualization
+type PipelineStepState = 'pending' | 'active' | 'done' | 'failed';
+interface PipelineStep { label: string; detail: string; state: PipelineStepState }
+
 export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
-  const { user } = useAuth();
+  const { session, user, loading: authLoading } = useAuth();
   const { following: friends } = useFollows();
 
   const [stage, setStage] = useState<Stage>('analyzing');
@@ -360,11 +397,24 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
   const didAnalyze = useRef(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Pipeline visualization state
+  const [pipeline, setPipeline] = useState<PipelineStep[]>([
+    { label: 'Reel metadata', detail: 'Checking audio attribution', state: 'active' },
+    { label: 'Audio fingerprint', detail: '', state: 'pending' },
+    { label: 'Frame OCR (vision)', detail: '', state: 'pending' },
+    { label: 'Confidence merge', detail: '', state: 'pending' },
+  ]);
+  const [bestMatch, setBestMatch] = useState<ReelSong | null>(null);
+
+  const updateStep = (idx: number, state: PipelineStepState, detail?: string) => {
+    setPipeline(prev => prev.map((s, i) => i === idx ? { ...s, state, detail: detail ?? s.detail } : s));
+  };
+
   useEffect(() => {
-    if (!reelUrl || didAnalyze.current) return;
+    if (!reelUrl || didAnalyze.current || !session || !user || authLoading) return;
     didAnalyze.current = true;
     analyze();
-  }, [reelUrl]);
+  }, [authLoading, reelUrl, session, user]);
 
   useEffect(() => {
     if (!reelUrl) {
@@ -374,6 +424,13 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
       setMessage('');
       setSavingList(false);
       setSavedList(false);
+      setBestMatch(null);
+      setPipeline([
+        { label: 'Reel metadata', detail: 'Checking audio attribution', state: 'active' },
+        { label: 'Audio fingerprint', detail: '', state: 'pending' },
+        { label: 'Frame OCR (vision)', detail: '', state: 'pending' },
+        { label: 'Confidence merge', detail: '', state: 'pending' },
+      ]);
       didAnalyze.current = false;
       if (closeTimer.current) clearTimeout(closeTimer.current);
     }
@@ -384,13 +441,9 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
   const analyze = async () => {
     setStage('analyzing');
     try {
-      const { data, error } = await supabase.functions.invoke('parse-reel', {
-        body: { url: reelUrl },
-      });
-
-      if (error) throw error;
-      if (!data) throw new Error('no response');
-      const parsed = (typeof data === 'string' ? JSON.parse(data) : data) as ParseReelResponse;
+      // Step 0: metadata
+      updateStep(0, 'active', 'Checking reel metadata…');
+      const parsed = await invokeParseReel({ url: reelUrl ?? undefined });
 
       if (Array.isArray(parsed.debug) && parsed.debug.length > 0) {
         console.log('[parse-reel debug]\n' + parsed.debug.join('\n'));
@@ -398,22 +451,38 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
 
       const audioSongs = Array.isArray(parsed.audioSongs) ? parsed.audioSongs : [];
       const textSongs = Array.isArray(parsed.textSongs) ? parsed.textSongs : [];
+
+      // Step 0 done
+      updateStep(0, 'done', parsed.metadataSong ? '1 song attributed' : 'No song attribution');
+
+      // Step 1: audio
+      updateStep(1, 'active', `${audioSongs.length} candidate${audioSongs.length !== 1 ? 's' : ''} from audio`);
+
       let mergedSongs = rankSongs({
         audioSongs,
         visionSongs: [],
         metadataSong: parsed.metadataSong ?? null,
         textSongs,
       });
+      updateStep(1, 'done', `${audioSongs.length} audio match${audioSongs.length !== 1 ? 'es' : ''}`);
+
+      if (mergedSongs.length > 0) setBestMatch(mergedSongs[0]);
+
+      let visionSongs: Array<ReelSong & { orderHint: number }> = [];
 
       if (parsed.videoUrl) {
         const shouldRunVision = mergedSongs.length < 5;
         if (!shouldRunVision) {
+          updateStep(2, 'done', 'Skipped — enough audio matches');
+          updateStep(3, 'active', 'Merging results…');
+          updateStep(3, 'done', `${mergedSongs.length} songs found`);
           setSongs(mergedSongs);
           setStage('songList');
           return;
         }
 
-        let visionSongs: Array<ReelSong & { orderHint: number }> = [];
+        // Step 2: vision
+        updateStep(2, 'active', 'Reading video frames…');
         const shortDenseReel = (parsed.videoDuration ?? 0) > 0
           && (parsed.videoDuration ?? 0) <= 30
           && mergedSongs.length <= 3;
@@ -532,10 +601,17 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
         });
       }
 
+      // Step 2 done, step 3 merge
+      updateStep(2, 'done', `${visionSongs.length} visual match${visionSongs.length !== 1 ? 'es' : ''}`);
+      updateStep(3, 'active', 'Merging all sources…');
+
       if (mergedSongs.length > 0) {
+        setBestMatch(mergedSongs[0]);
+        updateStep(3, 'done', `${mergedSongs.length} song${mergedSongs.length !== 1 ? 's' : ''} found`);
         setSongs(mergedSongs);
         setStage('songList');
       } else {
+        updateStep(3, 'failed', 'No confident matches');
         console.warn('[ReelImportModal] all stages missed');
         setStage('failed');
         closeTimer.current = setTimeout(onClose, 2500);
@@ -551,6 +627,9 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
         }
       }
       console.error('[ReelImportModal] analyze error:', err);
+      if ((err as Error)?.message === 'auth_session_unavailable') {
+        Alert.alert('Connection error', 'Your session is still loading. Try opening the reel again in a moment.');
+      }
       setStage('failed');
       closeTimer.current = setTimeout(onClose, 2500);
     }
@@ -639,71 +718,96 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
   if (!reelUrl) return null;
 
   return (
-    <Modal
-      visible={!!reelUrl}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onClose}
-    >
+    <Modal visible={!!reelUrl} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={styles.container}>
-        {/* Header */}
+
+        {/* ── Header ── */}
         <View style={styles.header}>
-          {stage === 'pickFriend' || stage === 'sharing' ? (
-            <TouchableOpacity onPress={handleBack} style={styles.backButton} disabled={stage === 'sharing'}>
-              <Ionicons name="chevron-back" size={22} color="#fff" />
+          {(stage === 'pickFriend' || stage === 'sharing') ? (
+            <TouchableOpacity onPress={handleBack} disabled={stage === 'sharing'} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="chevron-back" size={22} color={colors.fg2} />
             </TouchableOpacity>
           ) : (
-            <Ionicons name="logo-instagram" size={20} color="#fff" />
+            <View style={styles.headerIcon}>
+              <Ionicons name="radio-outline" size={18} color={colors.primaryInk} />
+            </View>
           )}
           <Text style={styles.headerTitle}>
-            {stage === 'pickFriend' || stage === 'sharing' ? 'Share with' : 'Import from Reel'}
+            {stage === 'pickFriend' || stage === 'sharing' ? 'Share with' : 'Identify from Reel'}
           </Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Text style={styles.closeText}>✕</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close" size={22} color={colors.fg3} />
           </TouchableOpacity>
         </View>
 
-        {/* Analyzing */}
+        {/* ── Analyzing: pipeline visualization ── */}
         {stage === 'analyzing' && (
-          <View style={styles.centeredContent}>
-            <ActivityIndicator color="#fff" size="large" />
-            <Text style={styles.analyzingText}>Identifying songs…</Text>
-            <Text style={styles.analyzingHint}>Scanning audio, captions, and video frames</Text>
+          <View style={styles.pipelineContainer}>
+            <Text style={styles.pipelineTitle}>Identifying songs…</Text>
+            <Text style={styles.pipelineSub}>Scanning audio, captions, and video frames</Text>
+
+            <View style={styles.pipelineSteps}>
+              {pipeline.map((step, i) => (
+                <View key={i} style={styles.pipelineStep}>
+                  <PipelineDot state={step.state} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pipelineStepLabel, step.state === 'active' && styles.pipelineStepLabelActive]}>
+                      {step.label}
+                    </Text>
+                    {step.detail ? <Text style={styles.pipelineStepDetail}>{step.detail}</Text> : null}
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            {/* Best match preview (updates live) */}
+            {bestMatch && (
+              <TouchableOpacity
+                style={styles.bestMatchCard}
+                onPress={() => handleOpenSong(bestMatch)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.bestMatchLabel}>Best match so far</Text>
+                <View style={styles.bestMatchRow}>
+                  <CoverArtSmall uri={bestMatch.coverUrl} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.bestMatchTitle} numberOfLines={1}>{bestMatch.title}</Text>
+                    <Text style={styles.bestMatchArtist} numberOfLines={1}>{bestMatch.artist}</Text>
+                  </View>
+                  <Ionicons name="open-outline" size={18} color={colors.fg3} />
+                </View>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
-        {/* Failed */}
+        {/* ── Failed ── */}
         {stage === 'failed' && (
           <View style={styles.centeredContent}>
-            <Ionicons name="musical-notes-outline" size={48} color="#555" />
-            <Text style={styles.failedText}>Couldn't identify any songs in this reel</Text>
+            <Ionicons name="musical-notes-outline" size={52} color={colors.fg4} />
+            <Text style={styles.failedTitle}>No songs found</Text>
+            <Text style={styles.failedSub}>Couldn't identify any songs in this reel</Text>
           </View>
         )}
 
-        {/* Song list */}
+        {/* ── Song list ── */}
         {stage === 'songList' && (
           <>
             <View style={styles.songListHeader}>
-              <Text style={styles.sectionLabel}>{songs.length} song{songs.length !== 1 ? 's' : ''} found</Text>
+              <Text style={styles.songListCount}>{songs.length} song{songs.length !== 1 ? 's' : ''} found</Text>
               <TouchableOpacity
-                style={[styles.saveListButton, savedList && styles.saveListButtonSaved]}
+                style={[styles.saveBtn, savedList && styles.saveBtnActive]}
                 onPress={handleSaveReelList}
                 disabled={savingList || savedList}
                 activeOpacity={0.8}
-                accessibilityLabel="Save reel song list"
               >
-                {savingList ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons
-                    name={savedList ? 'bookmark' : 'bookmark-outline'}
-                    size={18}
-                    color={savedList ? '#fff' : '#888'}
-                  />
-                )}
+                {savingList
+                  ? <ActivityIndicator size="small" color={savedList ? colors.primaryInk : colors.fg3} />
+                  : <Ionicons name={savedList ? 'bookmark' : 'bookmark-outline'} size={18} color={savedList ? colors.primaryInk : colors.fg3} />
+                }
               </TouchableOpacity>
             </View>
-            <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+            <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
               {songs.map((song, i) => (
                 <TouchableOpacity
                   key={`${song.title}-${song.artist}-${i}`}
@@ -711,13 +815,7 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
                   onPress={() => handleOpenSong(song)}
                   activeOpacity={0.75}
                 >
-                  {song.coverUrl ? (
-                    <Image source={{ uri: song.coverUrl }} style={styles.cover} />
-                  ) : (
-                    <View style={[styles.cover, styles.coverPlaceholder]}>
-                      <Ionicons name="musical-note" size={22} color="#555" />
-                    </View>
-                  )}
+                  <CoverArtSmall uri={song.coverUrl} large />
                   <View style={styles.songInfo}>
                     <Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text>
                     <Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text>
@@ -725,9 +823,8 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
                   <TouchableOpacity
                     onPress={() => handleSelectSong(song)}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    style={styles.shareIcon}
                   >
-                    <Ionicons name="paper-plane-outline" size={18} color="#555" />
+                    <Ionicons name="paper-plane-outline" size={20} color={colors.primary} />
                   </TouchableOpacity>
                 </TouchableOpacity>
               ))}
@@ -735,18 +832,11 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
           </>
         )}
 
-        {/* Friend picker */}
+        {/* ── Friend picker ── */}
         {(stage === 'pickFriend' || stage === 'sharing') && selectedSong && (
           <>
-            {/* Selected song mini-card */}
-            <View style={styles.selectedSongCard}>
-              {selectedSong.coverUrl ? (
-                <Image source={{ uri: selectedSong.coverUrl }} style={styles.miniCover} />
-              ) : (
-                <View style={[styles.miniCover, styles.coverPlaceholder]}>
-                  <Ionicons name="musical-note" size={16} color="#555" />
-                </View>
-              )}
+            <View style={styles.selectedCard}>
+              <CoverArtSmall uri={selectedSong.coverUrl} />
               <View style={styles.songInfo}>
                 <Text style={styles.songTitle} numberOfLines={1}>{selectedSong.title}</Text>
                 <Text style={styles.songArtist} numberOfLines={1}>{selectedSong.artist}</Text>
@@ -757,25 +847,23 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
               <TextInput
                 style={styles.messageInput}
                 placeholder="Add a message (optional)"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.fg4}
                 value={message}
                 onChangeText={setMessage}
                 maxLength={200}
               />
             </View>
 
-            <ScrollView style={styles.friendList} contentContainerStyle={{ paddingBottom: 20 }}>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
               {friends.length === 0 ? (
-                <Text style={styles.emptyFriends}>
-                  Follow someone to share songs with them.
-                </Text>
+                <Text style={styles.emptyFriends}>Follow someone to share songs with them.</Text>
               ) : (
                 friends.map((friend) => {
                   const initials = (friend.display_name?.[0] ?? friend.username?.[0] ?? '?').toUpperCase();
                   return (
                     <TouchableOpacity
                       key={friend.id}
-                      style={[styles.friendRow, stage === 'sharing' && styles.friendRowDisabled]}
+                      style={[styles.friendRow, stage === 'sharing' && { opacity: 0.5 }]}
                       onPress={() => handleShareToFriend(friend)}
                       disabled={stage === 'sharing'}
                       activeOpacity={0.8}
@@ -787,11 +875,10 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
                         <Text style={styles.friendName}>{friend.display_name}</Text>
                         <Text style={styles.friendUsername}>@{friend.username}</Text>
                       </View>
-                      {stage === 'sharing' ? (
-                        <ActivityIndicator size="small" color="#555" />
-                      ) : (
-                        <Ionicons name="paper-plane-outline" size={18} color="#555" />
-                      )}
+                      {stage === 'sharing'
+                        ? <ActivityIndicator size="small" color={colors.fg3} />
+                        : <Ionicons name="paper-plane-outline" size={18} color={colors.primary} />
+                      }
                     </TouchableOpacity>
                   );
                 })
@@ -804,198 +891,108 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
   );
 }
 
+// ─── Pipeline dot ─────────────────────────────────────────────────────────────
+function PipelineDot({ state }: { state: PipelineStepState }) {
+  if (state === 'done') {
+    return (
+      <View style={pipelineDotStyles.done}>
+        <Ionicons name="checkmark" size={12} color={colors.primaryInk} strokeWidth={2.6} />
+      </View>
+    );
+  }
+  if (state === 'active') {
+    return <View style={pipelineDotStyles.active} />;
+  }
+  if (state === 'failed') {
+    return (
+      <View style={pipelineDotStyles.failed}>
+        <Ionicons name="close" size={12} color="#fff" />
+      </View>
+    );
+  }
+  return <View style={pipelineDotStyles.pending} />;
+}
+
+const pipelineDotStyles = StyleSheet.create({
+  done: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  active: { width: 22, height: 22, borderRadius: 11, borderWidth: 2.5, borderColor: colors.primary, flexShrink: 0 },
+  failed: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.coral, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  pending: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line, flexShrink: 0 },
+});
+
+function CoverArtSmall({ uri, large }: { uri?: string | null; large?: boolean }) {
+  const size = large ? 52 : 40;
+  if (uri) return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: 8, backgroundColor: colors.bgCard }} />;
+  return (
+    <View style={{ width: size, height: size, borderRadius: 8, backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' }}>
+      <Ionicons name="musical-note" size={size * 0.4} color={colors.fg4} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f0f0f',
-  },
+  container: { flex: 1, backgroundColor: colors.bg },
+
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 20, borderBottomWidth: 1, borderBottomColor: colors.line,
   },
-  headerTitle: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
+  headerIcon: {
+    width: 32, height: 32, borderRadius: 9,
+    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
   },
-  backButton: {
-    padding: 2,
+  headerTitle: { flex: 1, color: colors.fg, fontSize: 18, fontWeight: '700' },
+
+  // Pipeline
+  pipelineContainer: { flex: 1, padding: 24, gap: 20 },
+  pipelineTitle: { fontSize: 20, fontWeight: '700', color: colors.fg },
+  pipelineSub: { fontSize: 13, color: colors.fg3, marginTop: -14 },
+  pipelineSteps: {
+    backgroundColor: colors.bgCard, borderRadius: 16,
+    borderWidth: 1, borderColor: colors.line,
+    padding: 16, gap: 14,
   },
-  closeButton: {
-    padding: 4,
+  pipelineStep: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  pipelineStepLabel: { fontSize: 14, fontWeight: '500', color: colors.fg2 },
+  pipelineStepLabelActive: { fontWeight: '700', color: colors.fg },
+  pipelineStepDetail: { fontSize: 12, color: colors.fg3, marginTop: 2 },
+
+  bestMatchCard: {
+    backgroundColor: colors.bgCard, borderRadius: 14,
+    borderWidth: 1, borderColor: colors.line, padding: 14, gap: 10,
   },
-  closeText: {
-    color: '#666',
-    fontSize: 18,
-  },
-  centeredContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    padding: 32,
-  },
-  analyzingText: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  analyzingHint: {
-    color: '#555',
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  failedText: {
-    color: '#888',
-    fontSize: 16,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  sectionLabel: {
-    color: '#555',
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
+  bestMatchLabel: { fontSize: 11, fontWeight: '600', color: colors.fg3, textTransform: 'uppercase', letterSpacing: 0.5 },
+  bestMatchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  bestMatchTitle: { fontSize: 15, fontWeight: '700', color: colors.fg, marginBottom: 2 },
+  bestMatchArtist: { fontSize: 12, color: colors.fg3 },
+
+  centeredContent: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, padding: 32 },
+  failedTitle: { fontSize: 18, fontWeight: '700', color: colors.fg },
+  failedSub: { fontSize: 14, color: colors.fg3, textAlign: 'center' },
+
+  // Song list
   songListHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 6,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingTop: 20, paddingBottom: 8,
   },
-  saveListButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#1a1a1a',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  saveListButtonSaved: {
-    backgroundColor: '#fc3c44',
-    borderColor: '#fc3c44',
-  },
-  songRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    gap: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-  },
-  selectedSongCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    paddingHorizontal: 20,
-    gap: 14,
-    backgroundColor: '#1a1a1a',
-    borderBottomWidth: 1,
-    borderBottomColor: '#2a2a2a',
-  },
-  cover: {
-    width: 52,
-    height: 52,
-    borderRadius: 8,
-    backgroundColor: '#2a2a2a',
-  },
-  miniCover: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: '#2a2a2a',
-  },
-  coverPlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  songInfo: {
-    flex: 1,
-  },
-  songTitle: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  songArtist: {
-    color: '#888',
-    fontSize: 13,
-  },
-  messageRow: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    marginBottom: 8,
-  },
-  messageInput: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    color: '#fff',
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  friendList: {
-    flex: 1,
-  },
-  emptyFriends: {
-    color: '#555',
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 24,
-    paddingHorizontal: 32,
-    lineHeight: 20,
-  },
-  friendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    gap: 12,
-  },
-  friendRowDisabled: {
-    opacity: 0.5,
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#2a2a2a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: '#888',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  friendInfo: {
-    flex: 1,
-  },
-  friendName: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  friendUsername: {
-    color: '#666',
-    fontSize: 13,
-  },
-  shareIcon: {
-    padding: 4,
-  },
+  songListCount: { fontSize: 12, fontWeight: '600', color: colors.fg3, textTransform: 'uppercase', letterSpacing: 0.8 },
+  saveBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line },
+  saveBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+
+  songRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 13, gap: 14, borderBottomWidth: 1, borderBottomColor: colors.line },
+  selectedCard: { flexDirection: 'row', alignItems: 'center', padding: 16, paddingHorizontal: 20, gap: 14, backgroundColor: colors.bgCard, borderBottomWidth: 1, borderBottomColor: colors.line },
+  songInfo: { flex: 1 },
+  songTitle: { color: colors.fg, fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  songArtist: { color: colors.fg3, fontSize: 13 },
+
+  messageRow: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 8 },
+  messageInput: { backgroundColor: colors.bgCard, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, color: colors.fg, fontSize: 14, borderWidth: 1, borderColor: colors.line },
+
+  emptyFriends: { color: colors.fg3, fontSize: 14, textAlign: 'center', marginTop: 24, paddingHorizontal: 32, lineHeight: 20 },
+  friendRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 12 },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: colors.fg3, fontSize: 16, fontWeight: '700' },
+  friendInfo: { flex: 1 },
+  friendName: { color: colors.fg, fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  friendUsername: { color: colors.fg3, fontSize: 13 },
 });

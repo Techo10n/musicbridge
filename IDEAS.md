@@ -61,9 +61,19 @@
 - Unified search across all connected services at once
 - Offline mode — cache recently shared items for browsing without a connection
 
+## Placeholder UI Follow-ups
 
+- Story options menu — replace the placeholder alert with report/share/mute actions
+- Story replies — persist replies or route them into a direct-message thread
+- User profile notifications — allow notification preferences per followed user
+- User profile options menu — add share, report, mute, and block actions
+- Friend Blend — build the cross-platform two-person blend playlist flow
+- Artist pages — open followed artists from Library search and artist chips
+- Block list management — replace the empty alert with a real blocked-users screen
+- Terms of Service screen/link — add the real legal document destination
+- Privacy Policy screen/link — add the real legal document destination
+- App Store rating link — wire to the production store listing once available
 
-## ELSE
+## FIXES
 
-- Favorite song search doesnt work, at least on apple music accounts. On Youtube music, still returns the incorrect youtube untrimmed song title and artist, instead of the clean song and artist as seen on YT Music
-- Apple Music created-playlist UX — if Apple doesn't expose a direct playlist URL, consider stronger guidance beyond Library fallback (toast, temporary banner, or auto-refresh hint)
+- "streaming services" and "sign out" should appear in account settings, not just on a users profile.

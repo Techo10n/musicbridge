@@ -39,7 +39,7 @@ function extractReelFromIncomingUrl(incomingUrl: string): string | null {
  *   musicbridge://import-reel?url=<encoded reel url>
  *   musicbridge://import-reel?text=<shared text containing a reel url>
  */
-export function useClipboardReel() {
+export function useClipboardReel(scopeKey?: string | null, enabled = true) {
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [pendingSource, setPendingSource] = useState<PendingSource | null>(null);
   const incomingUrl = Linking.useURL();
@@ -52,6 +52,7 @@ export function useClipboardReel() {
   };
 
   const checkClipboard = async () => {
+    if (!enabled) return;
     try {
       const text = (await Clipboard.getStringAsync()).trim();
       if (!text) return;
@@ -64,6 +65,7 @@ export function useClipboardReel() {
   };
 
   useEffect(() => {
+    if (!enabled) return;
     checkClipboard();
 
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
@@ -71,7 +73,7 @@ export function useClipboardReel() {
     });
 
     return () => sub.remove();
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     if (!incomingUrl) return;
@@ -79,6 +81,18 @@ export function useClipboardReel() {
     if (!reelUrl) return;
     surfaceUrl(reelUrl, 'link');
   }, [incomingUrl]);
+
+  useEffect(() => {
+    if (!enabled) {
+      seenUrls.current.clear();
+      setPendingUrl(null);
+      setPendingSource(null);
+      return;
+    }
+    seenUrls.current.clear();
+    setPendingUrl(null);
+    setPendingSource(null);
+  }, [enabled, scopeKey]);
 
   /** Dismiss the banner without processing the URL. */
   const dismiss = () => {

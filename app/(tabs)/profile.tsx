@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+  ActivityIndicator, Alert, FlatList, Image, Modal,
+  ScrollView, Share, StyleSheet, Switch, Text, TextInput,
+  TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { useProfileStats } from '../../hooks/useProfileStats';
@@ -21,234 +15,166 @@ import { MusicService, LibraryPlaylist, FavoriteSong } from '../../types';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
+import { extractYouTubeTrackInfo } from '../../lib/youtubeMusic';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
 import { supabase } from '../../lib/supabase';
+import { Avatar, AppBar, IconBtn, CoverArt, ServiceDot, serviceLabelShort, SectionTitle } from '../../components/ui';
+import { colors } from '../../lib/theme';
 
 const SERVICES: MusicService[] = ['spotify', 'apple_music', 'youtube_music'];
 const SERVICE_LABELS: Record<MusicService, string> = {
-  spotify: 'Spotify',
-  apple_music: 'Apple Music',
-  youtube_music: 'YouTube Music',
+  spotify: 'Spotify', apple_music: 'Apple Music', youtube_music: 'YouTube Music',
 };
 const SERVICE_COLORS: Record<MusicService, string> = {
-  spotify: '#1DB954',
-  apple_music: '#fc3c44',
-  youtube_music: '#FF0000',
+  spotify: '#1DB954', apple_music: '#fc3c44', youtube_music: '#FF0000',
 };
+const GENRE_TAGS = ['neo-soul', 'shoegaze', 'r&b', 'jazz', 'bedroom-pop'];
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function StatPill({ label, value }: { label: string; value: number | string }) {
-  return (
-    <View style={statStyles.pill}>
-      <Text style={statStyles.value}>{value}</Text>
-      <Text style={statStyles.label}>{label}</Text>
-    </View>
-  );
+function timeAgo(iso: string): string {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24); if (d < 7) return `${d}d`;
+  return new Date(iso).toLocaleDateString();
 }
-
-const statStyles = StyleSheet.create({
-  pill: { alignItems: 'center', minWidth: 64 },
-  value: { color: '#fff', fontSize: 18, fontWeight: '800' },
-  label: { color: '#666', fontSize: 12, marginTop: 2 },
-});
-
-function TasteTag({ label }: { label: string }) {
-  return (
-    <View style={tagStyles.tag}>
-      <Text style={tagStyles.text}>{label}</Text>
-    </View>
-  );
-}
-
-const tagStyles = StyleSheet.create({
-  tag: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  text: { color: '#aaa', fontSize: 12, fontWeight: '600' },
-});
-
-// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function Profile() {
   const { user, signOut, setPrimaryService, refreshUser } = useAuth();
+  const router = useRouter();
   const { following, followers, getFollowCounts } = useFollows();
   const stats = useProfileStats();
 
   const [loadingService, setLoadingService] = useState<MusicService | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-
-  // Edit Profile modal state
-  const [editProfileVisible, setEditProfileVisible] = useState(false);
-  const [draftName, setDraftName] = useState('');
-  const [draftBio, setDraftBio] = useState('');
-
-  // Follower/following counts (fetched once)
+  const [avatarPreviewUri, setAvatarPreviewUri] = useState<string | null>(null);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [sharedCount, setSharedCount] = useState(0);
 
-  // Pinned playlist picker modal
+  // Shared songs for "public shares" list (using own sent items as proxy)
+  const [publicShares, setPublicShares] = useState<any[]>([]);
+  const [loadingPublic, setLoadingPublic] = useState(false);
+
+  // Pinned playlist picker
   const [pinnedPickerVisible, setPinnedPickerVisible] = useState(false);
   const [libraryPlaylists, setLibraryPlaylists] = useState<LibraryPlaylist[]>([]);
   const [loadingLibrary, setLoadingLibrary] = useState(false);
 
-  // Favorite song modal
+  // Fav song
   const [favSongModalVisible, setFavSongModalVisible] = useState(false);
   const [favSearchQuery, setFavSearchQuery] = useState('');
   const [favSearchResults, setFavSearchResults] = useState<FavoriteSong[]>([]);
   const [searchingFav, setSearchingFav] = useState(false);
 
-  // ─── Load counts ──────────────────────────────────────────────────────────
-
   useEffect(() => {
     if (!user) return;
     getFollowCounts(user.id).then(setFollowCounts).catch(() => {});
-
-    // Count items this user has shared
     void (async () => {
       try {
-        const { count } = await supabase
-          .from('shared_items')
-          .select('id', { count: 'exact', head: true })
-          .eq('sender_id', user.id);
+        const { count } = await supabase.from('shared_items').select('id', { count: 'exact', head: true }).eq('sender_id', user.id);
         setSharedCount(count ?? 0);
       } catch {}
     })();
+    // Load public shares
+    setLoadingPublic(true);
+    void (async () => {
+      try {
+        const { data } = await supabase.from('shared_items').select('*').eq('sender_id', user.id).order('created_at', { ascending: false }).limit(20);
+        setPublicShares(data ?? []);
+      } catch {} finally { setLoadingPublic(false); }
+    })();
   }, [user, getFollowCounts]);
 
-  // Keep counts in sync with follow changes
   useEffect(() => {
     setFollowCounts({ followers: followers.length, following: following.length });
   }, [followers.length, following.length]);
 
-  // ─── Avatar upload ────────────────────────────────────────────────────────
+  useEffect(() => {
+    setAvatarPreviewUri(null);
+  }, [user?.avatar_url]);
 
   const handleAvatarPress = async () => {
     if (!user || uploadingAvatar) return;
     setUploadingAvatar(true);
     try {
-      const url = await pickAndUploadAvatar(user.id);
-      if (url) await refreshUser();
-    } catch {
-      Alert.alert('Error', 'Could not update profile photo');
-    } finally {
-      setUploadingAvatar(false);
-    }
-  };
-
-  // ─── Edit Profile modal ───────────────────────────────────────────────────
-
-  const openEditProfile = () => {
-    setDraftName(user?.display_name ?? '');
-    setDraftBio(user?.bio ?? '');
-    setEditProfileVisible(true);
-  };
-
-  const saveProfile = async () => {
-    if (!user) return;
-    setEditProfileVisible(false);
-    try {
-      await supabase.from('users').update({
-        display_name: draftName.trim() || user.display_name,
-        bio: draftBio.trim() || null,
-      }).eq('id', user.id);
+      const upload = await pickAndUploadAvatar(user.id);
+      if (!upload) return;
+      setAvatarPreviewUri(upload.localUri);
       await refreshUser();
-    } catch {
-      Alert.alert('Error', 'Could not save profile');
     }
+    catch { Alert.alert('Error', 'Could not update photo'); }
+    finally { setUploadingAvatar(false); }
   };
-
-  // ─── Favorite song ────────────────────────────────────────────────────────
 
   const handleFavSearch = useCallback(async () => {
     if (!user || !favSearchQuery.trim()) return;
     setSearchingFav(true);
     try {
       const results: FavoriteSong[] = [];
-
       if (user.spotify_access_token) {
         const tracks = await Spotify.searchTracks(user.id, favSearchQuery.trim());
+        for (const t of tracks.slice(0, 5)) results.push({ title: t.name, artist: t.artists.map(a => a.name).join(', '), service: 'spotify', service_id: t.id, cover_url: t.album.images[0]?.url ?? '' });
+      }
+      if (user.apple_music_user_token) {
+        const tracks = await AppleMusic.searchTracks(user.id, favSearchQuery.trim());
         for (const t of tracks.slice(0, 5)) {
           results.push({
-            title: t.name,
-            artist: t.artists.map((a) => a.name).join(', '),
-            service: 'spotify',
+            title: t.attributes.name,
+            artist: t.attributes.artistName,
+            service: 'apple_music',
             service_id: t.id,
-            cover_url: t.album.images[0]?.url ?? '',
+            cover_url: t.attributes.artwork ? AppleMusic.resolveArtworkUrl(t.attributes.artwork.url, 150) : '',
           });
         }
       }
-
       if (user.youtube_access_token) {
         const tracks = await YouTubeMusic.searchTracks(user.id, favSearchQuery.trim());
-        const seen = new Set<string>();
-        for (const t of tracks) {
-          // Cap total results at 8; if Spotify already contributed 5, limit YouTube to 3
+        for (const t of tracks.slice(0, 3)) {
           if (results.length >= 8) break;
-          // Skip Vivo / regional variants — they duplicate the official release with different metadata
-          const channel = t.snippet.channelTitle ?? '';
-          if (/vivo/i.test(channel)) continue;
-          // Clean up title — strip common suffixes YouTube adds
-          const cleanTitle = t.snippet.title
-            .replace(/\s*[\[(](?:official\s*(?:video|music\s*video|audio|lyric\s*video|visualizer)?|audio|lyrics?|hd|hq|4k|explicit|clean|live)[)\]]/gi, '')
-            .trim();
-          // Deduplicate by normalised title+artist key
-          const artist = channel.replace(/ - Topic$/i, '').trim();
-          const key = `${cleanTitle.toLowerCase()}|${artist.toLowerCase()}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
+          const info = extractYouTubeTrackInfo(t.snippet.channelTitle, t.snippet.title);
           results.push({
-            title: cleanTitle,
-            artist,
+            title: info.title,
+            artist: info.artist,
             service: 'youtube_music',
             service_id: t.id.videoId,
             cover_url: t.snippet.thumbnails.medium?.url ?? '',
           });
         }
       }
-
       setFavSearchResults(results);
-    } finally {
-      setSearchingFav(false);
-    }
+    } finally { setSearchingFav(false); }
   }, [user, favSearchQuery]);
+
+  useEffect(() => {
+    if (!favSongModalVisible) return;
+    if (!favSearchQuery.trim()) {
+      setFavSearchResults([]);
+      setSearchingFav(false);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      void handleFavSearch();
+    }, 200);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [favSearchQuery, favSongModalVisible, handleFavSearch]);
 
   const saveFavoriteSong = async (song: FavoriteSong) => {
     if (!user) return;
-    setFavSongModalVisible(false);
-    setFavSearchQuery('');
-    setFavSearchResults([]);
-    try {
-      await supabase
-        .from('users')
-        .update({ favorite_song: song })
-        .eq('id', user.id);
-      await refreshUser();
-    } catch {
-      Alert.alert('Error', 'Could not save favorite song');
-    }
+    setFavSongModalVisible(false); setFavSearchQuery(''); setFavSearchResults([]);
+    try { await supabase.from('users').update({ favorite_song: song }).eq('id', user.id); await refreshUser(); }
+    catch { Alert.alert('Error', 'Could not save'); }
   };
 
   const clearFavoriteSong = async () => {
     if (!user) return;
-    try {
-      await supabase
-        .from('users')
-        .update({ favorite_song: null })
-        .eq('id', user.id);
-      await refreshUser();
-    } catch {
-      Alert.alert('Error', 'Could not remove favorite song');
-    }
+    try { await supabase.from('users').update({ favorite_song: null }).eq('id', user.id); await refreshUser(); }
+    catch { Alert.alert('Error', 'Could not remove'); }
   };
-
-  // ─── Pinned playlists ─────────────────────────────────────────────────────
 
   const openPinnedPicker = async () => {
     setPinnedPickerVisible(true);
@@ -256,729 +182,415 @@ export default function Profile() {
     if (!user) return;
     setLoadingLibrary(true);
     try {
-      const playlists: LibraryPlaylist[] = [];
-      if (user.spotify_access_token) {
-        const sp = await Spotify.getUserPlaylists(user.id);
-        playlists.push(...sp);
-      }
-      if (user.apple_music_user_token) {
-        const am = await AppleMusic.getUserPlaylists(user.id);
-        playlists.push(...am);
-      }
-      if (user.youtube_access_token) {
-        const yt = await YouTubeMusic.getUserPlaylists(user.id);
-        playlists.push(...yt);
-      }
-      setLibraryPlaylists(playlists);
-    } finally {
-      setLoadingLibrary(false);
-    }
+      const lists: LibraryPlaylist[] = [];
+      if (user.spotify_access_token) lists.push(...await Spotify.getUserPlaylists(user.id));
+      if (user.apple_music_user_token) lists.push(...await AppleMusic.getUserPlaylists(user.id));
+      if (user.youtube_access_token) lists.push(...await YouTubeMusic.getUserPlaylists(user.id));
+      setLibraryPlaylists(lists);
+    } finally { setLoadingLibrary(false); }
   };
 
-  // ─── Music service connect/disconnect ────────────────────────────────────
-
-  const isConnected = (service: MusicService): boolean => {
-    switch (service) {
+  const isConnected = (svc: MusicService) => {
+    switch (svc) {
       case 'spotify': return !!user?.spotify_access_token;
       case 'apple_music': return !!user?.apple_music_user_token;
       case 'youtube_music': return !!user?.youtube_access_token;
     }
   };
 
-  const handleConnect = async (service: MusicService) => {
+  const handleConnect = async (svc: MusicService) => {
     if (!user) return;
-    setLoadingService(service);
+    setLoadingService(svc);
     try {
-      let success = false;
-      switch (service) {
-        case 'spotify': success = await Spotify.connectSpotify(user.id); break;
-        case 'apple_music': success = await AppleMusic.connectAppleMusic(user.id); break;
-        case 'youtube_music': success = await YouTubeMusic.connectYouTubeMusic(user.id); break;
+      let ok = false;
+      switch (svc) {
+        case 'spotify': ok = await Spotify.connectSpotify(user.id); break;
+        case 'apple_music': ok = await AppleMusic.connectAppleMusic(user.id); break;
+        case 'youtube_music': ok = await YouTubeMusic.connectYouTubeMusic(user.id); break;
       }
-      if (success) {
-        await refreshUser();
-        Alert.alert('Connected!', `${SERVICE_LABELS[service]} connected successfully.`);
-      } else {
-        Alert.alert('Failed', `Could not connect ${SERVICE_LABELS[service]}.`);
-      }
-    } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Connection failed');
-    } finally {
-      setLoadingService(null);
-    }
+      if (ok) { await refreshUser(); Alert.alert('Connected!', `${SERVICE_LABELS[svc]} connected.`); }
+      else Alert.alert('Failed', `Could not connect ${SERVICE_LABELS[svc]}.`);
+    } catch (err) { Alert.alert('Error', err instanceof Error ? err.message : 'Failed'); }
+    finally { setLoadingService(null); }
   };
 
-  const handleDisconnect = async (service: MusicService) => {
-    if (!user) return;
+  const handleDisconnect = (svc: MusicService) => {
+    Alert.alert(`Disconnect ${SERVICE_LABELS[svc]}?`, 'You can reconnect anytime.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Disconnect', style: 'destructive', onPress: async () => {
+        setLoadingService(svc);
+        try {
+          switch (svc) {
+            case 'spotify': await Spotify.disconnectSpotify(user!.id); break;
+            case 'apple_music': await AppleMusic.disconnectAppleMusic(user!.id); break;
+            case 'youtube_music': await YouTubeMusic.disconnectYouTubeMusic(user!.id); break;
+          }
+          await refreshUser();
+        } finally { setLoadingService(null); }
+      }},
+    ]);
+  };
+
+  const handleSetPrimary = async (svc: MusicService) => {
+    if (!user || user.primary_service === svc) return;
+    try { await setPrimaryService(svc); }
+    catch { Alert.alert('Error', 'Could not update primary service'); }
+  };
+
+  const handleConnectMissingService = () => {
+    const missing = SERVICES.filter(svc => !isConnected(svc));
+    if (missing.length === 0) return;
+    if (missing.length === 1) {
+      void handleConnect(missing[0]);
+      return;
+    }
+
     Alert.alert(
-      `Disconnect ${SERVICE_LABELS[service]}?`,
-      'You can reconnect at any time.',
+      'Connect a service',
+      'Choose a streaming service to connect.',
       [
+        ...missing.map(svc => ({ text: SERVICE_LABELS[svc], onPress: () => void handleConnect(svc) })),
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Disconnect',
-          style: 'destructive',
-          onPress: async () => {
-            setLoadingService(service);
-            try {
-              switch (service) {
-                case 'spotify': await Spotify.disconnectSpotify(user.id); break;
-                case 'apple_music': await AppleMusic.disconnectAppleMusic(user.id); break;
-                case 'youtube_music': await YouTubeMusic.disconnectYouTubeMusic(user.id); break;
-              }
-              await refreshUser();
-            } finally {
-              setLoadingService(null);
-            }
-          },
-        },
       ],
     );
   };
 
-  const handleSetPrimary = async (service: MusicService) => {
-    if (!user || user.primary_service === service) return;
+  const handleShareProfile = async () => {
+    if (!user) return;
     try {
-      await setPrimaryService(service);
+      await Share.share({
+        message: `Follow ${user.display_name} on MusicBridge: musicbridge://profile/${user.username}`,
+      });
     } catch {
-      Alert.alert('Error', 'Could not update primary service');
+      Alert.alert('Share unavailable', 'Could not open the system share sheet.');
     }
   };
 
-  const handleSignOut = async () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+  const handleSignOut = () => {
+    Alert.alert('Sign Out', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          setSigningOut(true);
-          try { await signOut(); } finally { setSigningOut(false); }
-        },
-      },
+      { text: 'Sign Out', style: 'destructive', onPress: async () => {
+        setSigningOut(true);
+        try { await signOut(); } finally { setSigningOut(false); }
+      }},
     ]);
   };
 
-  if (!user) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator color="#fff" />
-      </View>
-    );
-  }
+  if (!user) return <View style={styles.loadingScreen}><ActivityIndicator color={colors.primary} /></View>;
 
-  const initials = user.display_name
-    .split(' ')
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase();
-
-  const hasSpotify = !!user.spotify_access_token;
-  const hasYouTube = !!user.youtube_access_token;
-  const hasAnyService = hasSpotify || hasYouTube || !!user.apple_music_user_token;
+  const initials = user.display_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const primarySvc = user.primary_service as MusicService | null;
+  const avatarUri = avatarPreviewUri ?? user.avatar_url;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      {/* App bar */}
+      <AppBar
+        left={<Text style={styles.username}>@{user.username}</Text>}
+        right={
+          <>
+            <IconBtn name="notifications-outline" onPress={() => router.push('/(tabs)/notifications' as any)} />
+            <IconBtn name="paper-plane-outline" onPress={() => router.push('/(tabs)/friends' as any)} />
+            <IconBtn name="settings-outline" onPress={() => router.push('/(tabs)/settings' as any)} />
+          </>
+        }
+      />
 
-        {/* ── Avatar + name + username ────────────────────────────────────── */}
-        <View style={styles.header}>
-          <View style={styles.avatarWrapper}>
-            {user.avatar_url ? (
-              <Image source={{ uri: user.avatar_url }} style={styles.avatar} />
-            ) : (
-              <View style={styles.avatarFallback}>
-                <Text style={styles.initials}>{initials}</Text>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+
+        {/* ── Avatar + stats ── */}
+        <View style={styles.profileTop}>
+          <TouchableOpacity style={styles.avatarWrapper} onPress={handleAvatarPress} activeOpacity={0.85}>
+            {/* Outer primary ring */}
+            <View style={styles.avatarRing}>
+              <View style={styles.avatarRingGap}>
+                {avatarUri
+                  ? <Image source={{ uri: avatarUri }} style={styles.avatar} />
+                  : <View style={styles.avatarFallback}><Text style={styles.initials}>{initials}</Text></View>
+                }
               </View>
-            )}
-            {uploadingAvatar && (
-              <View style={styles.avatarOverlay}>
-                <ActivityIndicator color="#fff" size="small" />
+            </View>
+            {uploadingAvatar && <View style={styles.avatarOverlay}><ActivityIndicator color="#fff" size="small" /></View>}
+            <View style={styles.avatarEditBadge}><Ionicons name="camera" size={12} color="#fff" /></View>
+          </TouchableOpacity>
+
+          {/* Stats row */}
+          <View style={styles.statsRow}>
+            {[['Following', followCounts.following], ['Followers', followCounts.followers], ['Shared', sharedCount]].map(([label, val]) => (
+              <View key={label as string} style={styles.stat}>
+                <Text style={styles.statNum}>{val}</Text>
+                <Text style={styles.statLabel}>{label}</Text>
               </View>
-            )}
-          </View>
-
-          <Text style={styles.displayName}>{user.display_name}</Text>
-          <Text style={styles.username}>@{user.username}</Text>
-
-          {/* Bio (read-only) */}
-          {user.bio ? (
-            <Text style={styles.bio}>{user.bio}</Text>
-          ) : (
-            <Text style={styles.bioPlaceholder}>No bio yet</Text>
-          )}
-
-          {/* Edit Profile button */}
-          <TouchableOpacity
-            style={styles.editProfileButton}
-            onPress={openEditProfile}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.editProfileButtonText}>Edit Profile</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Followers / Following / Shared stats ────────────────────────── */}
-        <View style={styles.statsRow}>
-          <StatPill label="Followers" value={followCounts.followers} />
-          <View style={styles.statDivider} />
-          <StatPill label="Following" value={followCounts.following} />
-          <View style={styles.statDivider} />
-          <StatPill label="Shared" value={sharedCount} />
-        </View>
-
-        {/* ── Favorite song ────────────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Favorite Song</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.favSongRow}
-            onPress={() => setFavSongModalVisible(true)}
-            activeOpacity={0.8}
-          >
-            {user.favorite_song ? (
-              <>
-                {user.favorite_song.cover_url ? (
-                  <Image
-                    source={{ uri: user.favorite_song.cover_url }}
-                    style={styles.favCover}
-                  />
-                ) : (
-                  <View style={[styles.favCover, styles.favCoverFallback]}>
-                    <Text style={{ fontSize: 18 }}>🎵</Text>
-                  </View>
-                )}
-                <View style={styles.favInfo}>
-                  <Text style={styles.favTitle} numberOfLines={1}>
-                    {user.favorite_song.title}
-                  </Text>
-                  <Text style={styles.favArtist} numberOfLines={1}>
-                    {user.favorite_song.artist}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.serviceDot,
-                    { backgroundColor: SERVICE_COLORS[user.favorite_song.service] },
-                  ]}
-                />
-                <TouchableOpacity
-                  onPress={(e) => { e.stopPropagation(); clearFavoriteSong(); }}
-                  style={styles.unpinButton}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Text style={styles.unpinText}>✕</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <Text style={styles.favPlaceholder}>Tap to set a favorite song</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Taste tags (Spotify only) ────────────────────────────────────── */}
-        {stats.tasteTags.length > 0 && (
-          <View style={styles.tasteTagsRow}>
-            {stats.tasteTags.map((tag) => (
-              <TasteTag key={tag} label={tag} />
             ))}
           </View>
-        )}
+        </View>
 
-        {/* ── Wrapped stats card ───────────────────────────────────────────── */}
-        {stats.wrappedStats && hasAnyService && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Stats</Text>
-            <View style={styles.wrappedCard}>
-              {stats.wrappedStats.topTrackTitle && (
-                <View style={styles.wrappedRow}>
-                  <Text style={styles.wrappedLabel}>Top Track</Text>
-                  <Text style={styles.wrappedValue} numberOfLines={1}>
-                    {stats.wrappedStats.topTrackTitle}
-                  </Text>
-                </View>
-              )}
-              {stats.wrappedStats.topGenre && (
-                <View style={styles.wrappedRow}>
-                  <Text style={styles.wrappedLabel}>Top Genre</Text>
-                  <Text style={styles.wrappedValue}>{stats.wrappedStats.topGenre}</Text>
-                </View>
-              )}
-              <View style={styles.wrappedRow}>
-                <Text style={styles.wrappedLabel}>Saved Songs</Text>
-                <Text style={styles.wrappedValue}>
-                  {stats.wrappedStats.savedCount.toLocaleString()}
-                </Text>
-              </View>
-              <View style={[styles.wrappedRow, { borderBottomWidth: 0 }]}>
-                <Text style={styles.wrappedLabel}>Playlists</Text>
-                <Text style={styles.wrappedValue}>
-                  {stats.wrappedStats.playlistCount.toLocaleString()}
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
+        {/* ── Name + bio ── */}
+        <View style={styles.bioBlock}>
+          <Text style={styles.displayName}>{user.display_name}</Text>
+          {user.bio
+            ? <Text style={styles.bio}>{user.bio}</Text>
+            : <Text style={styles.bioPlaceholder}>No bio yet</Text>
+          }
+          {/* Genre chips */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagRow}>
+            {GENRE_TAGS.map(t => (
+              <View key={t} style={styles.tag}><Text style={styles.tagText}>{t}</Text></View>
+            ))}
+          </ScrollView>
+        </View>
 
-        {/* ── Top Artists ──────────────────────────────────────────────────── */}
-        {stats.topArtists.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
-              {hasSpotify ? 'Top Artists' : 'Subscribed Artists'}
-            </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
-              {stats.topArtists.map((artist) => (
-                <View key={artist.id} style={styles.artistCard}>
-                  {artist.imageUrl ? (
-                    <Image source={{ uri: artist.imageUrl }} style={styles.artistImage} />
-                  ) : (
-                    <View style={[styles.artistImage, styles.artistImageFallback]}>
-                      <Text style={{ fontSize: 22 }}>🎤</Text>
-                    </View>
-                  )}
-                  <Text style={styles.artistName} numberOfLines={2}>
-                    {artist.name}
-                  </Text>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* ── Top Songs ────────────────────────────────────────────────────── */}
-        {stats.topTracks.length > 0 && hasSpotify && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Top Songs</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
-              {stats.topTracks.map((track, i) => (
-                <View key={track.id} style={styles.trackCard}>
-                  {track.coverUrl ? (
-                    <Image source={{ uri: track.coverUrl }} style={styles.trackCover} />
-                  ) : (
-                    <View style={[styles.trackCover, styles.trackCoverFallback]}>
-                      <Text style={{ fontSize: 20 }}>🎵</Text>
-                    </View>
-                  )}
-                  <Text style={styles.trackRank}>#{i + 1}</Text>
-                  <Text style={styles.trackTitle} numberOfLines={2}>
-                    {track.title}
-                  </Text>
-                  <Text style={styles.trackArtist} numberOfLines={1}>
-                    {track.artist}
-                  </Text>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* ── Pinned Playlists ─────────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Pinned Playlists</Text>
-            {stats.pinnedPlaylists.length < 3 && (
-              <TouchableOpacity onPress={openPinnedPicker} style={styles.addButton}>
-                <Text style={styles.addButtonText}>+ Add</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          {stats.pinnedPlaylists.length === 0 ? (
-            <Text style={styles.emptyHint}>Pin up to 3 playlists to highlight on your profile</Text>
-          ) : (
-            stats.pinnedPlaylists.map((pl) => (
-              <View key={pl.id} style={styles.pinnedRow}>
-                {pl.coverUrl ? (
-                  <Image source={{ uri: pl.coverUrl }} style={styles.pinnedCover} />
-                ) : (
-                  <View style={[styles.pinnedCover, styles.pinnedCoverFallback]}>
-                    <Text style={{ fontSize: 16 }}>🎵</Text>
-                  </View>
-                )}
-                <View style={styles.pinnedInfo}>
-                  <Text style={styles.pinnedName} numberOfLines={1}>{pl.name}</Text>
-                  <Text style={styles.pinnedMeta}>
-                    {pl.trackCount} tracks ·{' '}
-                    <Text style={{ color: SERVICE_COLORS[pl.service] }}>
-                      {SERVICE_LABELS[pl.service]}
-                    </Text>
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => stats.unpinPlaylist(pl.id)}
-                  style={styles.unpinButton}
-                >
-                  <Text style={styles.unpinText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))
+        {/* ── Connected services chips ── */}
+        <View style={styles.svcRow}>
+          {SERVICES.filter(isConnected).map(svc => (
+            <TouchableOpacity
+              key={svc}
+              style={[styles.svcChip, primarySvc === svc && styles.svcChipPrimary]}
+              onPress={() => handleSetPrimary(svc)}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.svcDot, { backgroundColor: SERVICE_COLORS[svc] }]} />
+              <Text style={styles.svcChipText}>
+                {svc === 'spotify' ? 'Spotify' : svc === 'apple_music' ? 'Apple' : 'YT Music'}
+              </Text>
+              {primarySvc === svc && <Text style={styles.svcPrimaryBadge}>Primary</Text>}
+            </TouchableOpacity>
+          ))}
+          {SERVICES.some(s => !isConnected(s)) && (
+            <TouchableOpacity style={styles.svcChipAdd} onPress={handleConnectMissingService} activeOpacity={0.8}>
+              <Ionicons name="add" size={14} color={colors.fg3} />
+              <Text style={styles.svcChipAddText}>Connect</Text>
+            </TouchableOpacity>
           )}
         </View>
 
-        {/* ── Listening History (Spotify only) ────────────────────────────── */}
-        {hasSpotify && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Listening History</Text>
-              <Switch
-                value={stats.historyOptIn}
-                onValueChange={stats.setHistoryOptIn}
-                trackColor={{ false: '#2a2a2a', true: '#1DB954' }}
-                thumbColor="#fff"
-              />
+        {/* ── Edit / Share ── */}
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={styles.editBtn} onPress={() => router.push({ pathname: '/(tabs)/settings' as any, params: { edit: '1' } })} activeOpacity={0.8}>
+            <Text style={styles.editBtnText}>Edit profile</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.editBtn} onPress={handleShareProfile} activeOpacity={0.8}>
+            <Text style={styles.editBtnText}>Share profile</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/(tabs)/settings' as any)} activeOpacity={0.8}>
+            <Ionicons name="settings-outline" size={16} color={colors.fg2} />
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Favorite song banner ── */}
+        {user.favorite_song && (
+          <TouchableOpacity style={styles.favBanner} onPress={() => setFavSongModalVisible(true)} activeOpacity={0.85}>
+            <CoverArt uri={user.favorite_song.cover_url} size={56} radius={10} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.favBannerLabel}>♥ Favorite song</Text>
+              <Text style={styles.favBannerTitle} numberOfLines={1}>{user.favorite_song.title}</Text>
+              <Text style={styles.favBannerArtist} numberOfLines={1}>{user.favorite_song.artist}</Text>
             </View>
-            {stats.historyOptIn && stats.recentTracks.length > 0 && (
-              <View style={styles.historyList}>
-                {stats.recentTracks.slice(0, 10).map((track, i) => (
-                  <View key={`${track.id}-${i}`} style={styles.historyRow}>
-                    {track.coverUrl ? (
-                      <Image source={{ uri: track.coverUrl }} style={styles.historyCover} />
-                    ) : (
-                      <View style={[styles.historyCover, styles.historyCoverFallback]}>
-                        <Text style={{ fontSize: 14 }}>🎵</Text>
-                      </View>
-                    )}
-                    <View style={styles.historyInfo}>
-                      <Text style={styles.historyTitle} numberOfLines={1}>{track.title}</Text>
-                      <Text style={styles.historyArtist} numberOfLines={1}>{track.artist}</Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            )}
-            {stats.historyOptIn && stats.loading && (
-              <ActivityIndicator color="#fff" style={{ marginTop: 12 }} />
-            )}
-            {!stats.historyOptIn && (
-              <Text style={styles.emptyHint}>Enable to show your recently played tracks</Text>
-            )}
+            <Ionicons name="play" size={24} color={colors.fg2} />
+          </TouchableOpacity>
+        )}
+        {!user.favorite_song && (
+          <TouchableOpacity style={[styles.favBanner, styles.favBannerEmpty]} onPress={() => setFavSongModalVisible(true)} activeOpacity={0.8}>
+            <Ionicons name="heart-outline" size={22} color={colors.primary} />
+            <Text style={styles.favBannerEmptyText}>Set a favorite song</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* ── Wrapped stats card ── */}
+        {stats.wrappedStats && (
+          <View style={styles.wrappedCard}>
+            <View style={styles.wrappedCardHeader}>
+              <Text style={styles.wrappedCardTitle}>2026 so far</Text>
+              <Text style={styles.wrappedCardSub}>APR · WK 17</Text>
+            </View>
+            <View style={styles.wrappedGrid}>
+              {[
+                { k: 'top track', v: stats.wrappedStats.topTrackTitle ?? '—' },
+                { k: 'top genre', v: stats.wrappedStats.topGenre ?? '—' },
+                { k: 'saved', v: String(stats.wrappedStats.savedCount) },
+                { k: 'playlists', v: String(stats.wrappedStats.playlistCount) },
+              ].map(({ k, v }) => (
+                <View key={k} style={styles.wrappedStat}>
+                  <Text style={styles.wrappedStatLabel}>{k}</Text>
+                  <Text style={styles.wrappedStatValue} numberOfLines={1}>{v}</Text>
+                </View>
+              ))}
+            </View>
           </View>
         )}
 
-        {/* ── Streaming Services ───────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Streaming Services</Text>
-          <Text style={styles.sectionSubtitle}>
-            Connect your services so friends can share music you can actually play.
-          </Text>
-          {SERVICES.map((service) => (
-            <View key={service}>
+        {/* ── Pinned playlists ── */}
+        {stats.pinnedPlaylists.length > 0 && (
+          <>
+            <SectionTitle title="Pinned playlists" right={
+              <TouchableOpacity onPress={openPinnedPicker}><Text style={styles.rightAction}>Edit</Text></TouchableOpacity>
+            } />
+            <View style={styles.pinnedGrid}>
+              {stats.pinnedPlaylists.map(pl => (
+                <View key={pl.id} style={styles.pinnedItem}>
+                  <CoverArt uri={pl.coverUrl} size={96} radius={10} />
+                  <Text style={styles.pinnedTitle} numberOfLines={2}>{pl.name}</Text>
+                  <Text style={styles.pinnedMeta}>{pl.trackCount} tracks</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+        {stats.pinnedPlaylists.length === 0 && (
+          <SectionTitle title="Pinned playlists" right={
+            <TouchableOpacity onPress={openPinnedPicker}><Text style={styles.rightAction}>+ Add</Text></TouchableOpacity>
+          } />
+        )}
+
+        {/* ── Public shares section ── */}
+        <View style={styles.publicSharesHeader}>
+          <View style={styles.publicSharesPlayBtn}>
+            <Ionicons name="play" size={16} color={colors.primaryInk} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.publicSharesTitle}>Public shares</Text>
+            <Text style={styles.publicSharesSub}>Songs {user.display_name.split(' ')[0]} has shared · {sharedCount}</Text>
+          </View>
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.fg3} />
+        </View>
+
+        <View style={styles.publicSharesList}>
+          {loadingPublic
+            ? <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
+            : publicShares.slice(0, 8).map((item, i) => (
+              <View key={item.id} style={[styles.shareRow, i < publicShares.length - 1 && styles.shareRowSep]}>
+                <CoverArt uri={item.cover_image_url} size={48} radius={8} />
+                <View style={styles.shareRowInfo}>
+                  <Text style={styles.shareRowTitle} numberOfLines={1}>{item.title}</Text>
+                  <View style={styles.shareRowMeta}>
+                    {item.sender?.primary_service && <ServiceDot service={item.sender.primary_service} size={8} />}
+                    <Text style={styles.shareRowArtist} numberOfLines={1}>{item.artist}</Text>
+                  </View>
+                </View>
+                <Text style={styles.shareRowTime}>{timeAgo(item.created_at)}</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
+              </View>
+            ))
+          }
+          {!loadingPublic && publicShares.length === 0 && (
+            <View style={styles.emptyPublic}>
+              <Text style={styles.emptyPublicText}>No public shares yet</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ── Streaming services ── */}
+        <SectionTitle title="Streaming Services" />
+        <View style={{ paddingHorizontal: 16 }}>
+          <Text style={styles.serviceSubtitle}>Connect your services so friends can share music you can play.</Text>
+          {SERVICES.map(svc => (
+            <View key={svc}>
               <MusicServiceButton
-                service={service}
-                connected={isConnected(service)}
-                onConnect={() => handleConnect(service)}
-                onDisconnect={() => handleDisconnect(service)}
-                loading={loadingService === service}
-                isPrimary={user.primary_service === service}
+                service={svc}
+                connected={isConnected(svc)}
+                onConnect={() => handleConnect(svc)}
+                onDisconnect={() => handleDisconnect(svc)}
+                loading={loadingService === svc}
+                isPrimary={primarySvc === svc}
               />
-              {isConnected(service) && user.primary_service !== service && (
-                <TouchableOpacity
-                  style={styles.setPrimaryButton}
-                  onPress={() => handleSetPrimary(service)}
-                  activeOpacity={0.7}
-                >
+              {isConnected(svc) && primarySvc !== svc && (
+                <TouchableOpacity style={styles.setPrimaryRow} onPress={() => handleSetPrimary(svc)}>
                   <Text style={styles.setPrimaryText}>Set as primary</Text>
                 </TouchableOpacity>
               )}
             </View>
           ))}
-          {user.primary_service && (
+          {primarySvc && (
             <View style={styles.primaryInfo}>
-              <View
-                style={[styles.primaryDot, { backgroundColor: SERVICE_COLORS[user.primary_service] }]}
-              />
-              <Text style={styles.primaryInfoText}>
-                Songs open in{' '}
-                <Text style={styles.primaryInfoHighlight}>
-                  {SERVICE_LABELS[user.primary_service]}
-                </Text>
-              </Text>
+              <View style={[styles.primaryDot, { backgroundColor: SERVICE_COLORS[primarySvc] }]} />
+              <Text style={styles.primaryInfoText}>Songs open in <Text style={styles.primaryInfoHighlight}>{SERVICE_LABELS[primarySvc]}</Text></Text>
             </View>
           )}
         </View>
 
-        {/* ── Sign Out ─────────────────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={[styles.signOutButton, signingOut && styles.signOutDisabled]}
-            onPress={handleSignOut}
-            disabled={signingOut}
-            activeOpacity={0.8}
-          >
-            {signingOut ? (
-              <ActivityIndicator color="#ff4444" size="small" />
-            ) : (
-              <Text style={styles.signOutText}>Sign Out</Text>
-            )}
+        {/* ── Listening history toggle ── */}
+        {!!user.spotify_access_token && (
+          <SectionTitle title="Listening History" right={
+            <Switch value={stats.historyOptIn} onValueChange={stats.setHistoryOptIn} trackColor={{ false: colors.line2, true: colors.primary }} thumbColor="#fff" />
+          } />
+        )}
+
+        {/* ── Sign out ── */}
+        <View style={{ paddingHorizontal: 16, marginTop: 20 }}>
+          <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} disabled={signingOut} activeOpacity={0.8}>
+            {signingOut ? <ActivityIndicator color={colors.coral} size="small" /> : <Text style={styles.signOutText}>Sign Out</Text>}
           </TouchableOpacity>
         </View>
 
         <View style={{ height: 48 }} />
       </ScrollView>
 
-      {/* ── Edit Profile Modal ────────────────────────────────────────────── */}
-      <Modal
-        visible={editProfileVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setEditProfileVisible(false)}
-      >
-        <View style={modalStyles.container}>
-          <View style={modalStyles.header}>
-            <Text style={modalStyles.title}>Edit Profile</Text>
-            <TouchableOpacity
-              onPress={() => setEditProfileVisible(false)}
-              style={modalStyles.close}
-            >
-              <Text style={modalStyles.closeText}>✕</Text>
-            </TouchableOpacity>
+      {/* ── Pinned playlist picker ── */}
+      <Modal visible={pinnedPickerVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPinnedPickerVisible(false)}>
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Pin a Playlist</Text>
+            <TouchableOpacity onPress={() => setPinnedPickerVisible(false)}><Ionicons name="close" size={22} color={colors.fg3} /></TouchableOpacity>
           </View>
-          <ScrollView contentContainerStyle={styles.editModalScroll}>
-            {/* Avatar */}
-            <TouchableOpacity
-              style={styles.editAvatarRow}
-              onPress={async () => {
-                setEditProfileVisible(false);
-                await handleAvatarPress();
-                setEditProfileVisible(true);
-              }}
-              activeOpacity={0.8}
-            >
-              {user.avatar_url ? (
-                <Image source={{ uri: user.avatar_url }} style={styles.editAvatar} />
-              ) : (
-                <View style={[styles.editAvatar, styles.avatarFallback]}>
-                  <Text style={styles.initials}>{initials}</Text>
-                </View>
-              )}
-              <Text style={styles.editAvatarLabel}>Change Photo</Text>
-            </TouchableOpacity>
-
-            {/* Display Name */}
-            <Text style={styles.editFieldLabel}>Display Name</Text>
-            <TextInput
-              style={styles.editInput}
-              value={draftName}
-              onChangeText={setDraftName}
-              placeholder="Display name"
-              placeholderTextColor="#444"
-              autoCapitalize="words"
-              maxLength={50}
-            />
-
-            {/* Bio */}
-            <Text style={styles.editFieldLabel}>Bio</Text>
-            <TextInput
-              style={[styles.editInput, styles.editInputMultiline]}
-              value={draftBio}
-              onChangeText={setDraftBio}
-              placeholder="Write a bio…"
-              placeholderTextColor="#444"
-              multiline
-              maxLength={160}
-              textAlignVertical="top"
-            />
-
-            {/* Favorite Song */}
-            <Text style={styles.editFieldLabel}>Favorite Song</Text>
-            <TouchableOpacity
-              style={styles.editRowItem}
-              onPress={() => {
-                setEditProfileVisible(false);
-                setFavSongModalVisible(true);
-              }}
-              activeOpacity={0.8}
-            >
-              {user.favorite_song ? (
-                <>
-                  {user.favorite_song.cover_url ? (
-                    <Image source={{ uri: user.favorite_song.cover_url }} style={styles.editRowCover} />
-                  ) : (
-                    <View style={[styles.editRowCover, styles.favCoverFallback]}>
-                      <Text style={{ fontSize: 14 }}>🎵</Text>
-                    </View>
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.editRowTitle} numberOfLines={1}>{user.favorite_song.title}</Text>
-                    <Text style={styles.editRowMeta} numberOfLines={1}>{user.favorite_song.artist}</Text>
-                  </View>
-                </>
-              ) : (
-                <Text style={styles.editRowPlaceholder}>Tap to set favorite song</Text>
-              )}
-              <Text style={styles.editRowChevron}>›</Text>
-            </TouchableOpacity>
-
-            {/* Pinned Playlists */}
-            <Text style={styles.editFieldLabel}>Pinned Playlists</Text>
-            <TouchableOpacity
-              style={styles.editRowItem}
-              onPress={() => {
-                setEditProfileVisible(false);
-                openPinnedPicker();
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.editRowPlaceholder}>
-                {stats.pinnedPlaylists.length > 0
-                  ? `${stats.pinnedPlaylists.length} playlist${stats.pinnedPlaylists.length > 1 ? 's' : ''} pinned`
-                  : 'Pin up to 3 playlists'}
-              </Text>
-              <Text style={styles.editRowChevron}>›</Text>
-            </TouchableOpacity>
-
-            {/* Save */}
-            <TouchableOpacity
-              style={styles.saveProfileButton}
-              onPress={saveProfile}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.saveProfileButtonText}>Save</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </Modal>
-
-      {/* ── Pinned Playlist Picker Modal ───────────────────────────────────── */}
-      <Modal
-        visible={pinnedPickerVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setPinnedPickerVisible(false)}
-      >
-        <View style={modalStyles.container}>
-          <View style={modalStyles.header}>
-            <Text style={modalStyles.title}>Pin a Playlist</Text>
-            <TouchableOpacity
-              onPress={() => setPinnedPickerVisible(false)}
-              style={modalStyles.close}
-            >
-              <Text style={modalStyles.closeText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          {loadingLibrary ? (
-            <ActivityIndicator color="#fff" style={{ marginTop: 40 }} />
-          ) : (
+          {loadingLibrary ? <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} /> : (
             <ScrollView>
-              {libraryPlaylists
-                .filter((pl) => !stats.pinnedPlaylists.find((p) => p.id === pl.id))
-                .map((pl) => (
-                  <TouchableOpacity
-                    key={pl.id}
-                    style={modalStyles.row}
-                    onPress={() => {
-                      stats.pinPlaylist(pl);
-                      setPinnedPickerVisible(false);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    {pl.coverUrl ? (
-                      <Image source={{ uri: pl.coverUrl }} style={modalStyles.cover} />
-                    ) : (
-                      <View style={[modalStyles.cover, modalStyles.coverFallback]}>
-                        <Text style={{ fontSize: 16 }}>🎵</Text>
-                      </View>
-                    )}
-                    <View style={modalStyles.info}>
-                      <Text style={modalStyles.name} numberOfLines={1}>{pl.name}</Text>
-                      <Text style={modalStyles.meta}>
-                        {pl.trackCount} tracks ·{' '}
-                        <Text style={{ color: SERVICE_COLORS[pl.service] }}>
-                          {SERVICE_LABELS[pl.service]}
-                        </Text>
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              {libraryPlaylists.length === 0 && (
-                <Text style={modalStyles.empty}>
-                  No playlists found. Connect a streaming service first.
-                </Text>
-              )}
+              {libraryPlaylists.filter(pl => !stats.pinnedPlaylists.find(p => p.id === pl.id)).map(pl => (
+                <TouchableOpacity key={pl.id} style={styles.modalRow} onPress={() => { stats.pinPlaylist(pl); setPinnedPickerVisible(false); }} activeOpacity={0.8}>
+                  <CoverArt uri={pl.coverUrl} size={48} radius={8} />
+                  <View style={styles.modalRowInfo}>
+                    <Text style={styles.modalRowTitle} numberOfLines={1}>{pl.name}</Text>
+                    <Text style={styles.modalRowMeta}>{pl.trackCount} tracks · <Text style={{ color: SERVICE_COLORS[pl.service] }}>{SERVICE_LABELS[pl.service]}</Text></Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {libraryPlaylists.length === 0 && <Text style={styles.modalEmpty}>No playlists found. Connect a service first.</Text>}
             </ScrollView>
           )}
         </View>
       </Modal>
 
-      {/* ── Favorite Song Modal ────────────────────────────────────────────── */}
-      <Modal
-        visible={favSongModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => {
-          setFavSongModalVisible(false);
-          setFavSearchQuery('');
-          setFavSearchResults([]);
-        }}
-      >
-        <View style={modalStyles.container}>
-          <View style={modalStyles.header}>
-            <Text style={modalStyles.title}>Favorite Song</Text>
-            <TouchableOpacity
-              onPress={() => {
-                setFavSongModalVisible(false);
-                setFavSearchQuery('');
-                setFavSearchResults([]);
-              }}
-              style={modalStyles.close}
-            >
-              <Text style={modalStyles.closeText}>✕</Text>
+      {/* ── Favorite song modal ── */}
+      <Modal visible={favSongModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => { setFavSongModalVisible(false); setFavSearchQuery(''); setFavSearchResults([]); }}>
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Favorite Song</Text>
+            <TouchableOpacity onPress={() => { setFavSongModalVisible(false); setFavSearchQuery(''); setFavSearchResults([]); }}>
+              <Ionicons name="close" size={22} color={colors.fg3} />
             </TouchableOpacity>
           </View>
-
           <View style={styles.favSearchRow}>
-            <TextInput
-              style={styles.favSearchInput}
-              placeholder="Search for a song…"
-              placeholderTextColor="#555"
-              value={favSearchQuery}
-              onChangeText={setFavSearchQuery}
-              onSubmitEditing={handleFavSearch}
-              returnKeyType="search"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TouchableOpacity
-              style={[styles.favSearchButton, searchingFav && styles.favSearchDisabled]}
-              onPress={handleFavSearch}
-              disabled={searchingFav}
-              activeOpacity={0.8}
-            >
-              {searchingFav ? (
-                <ActivityIndicator color="#000" size="small" />
-              ) : (
-                <Text style={styles.favSearchButtonText}>Search</Text>
-              )}
+            <View style={styles.favSearchInput}>
+              <TextInput
+                style={{ flex: 1, color: colors.fg, fontSize: 15 }}
+                placeholder="Search for a song…"
+                placeholderTextColor={colors.fg4}
+                value={favSearchQuery}
+                onChangeText={setFavSearchQuery}
+                onSubmitEditing={handleFavSearch}
+                returnKeyType="search"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            <TouchableOpacity style={styles.favSearchBtn} onPress={handleFavSearch} disabled={searchingFav}>
+              {searchingFav ? <ActivityIndicator color={colors.primaryInk} size="small" /> : <Text style={styles.favSearchBtnText}>Search</Text>}
             </TouchableOpacity>
           </View>
-
           <ScrollView>
             {favSearchResults.map((song, i) => (
-              <TouchableOpacity
-                key={`${song.service_id}-${i}`}
-                style={modalStyles.row}
-                onPress={() => saveFavoriteSong(song)}
-                activeOpacity={0.8}
-              >
-                {song.cover_url ? (
-                  <Image source={{ uri: song.cover_url }} style={modalStyles.cover} />
-                ) : (
-                  <View style={[modalStyles.cover, modalStyles.coverFallback]}>
-                    <Text style={{ fontSize: 16 }}>🎵</Text>
-                  </View>
-                )}
-                <View style={modalStyles.info}>
-                  <Text style={modalStyles.name} numberOfLines={1}>{song.title}</Text>
-                  <Text style={modalStyles.meta} numberOfLines={1}>{song.artist}</Text>
+              <TouchableOpacity key={`${song.service_id}-${i}`} style={styles.modalRow} onPress={() => saveFavoriteSong(song)} activeOpacity={0.8}>
+                <CoverArt uri={song.cover_url} size={48} radius={8} />
+                <View style={styles.modalRowInfo}>
+                  <Text style={styles.modalRowTitle} numberOfLines={1}>{song.title}</Text>
+                  <Text style={styles.modalRowMeta} numberOfLines={1}>{song.artist}</Text>
                 </View>
-                <View
-                  style={[styles.serviceDot, { backgroundColor: SERVICE_COLORS[song.service] }]}
-                />
+                <View style={[styles.svcDot, { backgroundColor: SERVICE_COLORS[song.service] }]} />
               </TouchableOpacity>
             ))}
-            {favSearchResults.length === 0 && favSearchQuery.length > 0 && !searchingFav && (
-              <Text style={modalStyles.empty}>No results. Try a different search.</Text>
+            {user.favorite_song && (
+              <TouchableOpacity style={styles.clearFavBtn} onPress={clearFavoriteSong}>
+                <Text style={styles.clearFavText}>Remove favorite song</Text>
+              </TouchableOpacity>
             )}
           </ScrollView>
         </View>
@@ -988,523 +600,166 @@ export default function Profile() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f0f0f',
-  },
-  scroll: {
-    paddingBottom: 24,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#0f0f0f',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  container: { flex: 1, backgroundColor: colors.bg },
+  loadingScreen: { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' },
 
-  // ── Header ────────────────────────────────────────────────────────────────
-  header: {
-    alignItems: 'center',
-    paddingTop: 28,
-    paddingBottom: 20,
-    paddingHorizontal: 24,
+  username: { fontSize: 18, fontWeight: '700', color: colors.fg, letterSpacing: -0.3 },
+
+  // Profile top
+  profileTop: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 20, paddingBottom: 16, gap: 20,
   },
-  avatarWrapper: {
-    position: 'relative',
-    marginBottom: 14,
+  avatarWrapper: { position: 'relative' },
+  avatarRing: {
+    width: 96, height: 96, borderRadius: 48,
+    backgroundColor: colors.primary,
+    padding: 2, alignItems: 'center', justifyContent: 'center',
   },
-  avatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+  avatarRingGap: {
+    width: 92, height: 92, borderRadius: 46,
+    backgroundColor: colors.bg, padding: 2,
+    alignItems: 'center', justifyContent: 'center',
   },
+  avatar: { width: 84, height: 84, borderRadius: 42 },
   avatarFallback: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: '#1a1a1a',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 84, height: 84, borderRadius: 42,
+    backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center',
   },
-  initials: {
-    color: '#fff',
-    fontSize: 32,
-    fontWeight: '700',
+  initials: { fontSize: 28, fontWeight: '700', color: colors.fg },
+  avatarOverlay: { ...StyleSheet.absoluteFillObject, borderRadius: 48, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
+  avatarEditBadge: {
+    position: 'absolute', right: 2, bottom: 2,
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: colors.primary, borderWidth: 2, borderColor: colors.bg,
+    alignItems: 'center', justifyContent: 'center',
   },
-  avatarOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 45,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  editProfileButton: {
-    borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    marginTop: 12,
-  },
-  editProfileButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  displayName: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: '800',
-    marginBottom: 3,
-    letterSpacing: -0.3,
-  },
-  username: {
-    color: '#555',
-    fontSize: 14,
-    marginBottom: 12,
-  },
-  bio: {
-    color: '#aaa',
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  bioPlaceholder: {
-    color: '#444',
-    fontSize: 14,
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
-  // ── Edit Profile modal fields ─────────────────────────────────────────────
-  editModalScroll: {
-    padding: 20,
-    paddingBottom: 48,
-  },
-  editAvatarRow: {
-    alignItems: 'center',
-    marginBottom: 24,
-    gap: 10,
-  },
-  editAvatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-  },
-  editAvatarLabel: {
-    color: '#888',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  editFieldLabel: {
-    color: '#888',
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 6,
-    marginTop: 18,
-  },
-  editInput: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
-    padding: 12,
-    color: '#fff',
-    fontSize: 15,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  editInputMultiline: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  editRowItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
-    padding: 12,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  editRowCover: {
-    width: 36,
-    height: 36,
-    borderRadius: 6,
-  },
-  editRowTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 1 },
-  editRowMeta: { color: '#666', fontSize: 12 },
-  editRowPlaceholder: { color: '#444', fontSize: 14, flex: 1, fontStyle: 'italic' },
-  editRowChevron: { color: '#444', fontSize: 20, marginLeft: 'auto' },
-  saveProfileButton: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 32,
-  },
-  saveProfileButtonText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  statsRow: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
+  stat: { alignItems: 'center', gap: 2 },
+  statNum: { fontSize: 18, fontWeight: '800', color: colors.fg, letterSpacing: -0.5 },
+  statLabel: { fontSize: 11, color: colors.fg3 },
 
-  // ── Stats row ─────────────────────────────────────────────────────────────
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#1a1a1a',
-    marginBottom: 4,
-  },
-  statDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: '#2a2a2a',
-    marginHorizontal: 24,
-  },
+  // Bio block
+  bioBlock: { paddingHorizontal: 20, paddingBottom: 12 },
+  displayName: { fontSize: 16, fontWeight: '700', color: colors.fg, marginBottom: 4 },
+  bio: { fontSize: 13, color: colors.fg2, lineHeight: 18, marginBottom: 8 },
+  bioPlaceholder: { fontSize: 13, color: colors.fg4, fontStyle: 'italic', marginBottom: 8 },
+  tagRow: { gap: 6 },
+  tag: { backgroundColor: colors.bgCard, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: colors.line },
+  tagText: { fontSize: 11, color: colors.fg3, fontWeight: '600' },
 
-  // ── Taste tags ────────────────────────────────────────────────────────────
-  tasteTagsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 16,
-    marginBottom: 12,
-    justifyContent: 'center',
-  },
+  // Service chips
+  svcRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 12, flexWrap: 'wrap' },
+  svcChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.bgCard, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: colors.line },
+  svcChipPrimary: { borderColor: colors.primary },
+  svcDot: { width: 8, height: 8, borderRadius: 4 },
+  svcChipText: { fontSize: 12, color: colors.fg2, fontWeight: '600' },
+  svcPrimaryBadge: { fontSize: 10, color: colors.primary, fontWeight: '700' },
+  svcChipAdd: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: colors.line, borderStyle: 'dashed' },
+  svcChipAddText: { fontSize: 12, color: colors.fg3 },
 
-  // ── Generic section ───────────────────────────────────────────────────────
-  section: {
-    paddingHorizontal: 16,
-    marginTop: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
-    marginBottom: 12,
-  },
-  sectionSubtitle: {
-    color: '#666',
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 16,
-    marginTop: -6,
-  },
-  emptyHint: {
-    color: '#444',
-    fontSize: 13,
-    fontStyle: 'italic',
-  },
-  addButton: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  addButtonText: {
-    color: '#888',
-    fontSize: 13,
-    fontWeight: '600',
-  },
+  // Edit / share buttons
+  actionRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 16 },
+  editBtn: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line, alignItems: 'center' },
+  editBtnText: { fontSize: 13, fontWeight: '600', color: colors.fg },
+  iconBtn: { width: 38, height: 38, borderRadius: 10, backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
 
-  // ── Favorite song ─────────────────────────────────────────────────────────
-  favSongRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 12,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-    minHeight: 64,
+  // Favorite song
+  favBanner: {
+    marginHorizontal: 16, marginBottom: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: colors.bgCard, borderRadius: 14, padding: 12,
+    borderWidth: 1, borderColor: colors.line,
   },
-  favCover: {
-    width: 44,
-    height: 44,
-    borderRadius: 6,
-  },
-  favCoverFallback: {
-    backgroundColor: '#2a2a2a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  favInfo: { flex: 1 },
-  favTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  favArtist: { color: '#666', fontSize: 12 },
-  favPlaceholder: { color: '#444', fontSize: 14, fontStyle: 'italic', flex: 1 },
-  serviceDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    flexShrink: 0,
-  },
-  favSearchRow: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-  },
-  favSearchInput: {
-    flex: 1,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    color: '#fff',
-    fontSize: 15,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  favSearchButton: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  favSearchDisabled: { opacity: 0.6 },
-  favSearchButtonText: {
-    color: '#000',
-    fontSize: 14,
-    fontWeight: '700',
-  },
+  favBannerEmpty: { justifyContent: 'center', borderStyle: 'dashed', gap: 8 },
+  favBannerLabel: { fontSize: 10, color: colors.coral, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
+  favBannerTitle: { fontSize: 15, fontWeight: '700', color: colors.fg },
+  favBannerArtist: { fontSize: 12, color: colors.fg2, marginTop: 1 },
+  favBannerEmptyText: { fontSize: 13, color: colors.fg3, fontStyle: 'italic' },
 
-  // ── Wrapped stats card ────────────────────────────────────────────────────
+  // Wrapped stats
   wrappedCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
+    marginHorizontal: 16, marginBottom: 16,
+    borderRadius: 16, borderWidth: 1, borderColor: colors.line, overflow: 'hidden',
   },
-  wrappedRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2a2a2a',
+  wrappedCardHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.bgCard,
+    borderBottomWidth: 1, borderBottomColor: colors.line,
   },
-  wrappedLabel: { color: '#666', fontSize: 14 },
-  wrappedValue: { color: '#fff', fontSize: 14, fontWeight: '700', maxWidth: '55%' },
+  wrappedCardTitle: { fontSize: 16, fontWeight: '700', color: colors.fg },
+  wrappedCardSub: { fontSize: 11, color: colors.fg3, fontVariant: ['tabular-nums'] },
+  wrappedGrid: { backgroundColor: colors.bgElev, padding: 14, flexDirection: 'row', flexWrap: 'wrap', gap: 0 },
+  wrappedStat: { width: '50%', paddingVertical: 8, paddingHorizontal: 4 },
+  wrappedStatLabel: { fontSize: 10, color: colors.fg3, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '600', marginBottom: 3 },
+  wrappedStatValue: { fontSize: 16, fontWeight: '700', color: colors.fg, letterSpacing: -0.3 },
 
-  // ── Horizontal scroll sections ────────────────────────────────────────────
-  hScroll: { marginLeft: -16, paddingLeft: 16 },
+  // Pinned playlists
+  rightAction: { fontSize: 13, color: colors.fg3, fontWeight: '500' },
+  pinnedGrid: {
+    flexDirection: 'row', paddingHorizontal: 16, gap: 12, marginBottom: 16,
+  },
+  pinnedItem: { flex: 1 },
+  pinnedTitle: { fontSize: 12, fontWeight: '600', color: colors.fg, marginTop: 6, lineHeight: 16 },
+  pinnedMeta: { fontSize: 10, color: colors.fg3, marginTop: 2 },
 
-  artistCard: {
-    width: 80,
-    marginRight: 12,
-    alignItems: 'center',
+  // Public shares
+  publicSharesHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderTopWidth: 1, borderTopColor: colors.line, marginTop: 8,
   },
-  artistImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    marginBottom: 6,
+  publicSharesPlayBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center',
   },
-  artistImageFallback: {
-    backgroundColor: '#1a1a1a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  artistName: {
-    color: '#aaa',
-    fontSize: 11,
-    textAlign: 'center',
-    lineHeight: 15,
-  },
+  publicSharesTitle: { fontSize: 16, fontWeight: '700', color: colors.fg },
+  publicSharesSub: { fontSize: 12, color: colors.fg3, marginTop: 1 },
 
-  trackCard: {
-    width: 100,
-    marginRight: 12,
+  publicSharesList: {
+    marginHorizontal: 16, marginBottom: 16,
+    backgroundColor: colors.bgCard, borderRadius: 14,
+    borderWidth: 1, borderColor: colors.line, overflow: 'hidden',
   },
-  trackCover: {
-    width: 100,
-    height: 100,
-    borderRadius: 10,
-    marginBottom: 6,
-  },
-  trackCoverFallback: {
-    backgroundColor: '#1a1a1a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  trackRank: {
-    color: '#444',
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  trackTitle: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 16,
-    marginBottom: 2,
-  },
-  trackArtist: {
-    color: '#666',
-    fontSize: 11,
-  },
+  shareRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  shareRowSep: { borderBottomWidth: 1, borderBottomColor: colors.line },
+  shareRowInfo: { flex: 1, minWidth: 0 },
+  shareRowTitle: { fontSize: 14, fontWeight: '600', color: colors.fg },
+  shareRowMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  shareRowArtist: { fontSize: 12, color: colors.fg3 },
+  shareRowTime: { fontSize: 11, color: colors.fg3 },
+  emptyPublic: { alignItems: 'center', paddingVertical: 24 },
+  emptyPublicText: { color: colors.fg4, fontSize: 13, fontStyle: 'italic' },
 
-  // ── Pinned playlists ──────────────────────────────────────────────────────
-  pinnedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 8,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  pinnedCover: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-  },
-  pinnedCoverFallback: {
-    backgroundColor: '#2a2a2a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pinnedInfo: { flex: 1 },
-  pinnedName: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  pinnedMeta: { color: '#666', fontSize: 12 },
-  unpinButton: { padding: 4 },
-  unpinText: { color: '#444', fontSize: 16 },
+  // Service section
+  serviceSubtitle: { color: colors.fg3, fontSize: 13, lineHeight: 18, marginBottom: 14, marginTop: -4 },
+  setPrimaryRow: { alignSelf: 'flex-end', marginTop: -8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 4 },
+  setPrimaryText: { color: colors.fg3, fontSize: 12, textDecorationLine: 'underline' },
+  primaryInfo: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
+  primaryDot: { width: 8, height: 8, borderRadius: 4 },
+  primaryInfoText: { color: colors.fg3, fontSize: 13 },
+  primaryInfoHighlight: { color: colors.fg2, fontWeight: '600' },
 
-  // ── Listening history ─────────────────────────────────────────────────────
-  historyList: { marginTop: 4 },
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-  },
-  historyCover: {
-    width: 38,
-    height: 38,
-    borderRadius: 6,
-  },
-  historyCoverFallback: {
-    backgroundColor: '#1a1a1a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  historyInfo: { flex: 1 },
-  historyTitle: { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 1 },
-  historyArtist: { color: '#555', fontSize: 12 },
+  // Sign out
+  signOutBtn: { backgroundColor: colors.bgCard, borderRadius: 12, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: colors.line },
+  signOutText: { color: colors.coral, fontSize: 16, fontWeight: '600' },
 
-  // ── Services ──────────────────────────────────────────────────────────────
-  setPrimaryButton: {
-    alignSelf: 'flex-end',
-    marginTop: -6,
-    marginBottom: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  setPrimaryText: {
-    color: '#888',
-    fontSize: 12,
-    textDecorationLine: 'underline',
-  },
-  primaryInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    gap: 8,
-  },
-  primaryDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  primaryInfoText: { color: '#666', fontSize: 13 },
-  primaryInfoHighlight: { color: '#888', fontWeight: '600' },
+  // Modals
+  modal: { flex: 1, backgroundColor: colors.bg },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: colors.line },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: colors.fg },
+  modalRow: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12, borderBottomWidth: 1, borderBottomColor: colors.line },
+  modalRowInfo: { flex: 1 },
+  modalRowTitle: { fontSize: 15, fontWeight: '600', color: colors.fg, marginBottom: 2 },
+  modalRowMeta: { fontSize: 12, color: colors.fg3 },
+  modalEmpty: { color: colors.fg4, fontSize: 14, textAlign: 'center', marginTop: 48, paddingHorizontal: 32 },
 
-  // ── Sign out ──────────────────────────────────────────────────────────────
-  signOutButton: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  signOutDisabled: { opacity: 0.6 },
-  signOutText: { color: '#ff4444', fontSize: 16, fontWeight: '600' },
-});
-
-const modalStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f0f0f',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-  },
-  title: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  close: { padding: 4 },
-  closeText: { color: '#666', fontSize: 18 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-  },
-  cover: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-  },
-  coverFallback: {
-    backgroundColor: '#1a1a1a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  info: { flex: 1 },
-  name: { color: '#fff', fontSize: 15, fontWeight: '600', marginBottom: 2 },
-  meta: { color: '#666', fontSize: 12 },
-  empty: {
-    color: '#444',
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 48,
-    paddingHorizontal: 32,
-    lineHeight: 20,
-  },
+  favSearchRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line },
+  favSearchInput: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bgCard, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderColor: colors.line },
+  favSearchBtn: { backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  favSearchBtnText: { color: colors.primaryInk, fontSize: 14, fontWeight: '700' },
+  clearFavBtn: { alignItems: 'center', paddingVertical: 20 },
+  clearFavText: { color: colors.coral, fontSize: 14, fontWeight: '600' },
 });

@@ -18,9 +18,12 @@
 ## Phase 3: Social Platform
 
 - [x] Following system (directed follows, migration 004)
+- [x] Taste compatibility score (share/favorite-song overlap heuristic)
+- [x] Notification inbox screen for recent shares and new followers
 - Music feed (following + discovery)
 - Post likes/comments
 - Direct messaging with music
+- Replace placeholder UI alerts for story replies/options, profile options, Friend Blend, artist pages, block list, legal docs, and store rating
 
 ## Phase 4: Creator Ecosystem
 
@@ -37,8 +40,9 @@ See `IDEAS.md` for the full categorized list. Key themes:
 - **Discovery**: For You feed, friend trending chart, explore page, music challenges, "you might also like"
 - **Profiles**: ✅ top songs/artists, ✅ listening history (Spotify), ✅ Wrapped stats, ✅ taste tags, ✅ pinned playlists
 - **Collaborative**: cross-platform collaborative playlists, shared queue, friend blend
-- **Sharing/Import**: Instagram/TikTok reel import, Song of the Day, deep link previews, QR code profiles
+- **Sharing/Import**: ✅ manual Instagram/TikTok reel-link paste entry, Instagram/TikTok reel import, Song of the Day, deep link previews, QR code profiles
 - **Notifications**: push notifications, weekly digest
+- **Placeholder UI Follow-ups**: story replies/options, profile notifications/options, Friend Blend, artist pages, block list, legal docs, store rating
 - **Gamification**: leaderboards, badges, music trivia
 - **Platform**: unified search, ISRC matching, offline mode
 

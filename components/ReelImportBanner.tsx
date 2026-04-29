@@ -24,7 +24,7 @@ export function ReelImportBanner({ url, onFindSong, onDismiss }: ReelImportBanne
 
   return (
     <View style={[styles.banner, { bottom: insets.bottom + 16 }]}>
-      <Ionicons name={platformIcon as any} size={16} color="#fff" style={styles.icon} />
+      <Ionicons name={platformIcon as any} size={16} color="#9b80f8" style={styles.icon} />
       <Text style={styles.text} numberOfLines={1}>
         {platformLabel} reel detected
       </Text>
@@ -45,37 +45,36 @@ const styles = StyleSheet.create({
     right: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#26221d',
     paddingHorizontal: 14,
     paddingVertical: 12,
     gap: 8,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
-    // Shadow for iOS
+    borderColor: 'rgba(124,91,244,0.35)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    // Elevation for Android
-    elevation: 8,
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 10,
   },
   icon: {
     opacity: 0.9,
+    color: '#9b80f8',
   },
   text: {
     flex: 1,
-    color: '#ccc',
+    color: '#c8bfb0',
     fontSize: 13,
   },
   findButton: {
-    backgroundColor: '#fff',
+    backgroundColor: '#7C5BF4',
     borderRadius: 8,
     paddingVertical: 5,
     paddingHorizontal: 12,
   },
   findText: {
-    color: '#000',
+    color: '#f5f3ff',
     fontSize: 12,
     fontWeight: '700',
   },

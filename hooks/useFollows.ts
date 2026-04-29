@@ -5,7 +5,7 @@ import { useAuth } from './useAuth';
 import { sendPushNotification } from '../lib/notifications';
 
 export function useFollows() {
-  const { session } = useAuth();
+  const { session, user } = useAuth();
   const userId = session?.user.id;
 
   const [following, setFollowing] = useState<User[]>([]);
@@ -21,12 +21,12 @@ export function useFollows() {
         // People the current user follows
         supabase
           .from('follows')
-          .select('following:following_id(id, username, display_name, avatar_url, primary_service)')
+          .select('following:following_id(id, username, display_name, avatar_url, primary_service, favorite_song)')
           .eq('follower_id', userId),
         // People who follow the current user
         supabase
           .from('follows')
-          .select('follower:follower_id(id, username, display_name, avatar_url, primary_service)')
+          .select('follower:follower_id(id, username, display_name, avatar_url, primary_service, favorite_song)')
           .eq('following_id', userId),
       ]);
 
@@ -110,7 +110,7 @@ export function useFollows() {
       if (!query.trim()) return [];
       const { data, error } = await supabase
         .from('users')
-        .select('id, username, display_name, avatar_url, primary_service')
+        .select('id, username, display_name, avatar_url, primary_service, favorite_song')
         .ilike('username', `%${query.trim()}%`)
         .neq('id', userId ?? '')
         .limit(20);
@@ -119,6 +119,31 @@ export function useFollows() {
     },
     [userId],
   );
+
+  const getSuggestedUsers = useCallback(async (limit = 12): Promise<User[]> => {
+    if (!userId) return [];
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, username, display_name, avatar_url, primary_service, favorite_song')
+      .neq('id', userId)
+      .limit(60);
+
+    if (error || !data) return [];
+
+    return (data as User[])
+      .filter((candidate) => !followingIds.has(candidate.id))
+      .sort((a, b) => {
+        const aSameService = a.primary_service && a.primary_service === user?.primary_service ? 1 : 0;
+        const bSameService = b.primary_service && b.primary_service === user?.primary_service ? 1 : 0;
+        if (aSameService !== bSameService) return bSameService - aSameService;
+        const aHasFavorite = a.favorite_song ? 1 : 0;
+        const bHasFavorite = b.favorite_song ? 1 : 0;
+        if (aHasFavorite !== bHasFavorite) return bHasFavorite - aHasFavorite;
+        return a.username.localeCompare(b.username);
+      })
+      .slice(0, limit);
+  }, [followingIds, user?.primary_service, userId]);
 
   /** Users who both follow you AND you follow back — the only people you can share with */
   const mutualFollows = following.filter((u) =>
@@ -136,6 +161,7 @@ export function useFollows() {
     isFollowing,
     getFollowCounts,
     searchUsers,
+    getSuggestedUsers,
     refresh: fetchFollows,
   };
 }

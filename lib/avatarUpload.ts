@@ -1,12 +1,17 @@
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from './supabase';
 
+export interface AvatarUploadResult {
+  localUri: string;
+  publicUrl: string;
+}
+
 /**
- * Opens the device image picker, uploads the selected image to Supabase Storage
- * under avatars/{userId}/avatar.jpg, saves the public URL to users.avatar_url,
- * and returns the public URL. Returns null if the user cancels or an error occurs.
+ * Opens the device image picker, uploads the selected image to Supabase Storage,
+ * saves the public URL to users.avatar_url, and returns both the local preview
+ * URI and the remote URL. Returns null if the user cancels or an error occurs.
  */
-export async function pickAndUploadAvatar(userId: string): Promise<string | null> {
+export async function pickAndUploadAvatar(userId: string): Promise<AvatarUploadResult | null> {
   // Request permissions
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (status !== 'granted') {
@@ -14,7 +19,7 @@ export async function pickAndUploadAvatar(userId: string): Promise<string | null
   }
 
   const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: ['images'],
     allowsEditing: true,
     aspect: [1, 1],
     quality: 0.7,
@@ -24,19 +29,20 @@ export async function pickAndUploadAvatar(userId: string): Promise<string | null
   if (result.canceled || !result.assets[0]) return null;
 
   const asset = result.assets[0];
+  const localUri = asset.uri;
 
-  // Derive a consistent file extension
-  const ext = asset.mimeType === 'image/png' ? 'png' : 'jpg';
-  const path = `${userId}/avatar.${ext}`;
+  // Keep the storage path stable so profile rows only need a cache-busting query.
+  const path = `${userId}/avatar`;
 
   try {
     const response = await fetch(asset.uri);
-    const imageBlob = await response.blob();
+    const imageBuffer = await response.arrayBuffer();
 
     const { error: uploadError } = await supabase.storage
       .from('avatars')
-      .upload(path, imageBlob, {
+      .upload(path, imageBuffer, {
         contentType: asset.mimeType ?? 'image/jpeg',
+        cacheControl: '0',
         upsert: true,
       });
 
@@ -59,7 +65,7 @@ export async function pickAndUploadAvatar(userId: string): Promise<string | null
       return null;
     }
 
-    return publicUrl;
+    return { localUri, publicUrl };
   } catch (err) {
     console.error('[avatarUpload] exception:', err);
     return null;

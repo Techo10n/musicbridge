@@ -80,18 +80,21 @@ export function PlaylistCard({ item, onPress }: PlaylistCardProps) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: '#26221d',
+    borderRadius: 14,
     marginHorizontal: 16,
-    marginVertical: 6,
+    marginVertical: 5,
     flexDirection: 'row',
     alignItems: 'flex-start',
     padding: 12,
     gap: 12,
+    borderWidth: 1,
+    borderColor: '#332e28',
   },
   cardUnread: {
     borderLeftWidth: 3,
-    borderLeftColor: '#fff',
+    borderLeftColor: '#7C5BF4',
+    backgroundColor: 'rgba(124,91,244,0.06)',
   },
   coverWrapper: {
     position: 'relative',
@@ -99,8 +102,8 @@ const styles = StyleSheet.create({
   cover: {
     width: 56,
     height: 56,
-    borderRadius: 8,
-    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    backgroundColor: '#332e28',
   },
   coverOverlay: {
     position: 'absolute',
@@ -134,23 +137,23 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   title: {
-    color: '#ccc',
+    color: '#c8bfb0',
     fontSize: 15,
     fontWeight: '500',
     flex: 1,
   },
   titleUnread: {
-    color: '#fff',
+    color: '#f5f0e8',
     fontWeight: '700',
   },
   unreadDot: {
     width: 7,
     height: 7,
     borderRadius: 3.5,
-    backgroundColor: '#fff',
+    backgroundColor: '#7C5BF4',
   },
   trackCount: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 13,
     marginBottom: 6,
   },
@@ -161,19 +164,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sender: {
-    color: '#666',
+    color: '#6a6258',
     fontSize: 12,
   },
   senderName: {
-    color: '#888',
+    color: '#8a8075',
     fontWeight: '600',
   },
   time: {
-    color: '#555',
+    color: '#5a5248',
     fontSize: 12,
   },
   message: {
-    color: '#777',
+    color: '#7a7268',
     fontSize: 12,
     fontStyle: 'italic',
     marginTop: 2,

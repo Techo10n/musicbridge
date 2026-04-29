@@ -155,7 +155,12 @@ export async function getYouTubeAccessToken(userId: string): Promise<string | nu
 
 /** Lowercase, strip punctuation, collapse whitespace. */
 function norm(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -307,6 +312,7 @@ function isBadVariant(resultTitle: string, searchTitle: string): boolean {
 function titleScore(resultTitle: string, searchTitle: string): number {
   const r = norm(resultTitle);
   const s = norm(searchTitle);
+  if (!r || !s) return 0;
   if (r === s) return 4;
   if (r.startsWith(s) || s.startsWith(r)) return 3;
   if (r.includes(s) || s.includes(r)) return 2;
@@ -346,6 +352,7 @@ function pickBestCleanTopicResult(
   const clean = items
     .filter(isTopicChannel)
     .filter((i) => !isBadVariant(i.snippet?.title ?? '', searchTitle))
+    .filter((i) => titleScore(i.snippet?.title ?? '', searchTitle) > 0)
     .filter((i) => artistTokenScore(i.snippet?.channelTitle ?? '', searchArtist) >= 2);
 
   if (clean.length === 0) return undefined;
@@ -827,7 +834,7 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
  *
  * Non-music videos (videoCategoryId != 10) are filtered out.
  */
-export async function getPlaylistTracks(userId: string, playlistId: string): Promise<LibraryTrack[]> {
+export async function getPlaylistTracks(userId: string, playlistId: string, maxTracks?: number): Promise<LibraryTrack[]> {
   const accessToken = await getYouTubeAccessToken(userId);
   if (!accessToken) return [];
 
@@ -874,7 +881,9 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
           coverUrl: item.snippet.thumbnails.medium?.url ?? '',
           service: 'youtube_music',
         });
+        if (maxTracks !== undefined && rawTracks.length >= maxTracks) break;
       }
+      if (maxTracks !== undefined && rawTracks.length >= maxTracks) break;
       pageToken = data.nextPageToken;
     } catch {
       break;
@@ -882,7 +891,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string): Pro
   } while (pageToken);
 
   // Single batch call: filter non-music AND get descriptions for artist recovery.
-  const allIds = rawTracks.map((t) => t.id);
+  const allIds = rawTracks.slice(0, maxTracks).map((t) => t.id);
   const videoMeta = await batchGetVideoMeta(accessToken, allIds);
 
   return rawTracks

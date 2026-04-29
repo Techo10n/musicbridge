@@ -481,19 +481,19 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
 /**
  * Returns tracks in an Apple Music library playlist.
  */
-export async function getPlaylistTracks(userId: string, playlistId: string): Promise<LibraryTrack[]> {
+export async function getPlaylistTracks(userId: string, playlistId: string, maxTracks?: number): Promise<LibraryTrack[]> {
   const userToken = await getUserToken(userId);
   const headers = userToken ? await authHeaders(userToken) : null;
   if (!userToken || !headers) return [];
 
   try {
     const res = await fetch(
-      `${APPLE_MUSIC_API}/me/library/playlists/${playlistId}/tracks?limit=100`,
+      `${APPLE_MUSIC_API}/me/library/playlists/${playlistId}/tracks?limit=${Math.min(maxTracks ?? 100, 100)}`,
       { headers },
     );
     if (!res.ok) return [];
     const data = await res.json() as { data: AppleMusicTrack[] };
-    return data.data.map((t) => ({
+    return data.data.slice(0, maxTracks).map((t) => ({
       id: t.id,
       title: t.attributes.name,
       artist: t.attributes.artistName,

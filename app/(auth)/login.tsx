@@ -51,7 +51,7 @@ export default function Login() {
         <TextInput
           style={styles.input}
           placeholder="Email"
-          placeholderTextColor="#555"
+          placeholderTextColor="#5a5248"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
@@ -62,7 +62,7 @@ export default function Login() {
         <TextInput
           style={styles.input}
           placeholder="Password"
-          placeholderTextColor="#555"
+          placeholderTextColor="#5a5248"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -99,7 +99,7 @@ export default function Login() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f0f0f',
+    backgroundColor: '#1a1813',
   },
   inner: {
     flex: 1,
@@ -110,37 +110,37 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 38,
     fontWeight: '800',
-    color: '#ffffff',
+    color: '#f5f0e8',
     letterSpacing: -1.5,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 14,
-    color: '#888',
+    color: '#8a8075',
     marginBottom: 48,
     textAlign: 'center',
   },
   error: {
-    color: '#ff4444',
+    color: '#e8704a',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
   input: {
     width: '100%',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#26221d',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 18,
-    color: '#fff',
+    color: '#f5f0e8',
     fontSize: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: '#332e28',
   },
   button: {
     width: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#7C5BF4',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   buttonText: {
-    color: '#000',
+    color: '#f5f3ff',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -159,11 +159,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   linkText: {
-    color: '#888',
+    color: '#8a8075',
     fontSize: 14,
   },
   linkHighlight: {
-    color: '#ffffff',
+    color: '#9b80f8',
     fontWeight: '600',
   },
 });
