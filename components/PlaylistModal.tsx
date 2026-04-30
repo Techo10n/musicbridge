@@ -113,6 +113,11 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   };
 
   const handleRunInBackground = () => {
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    convertingItemIdRef.current = null;
     onClose();
   };
 
@@ -369,12 +374,12 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
           )}
 
           {/* Already in library */}
-          {alreadyInLibrary && conversionState === 'idle' && (
+          {alreadyInLibrary && conversionState === 'idle' && primaryService && (
             <View style={styles.doneRow}>
               <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.primaryInk} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.doneTitle}>Already in your library</Text>
-                <Text style={styles.doneSub}>{serviceName(primaryService!)} · {tracksProcessed} tracks</Text>
+                <Text style={styles.doneSub}>{serviceName(primaryService)} · {tracksProcessed} tracks</Text>
               </View>
               {createdPlaylistId && (
                 <TouchableOpacity style={styles.openSvcBtn} onPress={openCreatedPlaylist} activeOpacity={0.85}>
@@ -392,11 +397,11 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
           )}
 
           {/* Done */}
-          {conversionState === 'done' && (
+          {conversionState === 'done' && primaryService && (
             <View style={styles.doneRow}>
               <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.primaryInk} /></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.doneTitle}>Added to {serviceName(primaryService!)}!</Text>
+                <Text style={styles.doneTitle}>Added to {serviceName(primaryService)}!</Text>
                 <Text style={styles.doneSub}>{tracksProcessed} of {totalTracks} tracks matched</Text>
               </View>
               {createdPlaylistId && (

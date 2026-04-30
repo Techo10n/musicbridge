@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
@@ -13,6 +14,27 @@ import { AppBar, IconBtn, Avatar, CoverArt } from '../../components/ui';
 import { colors } from '../../lib/theme';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+type SettingsPrefs = {
+  publicProfile: boolean;
+  showListening: boolean;
+  allowReactions: boolean;
+  notifShares: boolean;
+  notifFollows: boolean;
+  notifReactions: boolean;
+  notifStories: boolean;
+};
+
+const defaultPrefs: SettingsPrefs = {
+  publicProfile: true,
+  showListening: true,
+  allowReactions: true,
+  notifShares: true,
+  notifFollows: true,
+  notifReactions: true,
+  notifStories: true,
+};
+
+const settingsKey = (userId: string) => `musicbridge_settings_${userId}`;
 
 function Row({
   icon, label, value, onPress, danger, toggle, toggleVal, onToggle, noChevron,
@@ -22,8 +44,9 @@ function Row({
   noChevron?: boolean;
 }) {
   const C = onPress ? TouchableOpacity : View;
+  const pressProps = onPress ? { onPress, activeOpacity: 0.8 } : {};
   return (
-    <C style={styles.settingRow} onPress={onPress} activeOpacity={0.8}>
+    <C style={styles.settingRow} {...pressProps}>
       <View style={styles.settingIconBox}>
         <Ionicons name={icon} size={18} color={danger ? colors.coral : colors.primary} />
       </View>
@@ -69,6 +92,42 @@ export default function Settings() {
   const [notifReactions, setNotifReactions] = useState(true);
   const [notifStories, setNotifStories] = useState(true);
 
+  const applyPrefs = (prefs: SettingsPrefs) => {
+    setPublicProfile(prefs.publicProfile);
+    setShowListening(prefs.showListening);
+    setAllowReactions(prefs.allowReactions);
+    setNotifShares(prefs.notifShares);
+    setNotifFollows(prefs.notifFollows);
+    setNotifReactions(prefs.notifReactions);
+    setNotifStories(prefs.notifStories);
+  };
+
+  const currentPrefs = (): SettingsPrefs => ({
+    publicProfile,
+    showListening,
+    allowReactions,
+    notifShares,
+    notifFollows,
+    notifReactions,
+    notifStories,
+  });
+
+  const savePrefs = async (nextPrefs: SettingsPrefs) => {
+    if (!user?.id) return;
+    try {
+      await AsyncStorage.setItem(settingsKey(user.id), JSON.stringify(nextPrefs));
+    } catch (err) {
+      console.error('[Settings] save preferences failed:', err);
+      Alert.alert('Settings not saved', 'Could not save this preference.');
+    }
+  };
+
+  const updatePref = <K extends keyof SettingsPrefs>(key: K, value: SettingsPrefs[K]) => {
+    const next = { ...currentPrefs(), [key]: value };
+    applyPrefs(next);
+    void savePrefs(next);
+  };
+
   const openEdit = () => {
     setDraftName(user?.display_name ?? '');
     setDraftBio(user?.bio ?? '');
@@ -81,18 +140,37 @@ export default function Settings() {
     }
   }, [editVisible, params.edit]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(settingsKey(user.id));
+        if (cancelled || !raw) return;
+        const parsed = JSON.parse(raw) as Partial<SettingsPrefs>;
+        applyPrefs({ ...defaultPrefs, ...parsed });
+      } catch (err) {
+        console.error('[Settings] load preferences failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
   const handleSave = async () => {
     if (!user) return;
     setSaving(true);
     try {
-      await supabase.from('users').update({
+      const { error } = await supabase.from('users').update({
         display_name: draftName.trim() || user.display_name,
         bio: draftBio.trim() || null,
       }).eq('id', user.id);
+      if (error) throw error;
       await refreshUser();
       setEditVisible(false);
       Alert.alert('Saved', 'Profile updated.');
-    } catch { Alert.alert('Error', 'Could not save changes.'); }
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Could not save changes.');
+    }
     finally { setSaving(false); }
   };
 
@@ -145,7 +223,7 @@ export default function Settings() {
 
   if (!user) return null;
 
-  const initials = user.display_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const initials = (user.display_name ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -184,18 +262,18 @@ export default function Settings() {
 
         {/* ── Privacy ── */}
         <Section title="Privacy">
-          <Row icon="earth-outline" label="Public Profile" toggle toggleVal={publicProfile} onToggle={setPublicProfile} />
-          <Row icon="musical-note-outline" label="Show Listening Activity" toggle toggleVal={showListening} onToggle={setShowListening} />
-          <Row icon="happy-outline" label="Allow Reactions" toggle toggleVal={allowReactions} onToggle={setAllowReactions} />
+          <Row icon="earth-outline" label="Public Profile" toggle toggleVal={publicProfile} onToggle={(v) => updatePref('publicProfile', v)} />
+          <Row icon="musical-note-outline" label="Show Listening Activity" toggle toggleVal={showListening} onToggle={(v) => updatePref('showListening', v)} />
+          <Row icon="happy-outline" label="Allow Reactions" toggle toggleVal={allowReactions} onToggle={(v) => updatePref('allowReactions', v)} />
           <Row icon="lock-closed-outline" label="Block List" onPress={() => Alert.alert('Block List', 'No blocked users.')} />
         </Section>
 
         {/* ── Notifications ── */}
         <Section title="Notifications">
-          <Row icon="paper-plane-outline" label="New Shares" toggle toggleVal={notifShares} onToggle={setNotifShares} />
-          <Row icon="person-add-outline" label="New Followers" toggle toggleVal={notifFollows} onToggle={setNotifFollows} />
-          <Row icon="happy-outline" label="Reactions" toggle toggleVal={notifReactions} onToggle={setNotifReactions} />
-          <Row icon="radio-outline" label="Stories" toggle toggleVal={notifStories} onToggle={setNotifStories} />
+          <Row icon="paper-plane-outline" label="New Shares" toggle toggleVal={notifShares} onToggle={(v) => updatePref('notifShares', v)} />
+          <Row icon="person-add-outline" label="New Followers" toggle toggleVal={notifFollows} onToggle={(v) => updatePref('notifFollows', v)} />
+          <Row icon="happy-outline" label="Reactions" toggle toggleVal={notifReactions} onToggle={(v) => updatePref('notifReactions', v)} />
+          <Row icon="radio-outline" label="Stories" toggle toggleVal={notifStories} onToggle={(v) => updatePref('notifStories', v)} />
         </Section>
 
         {/* ── App ── */}

@@ -431,3 +431,11 @@ Created knowledge base from project files, README, SETUP.md, IDEAS.md, CLAUDE.md
 - Added real behavior for story caption entry, profile quick-connect, profile sharing, settings photo changes, password reset, playlist run-in-background, and library artist taps.
 - Added explicit placeholder alerts for deferred story replies/options, profile notifications/options, Friend Blend, artist pages, block list, legal docs, and app rating.
 - Added a new `Placeholder UI Follow-ups` section to `IDEAS.md` so placeholder-only behavior can be replaced later.
+
+## 2026-04-29 — Fix UI data-flow and persistence review findings
+
+**Files changed**: `README.md`, `app/(tabs)/friends.tsx`, `app/(tabs)/home.tsx`, `app/(tabs)/library.tsx`, `app/(tabs)/notifications.tsx`, `app/(tabs)/profile.tsx`, `app/(tabs)/settings.tsx`, `components/PlaylistModal.tsx`, `components/ReelImportModal.tsx`, `components/StoryViewer.tsx`, `components/UserProfileModal.tsx`, `components/ui.tsx`, `hooks/useReactions.ts`, `hooks/useStories.ts`, `knowledge-base/database.md`, `knowledge-base/features.md`, `knowledge-base/log.md`, `knowledge-base/mistakes-and-learnings.md`, `lib/reelLists.ts`, `supabase/migrations/007_reel_import_songs_rpc.sql`
+
+- Removed truncating taste-match queries, fixed mutual badges and sender avatars, added error feedback for story search/open/reaction paths, and guarded empty story/profile data.
+- Fixed Library playlist sharing from the row action, memoized heavy library/feed derived values, persisted Settings toggles locally, and hardened Profile searches/disconnect/public-share rendering.
+- Added `upsert_reel_import_songs` so saved reel song replacement is atomic, plus local-migration cleanup and remote retry backoff in `lib/reelLists.ts`.

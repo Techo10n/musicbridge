@@ -8,7 +8,7 @@
 - **library** — playlists (tap to open detail), `All Songs` and `Reel Songs` pseudo-playlist rows, saved songs/liked videos, followed artists, Supabase-backed saved reel history, clickable filters with empty states, sort controls, deduped playlist-track-backed search, and placeholder artist-page alerts
 - **notifications** — hidden route opened from top-bar bells; merges recent shares and recent followers into one inbox
 - **profile** — avatar picker/upload, connect/disconnect each service, set primary service, quick-connect missing services, system share sheet for profile links, favorite-song search across connected services, sign out
-- **settings** — keyboard-aware profile editing sheet plus avatar upload, privacy/notification/account controls, real password-reset email trigger, and placeholder legal/rating rows
+- **settings** — keyboard-aware profile editing sheet plus avatar upload, locally persisted privacy/notification toggles, real password-reset email trigger, and placeholder legal/rating rows
 - **login / register** — email+password; 2-step registration (credentials → primary service) with immediate connect prompt for the selected default service before entering Home
 - **login** — shows a Spotify reconnect prompt when a stored Spotify refresh token was invalidated and the user needs to reconnect from Profile
 
@@ -71,6 +71,7 @@
 - `components/ReelImportModal.tsx` — analyzing → found → sharing/failed; first edge pass for metadata/audio, then client-side multi-frame extraction via `expo-video-thumbnails`, then vision-only OCR pass; best-match previews and song rows reuse the direct per-service track-opening flow and fall back instead of opening a guessed YouTube Music result
 - `app/(tabs)/share.tsx` — manual reel-link paste screen opened from the center-tab share menu
 - `supabase/functions/parse-reel/index.ts` — Instagram GraphQL scrape + strict caption/comment parsing + AudD enterprise fingerprinting (`skip_first_seconds`) + optional OCR over client-supplied frames
+- `supabase/migrations/007_reel_import_songs_rpc.sql` — atomic `upsert_reel_import_songs` RPC used when saving/replacing durable reel song lists
 
 ### Placeholder UI Follow-ups
 - Story options and replies now show explicit placeholder alerts instead of doing nothing

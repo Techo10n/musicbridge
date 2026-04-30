@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Animated, FlatList, Linking, Modal,
+  ActivityIndicator, Alert, FlatList, Linking, Modal,
   ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,7 +13,6 @@ import { useStories, Story } from '../../hooks/useStories';
 import { useReactions } from '../../hooks/useReactions';
 import { PlaylistModal } from '../../components/PlaylistModal';
 import { StoryViewer } from '../../components/StoryViewer';
-import { ShareModal } from '../../components/ShareModal';
 import { AppBar, Avatar, CoverArt, IconBtn, serviceLabelShort, ServiceDot } from '../../components/ui';
 import { SharedItem, MusicService } from '../../types';
 import { colors } from '../../lib/theme';
@@ -63,6 +62,7 @@ function StoryTray({
       </TouchableOpacity>
 
       {others.map(([uid, stories]) => {
+        if (!stories || stories.length === 0) return null;
         const first = stories[0];
         const user = first.user;
         return (
@@ -93,12 +93,14 @@ function PostStoryModal({ visible, onClose, onPost }: {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<{ title: string; artist: string; cover: string }[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
   const [picked, setPicked] = useState<{ title: string; artist: string } | null>(null);
 
   const handleSearch = useCallback(async () => {
     if (!q.trim() || !user?.primary_service) return;
     setSearching(true);
+    setSearchError(null);
     try {
       if (user.primary_service === 'spotify' && user.spotify_access_token) {
         const tracks = await Spotify.searchTracks(user.id, q.trim());
@@ -125,6 +127,12 @@ function PostStoryModal({ visible, onClose, onPost }: {
           };
         }));
       }
+    } catch (err) {
+      console.error('[PostStoryModal] search failed:', err);
+      const message = err instanceof Error ? err.message : 'Could not search for songs.';
+      setResults([]);
+      setSearchError(message);
+      Alert.alert('Search failed', message);
     } finally { setSearching(false); }
   }, [q, user]);
 
@@ -221,6 +229,9 @@ function PostStoryModal({ visible, onClose, onPost }: {
                 <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
               </TouchableOpacity>
             ))}
+            {searchError && (
+              <Text style={styles.postModalError}>{searchError}</Text>
+            )}
           </>
         )}
       </View>
@@ -256,7 +267,7 @@ function FeedRow({
     <View style={[styles.feedRow, isUnread && styles.feedRowUnread]}>
       <Avatar
         name={item.sender?.display_name ?? '?'}
-        avatarUrl={null}
+        avatarUrl={item.sender?.avatar_url ?? null}
         size={36}
       />
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -359,7 +370,7 @@ export default function Home() {
   const { items, loading, refreshing, refresh, markAsOpened, unreadCount } = useSharedItems();
   const { followingIds } = useFollows();
   const { storyGroups, postStory, reactToStory } = useStories();
-  const itemIds = items.map(i => i.id);
+  const itemIds = useMemo(() => items.map(i => i.id), [items]);
   const { reactions, myReactions, react } = useReactions(itemIds);
 
   const [tab, setTab] = useState<HomeTab>('inbox');
@@ -732,6 +743,7 @@ const styles = StyleSheet.create({
   },
   postModalResultTitle: { color: colors.fg, fontSize: 14, fontWeight: '600', marginBottom: 2 },
   postModalResultArtist: { color: colors.fg3, fontSize: 12 },
+  postModalError: { color: colors.coral, fontSize: 13, paddingHorizontal: 16, paddingTop: 4 },
   postModalPicked: { padding: 20, gap: 16 },
   postModalPickedCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

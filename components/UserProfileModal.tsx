@@ -40,7 +40,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   const [shareModalVisible, setShareModalVisible] = useState(false);
 
   useEffect(() => {
-    if (!userId) { setProfile(null); return; }
+    if (!userId) { setProfile(null); setShareModalVisible(false); return; }
     setLoading(true);
     void (async () => {
       try {
@@ -110,6 +110,12 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
     Alert.alert(feature, `${feature} is not currently available.`);
   };
 
+  const getInitials = (target: User) => {
+    const raw = (target.display_name ?? '').trim() || (target.username ?? '').trim() || 'U';
+    const words = raw.split(/\s+/).filter(Boolean);
+    return words.slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'U';
+  };
+
   if (!userId) return null;
 
   return (
@@ -150,7 +156,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                     : (
                       <View style={styles.avatarFallback}>
                         <Text style={styles.avatarInitials}>
-                          {profile.display_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()}
+                          {getInitials(profile)}
                         </Text>
                       </View>
                     )
@@ -291,12 +297,14 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
         )}
       </View>
 
-      <ShareModal
-        visible={shareModalVisible}
-        recipient={profile}
-        onClose={() => setShareModalVisible(false)}
-        onShared={() => setShareModalVisible(false)}
-      />
+      {profile && (
+        <ShareModal
+          visible={shareModalVisible}
+          recipient={profile}
+          onClose={() => setShareModalVisible(false)}
+          onShared={() => setShareModalVisible(false)}
+        />
+      )}
     </Modal>
   );
 }

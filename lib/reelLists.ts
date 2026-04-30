@@ -13,7 +13,34 @@ export interface SavedReelList {
 const keyForUser = (userId: string) => `saved_reel_lists_${userId}`;
 const writeLocks = new Map<string, Promise<void>>();
 let remoteUnavailable = false;
+let lastRemoteFailureTimestamp = 0;
+let remoteBackoffAttempts = 0;
+const REMOTE_BACKOFF_BASE_MS = 30_000;
+const REMOTE_BACKOFF_MAX_MS = 5 * 60_000;
 const supabase = supabaseClient as any;
+
+function shouldTryRemote(): boolean {
+  if (!remoteUnavailable) return true;
+  const elapsed = Date.now() - lastRemoteFailureTimestamp;
+  const cooldown = Math.min(
+    REMOTE_BACKOFF_MAX_MS,
+    REMOTE_BACKOFF_BASE_MS * Math.max(1, 2 ** Math.max(0, remoteBackoffAttempts - 1)),
+  );
+  return elapsed >= cooldown;
+}
+
+function markRemoteUnavailable(error: unknown): void {
+  remoteUnavailable = true;
+  lastRemoteFailureTimestamp = Date.now();
+  remoteBackoffAttempts += 1;
+  console.warn('[reelLists] Supabase reel history unavailable; falling back to local storage:', error);
+}
+
+function markRemoteAvailable(): void {
+  remoteUnavailable = false;
+  lastRemoteFailureTimestamp = 0;
+  remoteBackoffAttempts = 0;
+}
 
 function makeTitle(createdAt: Date, songCount: number): string {
   const date = createdAt.toLocaleDateString(undefined, {
@@ -65,24 +92,20 @@ async function saveRemoteReelList(
 
   if (importError) throw importError;
 
-  const { error: deleteError } = await supabase
-    .from('reel_import_songs')
-    .delete()
-    .eq('reel_import_id', savedImport.id);
-  if (deleteError) throw deleteError;
+  const songsWithPositions = songs.map((song, index) => ({
+    position: index,
+    title: song.title,
+    artist: song.artist,
+    cover_url: song.coverUrl,
+  }));
 
-  if (songs.length > 0) {
-    const { error: songsError } = await supabase
-      .from('reel_import_songs')
-      .insert(songs.map((song, index) => ({
-        reel_import_id: savedImport.id,
-        position: index,
-        title: song.title,
-        artist: song.artist,
-        cover_url: song.coverUrl,
-      })));
-    if (songsError) throw songsError;
-  }
+  const { error: songsError } = await supabase.rpc('upsert_reel_import_songs', {
+    p_reel_import_id: savedImport.id,
+    p_songs: songsWithPositions,
+  });
+  if (songsError) throw songsError;
+
+  markRemoteAvailable();
 
   return {
     id: savedImport.id,
@@ -95,17 +118,30 @@ async function saveRemoteReelList(
 
 async function migrateLocalReelLists(userId: string, localLists: SavedReelList[]): Promise<SavedReelList[]> {
   const migrated: SavedReelList[] = [];
+  const remaining: SavedReelList[] = [];
+
   for (const list of localLists) {
-    migrated.push(await saveRemoteReelList(userId, list.reelUrl, list.songs, {
-      title: list.title,
-      createdAt: list.createdAt,
-    }));
+    try {
+      migrated.push(await saveRemoteReelList(userId, list.reelUrl, list.songs, {
+        title: list.title,
+        createdAt: list.createdAt,
+      }));
+    } catch (err) {
+      console.warn('[reelLists] local reel migration failed:', list.reelUrl, err);
+      remaining.push(list);
+    }
   }
+
+  if (migrated.length > 0) {
+    if (remaining.length > 0) await setLocalReelLists(userId, remaining);
+    else await AsyncStorage.removeItem(keyForUser(userId));
+  }
+
   return migrated.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export async function getSavedReelLists(userId: string): Promise<SavedReelList[]> {
-  if (!remoteUnavailable) {
+  if (shouldTryRemote()) {
     try {
       const { data, error } = await supabase
         .from('reel_imports')
@@ -126,6 +162,7 @@ export async function getSavedReelLists(userId: string): Promise<SavedReelList[]
         .order('position', { foreignTable: 'reel_import_songs', ascending: true });
 
       if (error) throw error;
+      markRemoteAvailable();
 
       const remoteLists = (data ?? []).map((row: any) => ({
         id: row.id,
@@ -147,8 +184,7 @@ export async function getSavedReelLists(userId: string): Promise<SavedReelList[]
       if (localLists.length === 0) return [];
       return await migrateLocalReelLists(userId, localLists);
     } catch (err) {
-      remoteUnavailable = true;
-      console.warn('[reelLists] Supabase reel history unavailable; falling back to local storage:', err);
+      markRemoteUnavailable(err);
     }
   }
 
@@ -186,12 +222,11 @@ export async function saveReelList(
     const now = new Date();
     const title = makeTitle(now, songs.length);
 
-    if (!remoteUnavailable) {
+    if (shouldTryRemote()) {
       try {
         return await saveRemoteReelList(userId, reelUrl, songs, { title, createdAt: now.toISOString() });
       } catch (err) {
-        remoteUnavailable = true;
-        console.warn('[reelLists] Supabase reel save unavailable; falling back to local storage:', err);
+        markRemoteUnavailable(err);
       }
     }
 
@@ -207,7 +242,7 @@ export async function saveReelList(
 
 export async function deleteReelList(userId: string, listId: string): Promise<void> {
   await withReelListWriteLock(userId, async () => {
-    if (!remoteUnavailable) {
+    if (shouldTryRemote()) {
       try {
         const { error } = await supabase
           .from('reel_imports')
@@ -215,10 +250,10 @@ export async function deleteReelList(userId: string, listId: string): Promise<vo
           .eq('user_id', userId)
           .eq('id', listId);
         if (error) throw error;
+        markRemoteAvailable();
         return;
       } catch (err) {
-        remoteUnavailable = true;
-        console.warn('[reelLists] Supabase reel delete unavailable; falling back to local storage:', err);
+        markRemoteUnavailable(err);
       }
     }
 

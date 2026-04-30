@@ -222,6 +222,16 @@
 
 ---
 
+## Replace Child Rows Atomically
+
+**Problem**: Saving a reel list replaced child `reel_import_songs` rows with a delete followed by an insert. If the insert failed after the delete succeeded, the parent reel import could be left with no songs.
+
+**Fix**: Move delete-and-reinsert into the `upsert_reel_import_songs` Postgres RPC so the replacement is a single transaction. The client now calls the RPC and falls back to local storage if the remote schema/function is unavailable.
+
+**Rule**: When replacing all child rows for a persisted parent, use one database transaction or RPC instead of independent client-side delete/insert calls.
+
+---
+
 ## Related Pages
 
 [[integrations/spotify]] · [[integrations/youtube-music]] · [[playlist-conversion]]

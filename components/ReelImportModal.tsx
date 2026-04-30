@@ -72,9 +72,15 @@ async function invokeParseReel(body: {
   });
 
   if (visionResp.error) throw visionResp.error;
-  return typeof visionResp.data === 'string'
-    ? JSON.parse(visionResp.data) as ParseReelResponse
-    : visionResp.data as ParseReelResponse;
+  if (typeof visionResp.data === 'string') {
+    try {
+      return JSON.parse(visionResp.data) as ParseReelResponse;
+    } catch (err) {
+      console.error('[ReelImportModal] failed to parse ParseReelResponse:', visionResp.data, err);
+      throw new Error(`parse_reel_response_json_failed: ${visionResp.data}`);
+    }
+  }
+  return visionResp.data as ParseReelResponse;
 }
 
 function normalizeSongKey(song: Pick<ReelSong, 'title' | 'artist'>): string {
@@ -896,7 +902,7 @@ function PipelineDot({ state }: { state: PipelineStepState }) {
   if (state === 'done') {
     return (
       <View style={pipelineDotStyles.done}>
-        <Ionicons name="checkmark" size={12} color={colors.primaryInk} strokeWidth={2.6} />
+        <Ionicons name="checkmark-sharp" size={12} color={colors.primaryInk} />
       </View>
     );
   }

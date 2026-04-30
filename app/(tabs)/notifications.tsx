@@ -114,6 +114,7 @@ export default function ActivityScreen() {
     if (filter === 'all') return all;
     if (filter === 'shares') return all.filter(n => n.kind === 'share');
     if (filter === 'follows') return all.filter(n => n.kind === 'follow');
+    if (filter === 'reactions') return all.filter(n => n.kind === 'reaction');
     return all;
   }, [items, followRows, filter]);
 

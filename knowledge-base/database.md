@@ -13,6 +13,7 @@ MusicBridge uses **Supabase** (hosted PostgreSQL) with Row Level Security.
 | `004_follows_and_profile.sql` | Drops `friendships`, creates `follows` (directed), adds `bio`/`favorite_song` to `users`, creates `avatars` storage bucket |
 | `005_push_tokens.sql` | Push token storage for Expo notifications |
 | `006_reel_import_history.sql` | Durable saved reel song-list history |
+| `007_reel_import_songs_rpc.sql` | Atomic RPC for replacing saved reel-import songs |
 
 ---
 
@@ -119,6 +120,10 @@ Ordered songs scraped from a saved reel import.
 Unique constraint on `(reel_import_id, position)`.
 
 **RLS**: Owner-only through the parent `reel_imports` row.
+
+### `public.upsert_reel_import_songs(p_reel_import_id uuid, p_songs jsonb)`
+
+Security-invoker RPC that verifies the caller owns the parent `reel_imports` row, then deletes and reinserts that import's ordered songs inside one transaction. The client uses this instead of separate delete/insert calls so a failed replacement cannot leave a saved reel list empty.
 
 ---
 

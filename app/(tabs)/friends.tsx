@@ -15,6 +15,8 @@ import { User } from '../../types';
 import { colors } from '../../lib/theme';
 
 type PeopleTab = 'following' | 'followers' | 'suggested';
+type SharedTasteRow = { sender_id: string; title: string | null; artist: string | null };
+const SHARED_ITEMS_PAGE_SIZE = 500;
 
 function norm(value: string | null | undefined): string {
   return (value ?? '')
@@ -37,6 +39,27 @@ function jaccardScore(a: Set<string>, b: Set<string>): number {
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+async function fetchSharedTasteRows(userIds: string[]): Promise<SharedTasteRow[]> {
+  const rows: SharedTasteRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + SHARED_ITEMS_PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from('shared_items')
+      .select('sender_id, title, artist')
+      .in('sender_id', userIds)
+      .range(from, to);
+
+    if (error) throw error;
+    rows.push(...((data as SharedTasteRow[] | null) ?? []));
+    if (!data || data.length < SHARED_ITEMS_PAGE_SIZE) break;
+    from += SHARED_ITEMS_PAGE_SIZE;
+  }
+
+  return rows;
 }
 
 export default function People() {
@@ -109,13 +132,14 @@ export default function People() {
 
     const computeMatchScores = async () => {
       const userIds = [currentUser.id, ...uniqueTargets.map((u) => u.id)];
-      const { data, error } = await supabase
-        .from('shared_items')
-        .select('sender_id, title, artist')
-        .in('sender_id', userIds)
-        .limit(500);
-
-      if (cancelled || error) return;
+      let data: SharedTasteRow[] = [];
+      try {
+        data = await fetchSharedTasteRows(userIds);
+      } catch (err) {
+        console.error('[People] taste match fetch failed:', err);
+        return;
+      }
+      if (cancelled) return;
 
       const shareMap = new Map<string, { artists: Set<string>; titles: Set<string> }>();
       const ensureEntry = (userId: string) => {
@@ -228,6 +252,7 @@ export default function People() {
               key={u.id}
               user={u}
               isFollowing={isFollowing(u.id)}
+              isMutual={isMutual(u.id, mutualFollows)}
               onFollow={handleFollow}
               onUnfollow={handleUnfollow}
               onShare={isMutual(u.id, mutualFollows) ? () => setShareRecipient(u) : undefined}
@@ -299,6 +324,7 @@ export default function People() {
               <PersonRow
                 user={item}
                 isFollowing={isFollowing(item.id)}
+                isMutual={isMutual(item.id, mutualFollows)}
                 onFollow={handleFollow}
                 onUnfollow={handleUnfollow}
                 onShare={isMutual(item.id, mutualFollows) ? () => setShareRecipient(item) : undefined}
@@ -328,10 +354,11 @@ function isMutual(userId: string, mutuals: User[]) {
 
 // ─── PersonRow ────────────────────────────────────────────────────────────────
 function PersonRow({
-  user, isFollowing, onFollow, onUnfollow, onShare, matchPct, streak, onViewProfile,
+  user, isFollowing, isMutual, onFollow, onUnfollow, onShare, matchPct, streak, onViewProfile,
 }: {
   user: User;
   isFollowing: boolean;
+  isMutual: boolean;
   onFollow: (id: string) => void;
   onUnfollow: (id: string) => void;
   onShare?: () => void;
@@ -351,7 +378,7 @@ function PersonRow({
         <View style={styles.personMeta}>
           {svc && <ServiceDot service={svc} size={8} />}
           <Text style={styles.personUsername}>@{user.username}</Text>
-          {isMutual(user.id, []) && <Text style={styles.mutualBadge}>· mutual</Text>}
+          {isMutual && <Text style={styles.mutualBadge}>· mutual</Text>}
         </View>
         {matchPct != null && (
           <View style={styles.matchRow}>

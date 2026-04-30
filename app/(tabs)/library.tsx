@@ -9,11 +9,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useLibrary } from '../../hooks/useLibrary';
-import { LibraryArtist, LibraryPlaylist, LibraryTrack, User } from '../../types';
+import { LibraryArtist, LibraryPlaylist, LibraryTrack, Track, User } from '../../types';
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
 import { FriendPickerModal } from '../../components/FriendPickerModal';
-import { serviceName } from '../../components/ServiceBadge';
 import { deleteReelList, getSavedReelLists, SavedReelList } from '../../lib/reelLists';
+import { sendPushNotification } from '../../lib/notifications';
 import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, serviceLabelShort } from '../../components/ui';
 import { colors } from '../../lib/theme';
 
@@ -37,6 +37,16 @@ function normalizeTrackKey(title: string, artist: string): string {
   return `${normalizeSearch(title).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()}::${normalizeSearch(artist).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()}`;
 }
 
+function toTrackPayload(t: LibraryTrack): Track {
+  return {
+    title: t.title,
+    artist: t.artist,
+    spotify_id: t.service === 'spotify' ? t.id : null,
+    apple_music_id: t.service === 'apple_music' ? t.id : null,
+    youtube_music_id: t.service === 'youtube_music' ? t.id : null,
+  };
+}
+
 export default function LibraryScreen() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
@@ -55,6 +65,7 @@ export default function LibraryScreen() {
   const [reelSongsVisible, setReelSongsVisible] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pendingSongShare, setPendingSongShare] = useState<LibraryTrack | null>(null);
+  const [pendingPlaylistShare, setPendingPlaylistShare] = useState<LibraryPlaylist | null>(null);
   const [sharingSong, setSharingSong] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -119,22 +130,43 @@ export default function LibraryScreen() {
   };
 
   const handleSongShareFriendSelected = async (friend: User, message: string) => {
-    if (!user || !pendingSongShare) return;
+    if (!user || (!pendingSongShare && !pendingPlaylistShare)) return;
     setSharingSong(true);
     try {
-      const { error: dbError } = await supabase.from('shared_items').insert({
-        sender_id: user.id, recipient_id: friend.id, type: 'song',
-        title: pendingSongShare.title, artist: pendingSongShare.artist,
-        cover_image_url: pendingSongShare.coverUrl,
-        spotify_id: pendingSongShare.service === 'spotify' ? pendingSongShare.id : null,
-        apple_music_id: pendingSongShare.service === 'apple_music' ? pendingSongShare.id : null,
-        youtube_music_id: pendingSongShare.service === 'youtube_music' ? pendingSongShare.id : null,
-        message: message || null,
-      });
-      if (dbError) throw dbError;
-      Alert.alert('Sent!', `Shared "${pendingSongShare.title}" with ${friend.display_name}.`);
+      if (pendingSongShare) {
+        const { data: insertedItem, error: dbError } = await supabase.from('shared_items').insert({
+          sender_id: user.id, recipient_id: friend.id, type: 'song',
+          title: pendingSongShare.title, artist: pendingSongShare.artist,
+          cover_image_url: pendingSongShare.coverUrl,
+          spotify_id: pendingSongShare.service === 'spotify' ? pendingSongShare.id : null,
+          apple_music_id: pendingSongShare.service === 'apple_music' ? pendingSongShare.id : null,
+          youtube_music_id: pendingSongShare.service === 'youtube_music' ? pendingSongShare.id : null,
+          message: message || null,
+        }).select('id').single();
+        if (dbError) throw dbError;
+        if (insertedItem?.id) sendPushNotification(friend.id, 'new_share', insertedItem.id);
+        Alert.alert('Sent!', `Shared "${pendingSongShare.title}" with ${friend.display_name}.`);
+      } else if (pendingPlaylistShare) {
+        const tracks = await getPlaylistTracks(pendingPlaylistShare.id);
+        const { data: insertedItem, error: dbError } = await supabase.from('shared_items').insert({
+          sender_id: user.id,
+          recipient_id: friend.id,
+          type: 'playlist',
+          title: pendingPlaylistShare.name,
+          artist: null,
+          cover_image_url: pendingPlaylistShare.coverUrl,
+          spotify_playlist_id: pendingPlaylistShare.service === 'spotify' ? pendingPlaylistShare.id : null,
+          apple_music_playlist_id: pendingPlaylistShare.service === 'apple_music' ? pendingPlaylistShare.id : null,
+          youtube_music_playlist_id: pendingPlaylistShare.service === 'youtube_music' ? pendingPlaylistShare.id : null,
+          tracks: tracks.map(toTrackPayload),
+          message: message || null,
+        }).select('id').single();
+        if (dbError) throw dbError;
+        if (insertedItem?.id) sendPushNotification(friend.id, 'new_share', insertedItem.id);
+        Alert.alert('Sent!', `Shared "${pendingPlaylistShare.name}" with ${friend.display_name}.`);
+      }
     } catch { Alert.alert('Error', 'Failed to share. Try again.'); }
-    finally { setSharingSong(false); setPendingSongShare(null); }
+    finally { setSharingSong(false); setPendingSongShare(null); setPendingPlaylistShare(null); }
   };
 
   const handleDeleteReelList = () => {
@@ -192,7 +224,11 @@ export default function LibraryScreen() {
   }), [playlists, sortMode]);
   const sortedSongs = useMemo(() => [...allSongRows].sort((a, b) => {
     if (sortMode === 'name') return compareName(a.track.title, b.track.title);
-    if (sortMode === 'count') return compareName(a.track.artist, b.track.artist);
+    if (sortMode === 'count') {
+      const countA = allSongRows.filter(row => normalizeTrackKey(row.track.title, row.track.artist) === normalizeTrackKey(a.track.title, a.track.artist)).length;
+      const countB = allSongRows.filter(row => normalizeTrackKey(row.track.title, row.track.artist) === normalizeTrackKey(b.track.title, b.track.artist)).length;
+      return countB - countA || compareName(a.track.title, b.track.title);
+    }
     return a.sortIndex - b.sortIndex;
   }), [allSongRows, sortMode]);
   const allSongsTracks = useMemo(() => {
@@ -321,71 +357,74 @@ export default function LibraryScreen() {
     return [...map.values()];
   }, [sortedReelSongs, sortedSongs]);
   const normalizedQuery = normalizeSearch(searchQuery);
-  const queryMatchesSongTitle = normalizedQuery
-    ? dedupedSearchSongs.some((song) => normalizeSearch(song.title).includes(normalizedQuery))
-    : false;
-  const searchResults = [
-    ...(!queryMatchesSongTitle ? playlists.map((playlist) => ({
-      id: `playlist:${playlist.id}`,
-      title: playlist.name,
-      subtitle: `${playlist.trackCount || playlistTrackIndex[playlist.id]?.length || 0} tracks · ${serviceLabelShort(playlist.service)}`,
-      searchText: [
-        playlist.name,
-        serviceLabelShort(playlist.service),
-      ].join(' '),
-      coverUrl: playlist.coverUrl,
-      onPress: () => {
-        openPlaylist(playlist);
-      },
-    })) : []),
-    ...dedupedSearchSongs.map((song) => ({
-      id: `track:${song.id}`,
-      title: song.title,
-      subtitle: [
-        song.artist,
-        song.playlistNames.length > 1
-          ? `${song.playlistNames.length} playlists`
-          : song.playlistNames[0],
-        song.sourceTitles.length > 0 ? 'Reel' : '',
-      ].filter(Boolean).join(' · '),
-      searchText: [
-        song.title,
-        song.artist,
-        ...song.playlistNames,
-        ...song.sourceTitles,
-      ].join(' '),
-      coverUrl: song.coverUrl,
-      onPress: () => {
-        setPendingSongShare(song.track);
-        setPickerVisible(true);
-      },
-    })),
-    ...savedReelLists.map((list) => ({
-      id: `reel:${list.id}`,
-      title: list.title,
-      subtitle: `${list.songs.length} songs · Reel`,
-      searchText: [
-        list.title,
-        ...list.songs.flatMap((song) => [song.title, song.artist]),
-      ].join(' '),
-      coverUrl: list.songs[0]?.coverUrl ?? null,
-      onPress: () => {
-        setSelectedReelList(list);
-      },
-    })),
-    ...followedArtists.map((artist) => ({
-      id: `artist:${artist.id}`,
-      title: artist.name,
-      subtitle: 'Followed artist',
-      searchText: artist.name,
-      coverUrl: artist.imageUrl,
-      onPress: () => handleArtistPress(artist),
-    })),
-  ].filter((entry) => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    return normalizeSearch(entry.searchText).includes(q);
-  });
+  const searchResults = useMemo(() => {
+    const queryMatchesSongTitle = normalizedQuery
+      ? dedupedSearchSongs.some((song) => normalizeSearch(song.title).includes(normalizedQuery))
+      : false;
+
+    return [
+      ...(!queryMatchesSongTitle ? playlists.map((playlist) => ({
+        id: `playlist:${playlist.id}`,
+        title: playlist.name,
+        subtitle: `${playlist.trackCount || playlistTrackIndex[playlist.id]?.length || 0} tracks · ${serviceLabelShort(playlist.service)}`,
+        searchText: [
+          playlist.name,
+          serviceLabelShort(playlist.service),
+        ].join(' '),
+        coverUrl: playlist.coverUrl,
+        onPress: () => {
+          openPlaylist(playlist);
+        },
+      })) : []),
+      ...dedupedSearchSongs.map((song) => ({
+        id: `track:${song.id}`,
+        title: song.title,
+        subtitle: [
+          song.artist,
+          song.playlistNames.length > 1
+            ? `${song.playlistNames.length} playlists`
+            : song.playlistNames[0],
+          song.sourceTitles.length > 0 ? 'Reel' : '',
+        ].filter(Boolean).join(' · '),
+        searchText: [
+          song.title,
+          song.artist,
+          ...song.playlistNames,
+          ...song.sourceTitles,
+        ].join(' '),
+        coverUrl: song.coverUrl,
+        onPress: () => {
+          setPendingSongShare(song.track);
+          setPendingPlaylistShare(null);
+          setPickerVisible(true);
+        },
+      })),
+      ...savedReelLists.map((list) => ({
+        id: `reel:${list.id}`,
+        title: list.title,
+        subtitle: `${list.songs.length} songs · Reel`,
+        searchText: [
+          list.title,
+          ...list.songs.flatMap((song) => [song.title, song.artist]),
+        ].join(' '),
+        coverUrl: list.songs[0]?.coverUrl ?? null,
+        onPress: () => {
+          setSelectedReelList(list);
+        },
+      })),
+      ...followedArtists.map((artist) => ({
+        id: `artist:${artist.id}`,
+        title: artist.name,
+        subtitle: 'Followed artist',
+        searchText: artist.name,
+        coverUrl: artist.imageUrl,
+        onPress: () => handleArtistPress(artist),
+      })),
+    ].filter((entry) => {
+      if (!normalizedQuery) return true;
+      return normalizeSearch(entry.searchText).includes(normalizedQuery);
+    });
+  }, [dedupedSearchSongs, followedArtists, normalizedQuery, playlistTrackIndex, playlists, savedReelLists]);
 
   if (!user?.primary_service) {
     return (
@@ -491,7 +530,12 @@ export default function LibraryScreen() {
                         </Text>
                       </View>
                     </View>
-                    <TouchableOpacity style={styles.rowAction} onPress={() => { setPendingSongShare(null); setPickerVisible(true); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <TouchableOpacity
+                      style={styles.rowAction}
+                      onPress={() => { setPendingSongShare(null); setPendingPlaylistShare(p); setPickerVisible(true); }}
+                      disabled={sharingSong}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       <Ionicons name="paper-plane-outline" size={18} color={colors.fg3} />
                     </TouchableOpacity>
                     <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
@@ -523,7 +567,7 @@ export default function LibraryScreen() {
                       </View>
                       <TouchableOpacity
                         style={styles.rowAction}
-                        onPress={() => { setPendingSongShare(row.track); setPickerVisible(true); }}
+                        onPress={() => { setPendingSongShare(row.track); setPendingPlaylistShare(null); setPickerVisible(true); }}
                         disabled={sharingSong}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       >
@@ -585,7 +629,7 @@ export default function LibraryScreen() {
                       <TouchableOpacity
                         key={entry.id}
                         style={[styles.row, idx < reelEntries.length - 1 && styles.rowSep]}
-                        onPress={() => { setPendingSongShare(entry.track); setPickerVisible(true); }}
+                        onPress={() => { setPendingSongShare(entry.track); setPendingPlaylistShare(null); setPickerVisible(true); }}
                         activeOpacity={0.8}
                       >
                         <CoverArt uri={entry.track.coverUrl} size={44} radius={8} />
@@ -595,7 +639,7 @@ export default function LibraryScreen() {
                         </View>
                         <TouchableOpacity
                           style={styles.rowAction}
-                          onPress={() => { setPendingSongShare(entry.track); setPickerVisible(true); }}
+                          onPress={() => { setPendingSongShare(entry.track); setPendingPlaylistShare(null); setPickerVisible(true); }}
                           disabled={sharingSong}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
@@ -667,8 +711,8 @@ export default function LibraryScreen() {
 
       <FriendPickerModal
         visible={pickerVisible}
-        title={pendingSongShare ? `Share "${pendingSongShare.title}"` : 'Share Song'}
-        onClose={() => { setPickerVisible(false); setPendingSongShare(null); }}
+        title={pendingSongShare ? `Share "${pendingSongShare.title}"` : pendingPlaylistShare ? `Share "${pendingPlaylistShare.name}"` : 'Share'}
+        onClose={() => { setPickerVisible(false); setPendingSongShare(null); setPendingPlaylistShare(null); }}
         onSelect={handleSongShareFriendSelected}
       />
 
@@ -722,6 +766,7 @@ export default function LibraryScreen() {
                     onPress={() => {
                       setReelSongsVisible(false);
                       setPendingSongShare(entry.track);
+                      setPendingPlaylistShare(null);
                       setPickerVisible(true);
                     }}
                     activeOpacity={0.8}
@@ -736,6 +781,7 @@ export default function LibraryScreen() {
                       onPress={() => {
                         setReelSongsVisible(false);
                         setPendingSongShare(entry.track);
+                        setPendingPlaylistShare(null);
                         setPickerVisible(true);
                       }}
                       disabled={sharingSong}

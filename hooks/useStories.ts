@@ -86,12 +86,19 @@ export function useStories() {
   }, [user, fetchStories]);
 
   const reactToStory = useCallback(async (storyId: string, emoji: string) => {
-    if (!user) return;
-    await supabase.from('story_reactions').upsert({
-      story_id: storyId,
-      user_id: user.id,
-      emoji,
-    }, { onConflict: 'story_id,user_id' });
+    if (!user) return false;
+    try {
+      const { error } = await supabase.from('story_reactions').upsert({
+        story_id: storyId,
+        user_id: user.id,
+        emoji,
+      }, { onConflict: 'story_id,user_id' });
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error('[useStories] reactToStory failed:', err);
+      return false;
+    }
   }, [user]);
 
   // Group stories by user so each user appears once in the tray

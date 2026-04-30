@@ -80,10 +80,10 @@ export function Chip({
   label, active = false, color, onPress,
 }: { label: string; active?: boolean; color?: string; onPress?: () => void }) {
   const C = onPress ? TouchableOpacity : View;
+  const pressProps = onPress ? { onPress, activeOpacity: 0.8 } : {};
   return (
     <C
-      onPress={onPress}
-      activeOpacity={0.8}
+      {...pressProps}
       style={[styles.chip, active && { backgroundColor: color ?? colors.primary, borderColor: color ?? colors.primary }]}
     >
       <Text style={[styles.chipText, active && { color: colors.primaryInk, fontWeight: '600' }]}>
@@ -196,10 +196,11 @@ export function CoverArt({ uri, size, radius = 10 }: { uri?: string | null; size
 
 // ─── TasteBar ─────────────────────────────────────────────────────────────────
 export function TasteBar({ pct }: { pct: number }) {
-  const fill = pct > 85 ? colors.primary : pct > 70 ? colors.violet : colors.coral;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const fill = clamped > 85 ? colors.primary : clamped > 70 ? colors.violet : colors.coral;
   return (
     <View style={styles.tasteBarTrack}>
-      <View style={[styles.tasteBarFill, { width: `${pct}%` as any, backgroundColor: fill }]} />
+      <View style={[styles.tasteBarFill, { width: `${clamped}%` as any, backgroundColor: fill }]} />
     </View>
   );
 }

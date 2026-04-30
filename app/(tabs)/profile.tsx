@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, Image, Modal,
   ScrollView, Share, StyleSheet, Switch, Text, TextInput,
@@ -31,12 +31,16 @@ const SERVICE_COLORS: Record<MusicService, string> = {
 const GENRE_TAGS = ['neo-soul', 'shoegaze', 'r&b', 'jazz', 'bedroom-pop'];
 
 function timeAgo(iso: string): string {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return 'Invalid date';
+  const now = Date.now();
+  if (t > now) return 'just now';
+  const s = Math.floor((now - t) / 1000);
   if (s < 60) return 'just now';
   const m = Math.floor(s / 60); if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60); if (h < 24) return `${h}h`;
   const d = Math.floor(h / 24); if (d < 7) return `${d}d`;
-  return new Date(iso).toLocaleDateString();
+  return new Date(t).toLocaleDateString();
 }
 
 export default function Profile() {
@@ -64,6 +68,7 @@ export default function Profile() {
   // Fav song
   const [favSongModalVisible, setFavSongModalVisible] = useState(false);
   const [favSearchQuery, setFavSearchQuery] = useState('');
+  const favSearchQueryRef = useRef('');
   const [favSearchResults, setFavSearchResults] = useState<FavoriteSong[]>([]);
   const [searchingFav, setSearchingFav] = useState(false);
 
@@ -80,7 +85,12 @@ export default function Profile() {
     setLoadingPublic(true);
     void (async () => {
       try {
-        const { data } = await supabase.from('shared_items').select('*').eq('sender_id', user.id).order('created_at', { ascending: false }).limit(20);
+        const { data } = await supabase
+          .from('shared_items')
+          .select('*, sender:users!shared_items_sender_id_fkey(id, username, display_name, avatar_url, primary_service)')
+          .eq('sender_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(20);
         setPublicShares(data ?? []);
       } catch {} finally { setLoadingPublic(false); }
     })();
@@ -107,44 +117,61 @@ export default function Profile() {
     finally { setUploadingAvatar(false); }
   };
 
-  const handleFavSearch = useCallback(async () => {
-    if (!user || !favSearchQuery.trim()) return;
+  useEffect(() => {
+    favSearchQueryRef.current = favSearchQuery;
+  }, [favSearchQuery]);
+
+  const handleFavSearch = useCallback(async (queryArg?: string) => {
+    const query = (queryArg ?? favSearchQueryRef.current).trim();
+    if (!user || !query) return;
     setSearchingFav(true);
     try {
       const results: FavoriteSong[] = [];
       if (user.spotify_access_token) {
-        const tracks = await Spotify.searchTracks(user.id, favSearchQuery.trim());
-        for (const t of tracks.slice(0, 5)) results.push({ title: t.name, artist: t.artists.map(a => a.name).join(', '), service: 'spotify', service_id: t.id, cover_url: t.album.images[0]?.url ?? '' });
+        try {
+          const tracks = await Spotify.searchTracks(user.id, query);
+          for (const t of tracks.slice(0, 5)) results.push({ title: t.name, artist: t.artists.map(a => a.name).join(', '), service: 'spotify', service_id: t.id, cover_url: t.album.images[0]?.url ?? '' });
+        } catch (err) {
+          console.error('[Profile] Spotify favorite search failed:', query, err);
+        }
       }
       if (user.apple_music_user_token) {
-        const tracks = await AppleMusic.searchTracks(user.id, favSearchQuery.trim());
-        for (const t of tracks.slice(0, 5)) {
-          results.push({
-            title: t.attributes.name,
-            artist: t.attributes.artistName,
-            service: 'apple_music',
-            service_id: t.id,
-            cover_url: t.attributes.artwork ? AppleMusic.resolveArtworkUrl(t.attributes.artwork.url, 150) : '',
-          });
+        try {
+          const tracks = await AppleMusic.searchTracks(user.id, query);
+          for (const t of tracks.slice(0, 5)) {
+            results.push({
+              title: t.attributes.name,
+              artist: t.attributes.artistName,
+              service: 'apple_music',
+              service_id: t.id,
+              cover_url: t.attributes.artwork ? AppleMusic.resolveArtworkUrl(t.attributes.artwork.url, 150) : '',
+            });
+          }
+        } catch (err) {
+          console.error('[Profile] Apple Music favorite search failed:', query, err);
         }
       }
       if (user.youtube_access_token) {
-        const tracks = await YouTubeMusic.searchTracks(user.id, favSearchQuery.trim());
-        for (const t of tracks.slice(0, 3)) {
-          if (results.length >= 8) break;
-          const info = extractYouTubeTrackInfo(t.snippet.channelTitle, t.snippet.title);
-          results.push({
-            title: info.title,
-            artist: info.artist,
-            service: 'youtube_music',
-            service_id: t.id.videoId,
-            cover_url: t.snippet.thumbnails.medium?.url ?? '',
-          });
+        try {
+          const tracks = await YouTubeMusic.searchTracks(user.id, query);
+          for (const t of tracks.slice(0, 3)) {
+            if (results.length >= 8) break;
+            const info = extractYouTubeTrackInfo(t.snippet.channelTitle, t.snippet.title);
+            results.push({
+              title: info.title,
+              artist: info.artist,
+              service: 'youtube_music',
+              service_id: t.id.videoId,
+              cover_url: t.snippet.thumbnails.medium?.url ?? '',
+            });
+          }
+        } catch (err) {
+          console.error('[Profile] YouTube Music favorite search failed:', query, err);
         }
       }
       setFavSearchResults(results);
     } finally { setSearchingFav(false); }
-  }, [user, favSearchQuery]);
+  }, [user]);
 
   useEffect(() => {
     if (!favSongModalVisible) return;
@@ -155,13 +182,13 @@ export default function Profile() {
     }
 
     const timeoutId = setTimeout(() => {
-      void handleFavSearch();
+      void handleFavSearch(favSearchQueryRef.current);
     }, 200);
 
     return () => {
       clearTimeout(timeoutId);
     };
-  }, [favSearchQuery, favSongModalVisible, handleFavSearch]);
+  }, [favSearchQuery, favSongModalVisible]);
 
   const saveFavoriteSong = async (song: FavoriteSong) => {
     if (!user) return;
@@ -215,15 +242,17 @@ export default function Profile() {
   };
 
   const handleDisconnect = (svc: MusicService) => {
+    const userId = user?.id;
+    if (!userId) return;
     Alert.alert(`Disconnect ${SERVICE_LABELS[svc]}?`, 'You can reconnect anytime.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Disconnect', style: 'destructive', onPress: async () => {
         setLoadingService(svc);
         try {
           switch (svc) {
-            case 'spotify': await Spotify.disconnectSpotify(user!.id); break;
-            case 'apple_music': await AppleMusic.disconnectAppleMusic(user!.id); break;
-            case 'youtube_music': await YouTubeMusic.disconnectYouTubeMusic(user!.id); break;
+            case 'spotify': await Spotify.disconnectSpotify(userId); break;
+            case 'apple_music': await AppleMusic.disconnectAppleMusic(userId); break;
+            case 'youtube_music': await YouTubeMusic.disconnectYouTubeMusic(userId); break;
           }
           await refreshUser();
         } finally { setLoadingService(null); }
@@ -281,6 +310,7 @@ export default function Profile() {
   const initials = user.display_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
   const primarySvc = user.primary_service as MusicService | null;
   const avatarUri = avatarPreviewUri ?? user.avatar_url;
+  const visiblePublicShares = publicShares.slice(0, 8);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -457,8 +487,8 @@ export default function Profile() {
         <View style={styles.publicSharesList}>
           {loadingPublic
             ? <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
-            : publicShares.slice(0, 8).map((item, i) => (
-              <View key={item.id} style={[styles.shareRow, i < publicShares.length - 1 && styles.shareRowSep]}>
+            : visiblePublicShares.map((item, i) => (
+              <View key={item.id} style={[styles.shareRow, i < visiblePublicShares.length - 1 && styles.shareRowSep]}>
                 <CoverArt uri={item.cover_image_url} size={48} radius={8} />
                 <View style={styles.shareRowInfo}>
                   <Text style={styles.shareRowTitle} numberOfLines={1}>{item.title}</Text>
@@ -566,13 +596,13 @@ export default function Profile() {
                 placeholderTextColor={colors.fg4}
                 value={favSearchQuery}
                 onChangeText={setFavSearchQuery}
-                onSubmitEditing={handleFavSearch}
+                onSubmitEditing={() => void handleFavSearch()}
                 returnKeyType="search"
                 autoCapitalize="none"
                 autoCorrect={false}
               />
             </View>
-            <TouchableOpacity style={styles.favSearchBtn} onPress={handleFavSearch} disabled={searchingFav}>
+            <TouchableOpacity style={styles.favSearchBtn} onPress={() => void handleFavSearch()} disabled={searchingFav}>
               {searchingFav ? <ActivityIndicator color={colors.primaryInk} size="small" /> : <Text style={styles.favSearchBtnText}>Search</Text>}
             </TouchableOpacity>
           </View>

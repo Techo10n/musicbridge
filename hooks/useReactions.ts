@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './useAuth';
 
@@ -17,6 +17,11 @@ export function useReactions(itemIds: string[]) {
   const { user } = useAuth();
   const [reactions, setReactions] = useState<ReactionMap>({});
   const [myReactions, setMyReactions] = useState<Record<string, string>>({});
+  const latestMyReactions = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    latestMyReactions.current = myReactions;
+  }, [myReactions]);
 
   const fetch = useCallback(async () => {
     if (!itemIds.length || !user) return;
@@ -38,9 +43,12 @@ export function useReactions(itemIds: string[]) {
       }
 
       setReactions(map);
+      latestMyReactions.current = mine;
       setMyReactions(mine);
-    } catch {
-      // table may not exist — ignore
+    } catch (err) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('[useReactions] query failed:', err);
+      }
     }
   }, [itemIds.join(','), user]);
 
@@ -48,12 +56,16 @@ export function useReactions(itemIds: string[]) {
 
   const react = useCallback(async (itemId: string, emoji: string) => {
     if (!user) return;
+    const previousMyReactions = latestMyReactions.current;
+    const previousReactions = reactions;
+    const old = previousMyReactions[itemId];
 
     // Optimistic update
-    setMyReactions(prev => ({ ...prev, [itemId]: emoji }));
+    const nextMyReactions = { ...previousMyReactions, [itemId]: emoji };
+    latestMyReactions.current = nextMyReactions;
+    setMyReactions(nextMyReactions);
     setReactions(prev => {
       const cur = { ...(prev[itemId] ?? {}) };
-      const old = myReactions[itemId];
       if (old && old !== emoji) {
         cur[old] = Math.max(0, (cur[old] ?? 1) - 1);
         if (cur[old] === 0) delete cur[old];
@@ -68,10 +80,13 @@ export function useReactions(itemIds: string[]) {
         user_id: user.id,
         emoji,
       }, { onConflict: 'item_id,user_id' });
-    } catch {
-      // silently fail if table missing
+    } catch (err) {
+      console.error('[useReactions] upsert failed:', err);
+      latestMyReactions.current = previousMyReactions;
+      setMyReactions(previousMyReactions);
+      setReactions(previousReactions);
     }
-  }, [user, myReactions]);
+  }, [user, reactions]);
 
   return { reactions, myReactions, react };
 }

@@ -53,7 +53,7 @@ musicbridge/
 │       ├── library.tsx         User's streaming library with sort controls, All Songs/Reel Songs pseudo-playlists, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
 │       ├── notifications.tsx   Notification inbox for recent shares and new followers
 │       ├── profile.tsx         Profile + avatar picker + service connections, quick connect/share profile, favorite-song search + sign out
-│       ├── settings.tsx        Settings screen with keyboard-aware profile editing, avatar upload, password reset, toggles, and placeholder legal/rating rows
+│       ├── settings.tsx        Settings screen with keyboard-aware profile editing, avatar upload, password reset, persisted toggles, and placeholder legal/rating rows
 │       └── share.tsx           Center-tab reel paste screen for manual reel identification
 ├── components/
 │   ├── SongCard.tsx
@@ -99,7 +99,9 @@ musicbridge/
 │       ├── 001_initial.sql
 │       ├── 003_conversion_progress.sql
 │       ├── 004_follows_and_profile.sql
-│       └── 005_push_tokens.sql
+│       ├── 005_push_tokens.sql
+│       ├── 006_reel_import_history.sql
+│       └── 007_reel_import_songs_rpc.sql
 └── .env.example
 ```
 
@@ -275,6 +277,10 @@ Unique constraint on `(user_id, reel_url)`. RLS: owner-only. Stores saved reel s
 
 RLS: owner-only through the parent `reel_imports` row.
 
+### `public.upsert_reel_import_songs`
+
+RPC added in migration `007_reel_import_songs_rpc.sql`. Replaces all songs for a saved reel import inside one transaction so the client does not delete old songs unless the replacement insert also succeeds.
+
 ---
 
 ## Environment Variables
@@ -302,7 +308,7 @@ Users can paste an Instagram/TikTok reel URL from the center-tab share action, s
 4. On success: shows an ordered song list that can be opened in the user's primary service, saved as a reel list in Library, or shared with a friend. The live "Best match so far" card is also tappable.
 5. On failure: shows a brief error state and auto-closes after 2 seconds.
 
-Saved reel lists are persisted in Supabase via `reel_imports` + `reel_import_songs` (migration `006_reel_import_history.sql`). The app falls back to local storage only if those tables are unavailable.
+Saved reel lists are persisted in Supabase via `reel_imports` + `reel_import_songs` (migration `006_reel_import_history.sql`). Song replacement uses the atomic `upsert_reel_import_songs` RPC from migration `007_reel_import_songs_rpc.sql`. The app falls back to local storage only if those tables/functions are unavailable, with a short retry backoff before trying remote storage again.
 
 **Reel analysis pipeline**:
 

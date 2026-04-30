@@ -32,18 +32,25 @@ export function StoryViewer({ stories, initialIndex = 0, visible, onClose, onRea
   const [sentReaction, setSentReaction] = useState<string | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reactionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const story = stories[segIdx] ?? stories[0];
   const total = stories.length;
 
   // Reset on open
   useEffect(() => {
-    if (visible) {
+    if (visible && stories.length > 0) {
       setSegIdx(initialIndex);
       setSentReaction(null);
       setReply('');
     }
-  }, [visible, initialIndex]);
+  }, [visible, initialIndex, stories.length]);
+
+  useEffect(() => {
+    return () => {
+      if (reactionTimeoutRef.current) clearTimeout(reactionTimeoutRef.current);
+    };
+  }, []);
 
   // Progress animation per segment
   useEffect(() => {
@@ -80,7 +87,11 @@ export function StoryViewer({ stories, initialIndex = 0, visible, onClose, onRea
     if (!story) return;
     onReact(story.id, emoji);
     setSentReaction(emoji);
-    setTimeout(() => setSentReaction(null), 1500);
+    if (reactionTimeoutRef.current) clearTimeout(reactionTimeoutRef.current);
+    reactionTimeoutRef.current = setTimeout(() => {
+      setSentReaction(null);
+      reactionTimeoutRef.current = null;
+    }, 1500);
   };
 
   const handleOpenInService = async () => {
@@ -98,9 +109,14 @@ export function StoryViewer({ stories, initialIndex = 0, visible, onClose, onRea
         if (id) links = YouTubeMusic.getYouTubeMusicDeepLink(id);
       }
       for (const l of links) {
-        try { await Linking.openURL(l); return; } catch {}
+        try { await Linking.openURL(l); return; }
+        catch (err) { console.error('[StoryViewer] openURL failed:', l, err); }
       }
-    } catch {}
+      Alert.alert('Could not open song', 'No supported link opened for this story.');
+    } catch (err) {
+      console.error('[StoryViewer] service lookup failed:', err);
+      Alert.alert('Lookup failed', 'Could not find this song on the selected service.');
+    }
   };
 
   const handleMore = () => {
@@ -114,7 +130,7 @@ export function StoryViewer({ stories, initialIndex = 0, visible, onClose, onRea
     Alert.alert('Reply not sent', 'Story replies are not currently available.');
   };
 
-  if (!story) return null;
+  if (stories.length === 0 || !story) return null;
 
   const svcLabel = serviceLabelShort(story.service);
 
