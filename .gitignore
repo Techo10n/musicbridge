@@ -1,58 +1,80 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
-# dependencies
+# Dependencies
 node_modules/
 
-# Expo
+# Expo / Metro / web build output
 .expo/
+.expo-shared/
 dist/
 web-build/
 expo-env.d.ts
+.metro-health-check*
 
-# Native
+# React Native / native build output
+.gradle/
 .kotlin/
+android/.gradle/
+android/.idea/
+android/app/build/
+android/build/
+android/**/build/
+ios/build/
+ios/DerivedData/
+ios/Pods/
+ios/*.xcworkspace/xcuserdata/
+ios/**/*.xcuserdata/
+ios/**/*.xcuserstate
+ios/**/*.moved-aside
+
+# Local native generated backup/noise files
+*.orig
 *.orig.*
+
+# Secrets, credentials, provisioning, and local env
+.env
+.env.local
+.env*.local
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
 *.mobileprovision
+*.provisionprofile
+*.cer
+*.certSigningRequest
+*.pem
 
-# Metro
-.metro-health-check*
-
-# debug
+# Logs and diagnostics
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+pnpm-debug.*
+*.log
+logs/
 
-# macOS
-.DS_Store
-*.pem
-
-# local env files
-.env
-.env.local
-.env*.local
-
-# typescript
+# TypeScript / test / coverage caches
 *.tsbuildinfo
+coverage/
+.nyc_output/
 
-# generated native folders
-/ios
-/android
+# macOS / editor / IDE state
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
 
-# Supabase
-supabase/.temp
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
 
-# ai agent instructions
+# Codex / agent-local files
 AGENTS.md
 CLAUDE.md
-/.claude
+/.claude/
 /.juno_task
 
-#personal knowledge base for claude
-/knowledge_base
-
-#potential future ideas
+# Personal notes intentionally kept out of Git
+/knowledge-base/
+/knowledge_base/
 IDEAS.md
