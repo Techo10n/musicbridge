@@ -41,6 +41,7 @@ interface ParseReelResponse {
   videoUrl?: string | null;
   videoDuration?: number | null;
   audioSongs?: Array<ReelSong & { orderHint?: number; matchCount?: number }>;
+  visionSongs?: ReelSong[];
   metadataSong?: ReelSong | null;
   textSongs?: ReelSong[];
 }
@@ -199,7 +200,7 @@ function rankSongs(params: {
     upsert(song, 'audio', baseScore, song.orderHint ?? index * 12);
   });
   params.visionSongs.forEach((song, index) => upsert(song, 'vision', 4.5, song.orderHint ?? index * 10));
-  if (params.metadataSong) upsert(params.metadataSong, 'metadata', 1, Number.MAX_SAFE_INTEGER / 4);
+  if (params.metadataSong) upsert(params.metadataSong, 'metadata', 5, Number.MAX_SAFE_INTEGER / 4);
   params.textSongs.forEach((song, index) => upsert(song, 'text', 1.5, Number.MAX_SAFE_INTEGER / 4 + index));
 
   const candidates = [...ranked.values()]
@@ -214,6 +215,7 @@ function rankSongs(params: {
       if (song.audioHits > 0 && song.score >= 4) return true;
       if (song.visionHits >= 2) return true;
       if (song.visionHits === 1 && song.score >= 4.5) return true;
+      if (song.metadataHits > 0) return true;
       return song.score >= 5.5;
     })
     .sort((a, b) => {
@@ -410,7 +412,7 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
     { label: 'Frame OCR (vision)', detail: '', state: 'pending' },
     { label: 'Confidence merge', detail: '', state: 'pending' },
   ]);
-  const [bestMatch, setBestMatch] = useState<ReelSong | null>(null);
+  const [bestMatches, setBestMatches] = useState<ReelSong[]>([]);
 
   const updateStep = (idx: number, state: PipelineStepState, detail?: string) => {
     setPipeline(prev => prev.map((s, i) => i === idx ? { ...s, state, detail: detail ?? s.detail } : s));
@@ -430,7 +432,7 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
       setMessage('');
       setSavingList(false);
       setSavedList(false);
-      setBestMatch(null);
+      setBestMatches([]);
       setPipeline([
         { label: 'Reel metadata', detail: 'Checking audio attribution', state: 'active' },
         { label: 'Audio fingerprint', detail: '', state: 'pending' },
@@ -445,11 +447,14 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
   useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
 
   const analyze = async () => {
+    if (!reelUrl) return;
+
+    const currentReelUrl = reelUrl;
     setStage('analyzing');
     try {
       // Step 0: metadata
       updateStep(0, 'active', 'Checking reel metadata…');
-      const parsed = await invokeParseReel({ url: reelUrl ?? undefined });
+      const parsed = await invokeParseReel({ url: currentReelUrl });
 
       if (Array.isArray(parsed.debug) && parsed.debug.length > 0) {
         console.log('[parse-reel debug]\n' + parsed.debug.join('\n'));
@@ -457,6 +462,12 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
 
       const audioSongs = Array.isArray(parsed.audioSongs) ? parsed.audioSongs : [];
       const textSongs = Array.isArray(parsed.textSongs) ? parsed.textSongs : [];
+      const serverVisionSongs: Array<ReelSong & { orderHint: number }> = [
+        ...(Array.isArray(parsed.visionSongs) ? parsed.visionSongs : []),
+      ].map((song, index) => ({
+        ...song,
+        orderHint: index * 10,
+      }));
 
       // Step 0 done
       updateStep(0, 'done', parsed.metadataSong ? '1 song attributed' : 'No song attribution');
@@ -466,15 +477,15 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
 
       let mergedSongs = rankSongs({
         audioSongs,
-        visionSongs: [],
+        visionSongs: serverVisionSongs,
         metadataSong: parsed.metadataSong ?? null,
         textSongs,
       });
       updateStep(1, 'done', `${audioSongs.length} audio match${audioSongs.length !== 1 ? 'es' : ''}`);
 
-      if (mergedSongs.length > 0) setBestMatch(mergedSongs[0]);
+      if (mergedSongs.length > 0) setBestMatches(mergedSongs);
 
-      let visionSongs: Array<ReelSong & { orderHint: number }> = [];
+      let visionSongs: Array<ReelSong & { orderHint: number }> = [...serverVisionSongs];
 
       if (parsed.videoUrl) {
         const shouldRunVision = mergedSongs.length < 5;
@@ -484,6 +495,7 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
           updateStep(3, 'done', `${mergedSongs.length} songs found`);
           setSongs(mergedSongs);
           setStage('songList');
+          if (user) void saveReelList(user.id, currentReelUrl, mergedSongs);
           return;
         }
 
@@ -601,7 +613,7 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
       } else {
         mergedSongs = rankSongs({
           audioSongs,
-          visionSongs: [],
+          visionSongs,
           metadataSong: parsed.metadataSong ?? null,
           textSongs,
         });
@@ -612,10 +624,11 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
       updateStep(3, 'active', 'Merging all sources…');
 
       if (mergedSongs.length > 0) {
-        setBestMatch(mergedSongs[0]);
+        setBestMatches(mergedSongs);
         updateStep(3, 'done', `${mergedSongs.length} song${mergedSongs.length !== 1 ? 's' : ''} found`);
         setSongs(mergedSongs);
         setStage('songList');
+        if (user) void saveReelList(user.id, currentReelUrl, mergedSongs);
       } else {
         updateStep(3, 'failed', 'No confident matches');
         console.warn('[ReelImportModal] all stages missed');
@@ -766,23 +779,26 @@ export function ReelImportModal({ reelUrl, onClose }: ReelImportModalProps) {
               ))}
             </View>
 
-            {/* Best match preview (updates live) */}
-            {bestMatch && (
-              <TouchableOpacity
-                style={styles.bestMatchCard}
-                onPress={() => handleOpenSong(bestMatch)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.bestMatchLabel}>Best match so far</Text>
-                <View style={styles.bestMatchRow}>
-                  <CoverArtSmall uri={bestMatch.coverUrl} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.bestMatchTitle} numberOfLines={1}>{bestMatch.title}</Text>
-                    <Text style={styles.bestMatchArtist} numberOfLines={1}>{bestMatch.artist}</Text>
-                  </View>
-                  <Ionicons name="open-outline" size={18} color={colors.fg3} />
-                </View>
-              </TouchableOpacity>
+            {/* Best matches preview (updates live) */}
+            {bestMatches.length > 0 && (
+              <View style={styles.bestMatchCard}>
+                <Text style={styles.bestMatchLabel}>Best matches so far</Text>
+                {bestMatches.map((song, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[styles.bestMatchRow, i > 0 && styles.bestMatchRowDivider]}
+                    onPress={() => handleOpenSong(song)}
+                    activeOpacity={0.8}
+                  >
+                    <CoverArtSmall uri={song.coverUrl} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.bestMatchTitle} numberOfLines={1}>{song.title}</Text>
+                      <Text style={styles.bestMatchArtist} numberOfLines={1}>{song.artist}</Text>
+                    </View>
+                    <Ionicons name="open-outline" size={18} color={colors.fg3} />
+                  </TouchableOpacity>
+                ))}
+              </View>
             )}
           </View>
         )}
@@ -969,6 +985,7 @@ const styles = StyleSheet.create({
   },
   bestMatchLabel: { fontSize: 11, fontWeight: '600', color: colors.fg3, textTransform: 'uppercase', letterSpacing: 0.5 },
   bestMatchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  bestMatchRowDivider: { borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 10, marginTop: 2 },
   bestMatchTitle: { fontSize: 15, fontWeight: '700', color: colors.fg, marginBottom: 2 },
   bestMatchArtist: { fontSize: 12, color: colors.fg3 },
 

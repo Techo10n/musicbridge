@@ -38,7 +38,7 @@ export default function ShareScreen() {
           <Ionicons name="radio-outline" size={24} color={colors.primaryInk} />
         </View>
         <Text style={styles.title}>Paste a reel link</Text>
-        <Text style={styles.subtitle}>MusicBridge will scan the clip and find songs it can share or save.</Text>
+        <Text style={styles.subtitle}>Museaic will scan the clip and find songs it can share or save.</Text>
 
         <View style={styles.inputWrap}>
           <Ionicons name="link-outline" size={18} color={colors.fg3} />

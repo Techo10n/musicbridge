@@ -1,0 +1,33 @@
+# Dependencies and build outputs
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Local environment
+.env
+.env.local
+.env*.local
+
+# Native generated outputs, but keep ios source/project files for the share extension
+ios/build/
+ios/Pods/
+ios/**/*.xcuserdata/
+ios/*.xcworkspace/xcuserdata/
+android/
+
+# Credentials and local machine files
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+.DS_Store
+
+# Logs/cache
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.tsbuildinfo
+supabase/.temp/

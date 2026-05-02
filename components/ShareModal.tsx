@@ -23,7 +23,7 @@ import { useAuth } from '../hooks/useAuth';
 import { MusicService, SpotifyTrack, AppleMusicTrack, YouTubeTrack, User } from '../types';
 import { serviceName } from './ServiceBadge';
 import { resolveArtworkUrl as resolveAppleMusicArtwork } from '../lib/appleMusic';
-import { withTimeout } from '../lib/utils';
+import { cleanTitle, withTimeout } from '../lib/utils';
 
 interface SearchResult {
   id: string;
@@ -91,7 +91,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
             const info = extractYouTubeTrackInfo(t.snippet.channelTitle, t.snippet.title);
             return {
               id: t.id.videoId,
-              title: info.title,
+              title: cleanTitle(info.title),
               artist: info.artist,
               coverUrl: t.snippet.thumbnails.medium.url,
               raw: t,

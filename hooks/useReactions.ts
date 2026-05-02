@@ -60,7 +60,33 @@ export function useReactions(itemIds: string[]) {
     const previousReactions = reactions;
     const old = previousMyReactions[itemId];
 
-    // Optimistic update
+    if (old === emoji) {
+      // Toggle off: remove own reaction
+      const nextMyReactions = { ...previousMyReactions };
+      delete nextMyReactions[itemId];
+      latestMyReactions.current = nextMyReactions;
+      setMyReactions(nextMyReactions);
+      setReactions(prev => {
+        const cur = { ...(prev[itemId] ?? {}) };
+        cur[emoji] = Math.max(0, (cur[emoji] ?? 1) - 1);
+        if (cur[emoji] === 0) delete cur[emoji];
+        return { ...prev, [itemId]: cur };
+      });
+      try {
+        await supabase.from('shared_item_reactions')
+          .delete()
+          .eq('item_id', itemId)
+          .eq('user_id', user.id);
+      } catch (err) {
+        console.error('[useReactions] delete failed:', err);
+        latestMyReactions.current = previousMyReactions;
+        setMyReactions(previousMyReactions);
+        setReactions(previousReactions);
+      }
+      return;
+    }
+
+    // Add or switch reaction
     const nextMyReactions = { ...previousMyReactions, [itemId]: emoji };
     latestMyReactions.current = nextMyReactions;
     setMyReactions(nextMyReactions);

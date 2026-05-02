@@ -43,7 +43,7 @@ export default function Login() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.inner}>
-        <Text style={styles.logo}>musicbridge</Text>
+        <Text style={styles.logo}>museaic</Text>
         <Text style={styles.subtitle}>Share music across any streaming service</Text>
 
         {error && <Text style={styles.error}>{error}</Text>}

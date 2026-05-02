@@ -103,7 +103,8 @@ function cleanArtistName(artist: string): string {
 function cleanTitle(title: string): string {
   return title
     // Strip remaster / deluxe / anniversary suffixes in parentheses or brackets
-    .replace(/[\(\[](remaster(ed)?|remastered \d{4}|\d{4} remaster|deluxe|anniversary|expanded|bonus track|radio edit|single version|album version|feat\.[^\)\]]*|ft\.[^\)\]]*)[\)\]]/gi, '')
+    .replace(/[\(\[]([^)\]]*(remaster(ed)?|remastered \d{4}|\d{4} remaster|deluxe|anniversary|expanded|bonus track|radio edit|single version|album version|official audio|official music video|official video|visualizer|lyrics?|audio|feat\.|ft\.)[^)\]]*)[\)\]]/gi, '')
+    .replace(/\s+-\s+(official audio|official music video|official video|visualizer|lyrics?|audio)$/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
@@ -430,7 +431,7 @@ async function createSpotifyPlaylist(
   const createRes = await fetch('https://api.spotify.com/v1/me/playlists', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, public: false, description: 'Shared via MusicBridge' }),
+    body: JSON.stringify({ name, public: false, description: 'Shared via Museaic' }),
   });
   if (!createRes.ok) {
     const errText = await createRes.text().catch(() => '(unreadable)');
@@ -483,7 +484,7 @@ async function createYouTubePlaylist(
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        snippet: { title: name, description: 'Shared via MusicBridge' },
+        snippet: { title: name, description: 'Shared via Museaic' },
         status: { privacyStatus: 'private' },
       }),
     },
@@ -521,7 +522,7 @@ async function createAppleMusicPlaylist(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      attributes: { name, description: 'Shared via MusicBridge' },
+      attributes: { name, description: 'Shared via Museaic' },
       relationships: {
         tracks: {
           data: songIds.map((id) => ({ id, type: 'songs' })),
@@ -809,7 +810,10 @@ serve(async (req) => {
   const playlistUpdate: Record<string, string> = { conversion_status: 'done' };
   if (primaryService === 'spotify') playlistUpdate.spotify_playlist_id = playlistId;
   else if (primaryService === 'youtube_music') playlistUpdate.youtube_music_playlist_id = playlistId;
-  else if (primaryService === 'apple_music') playlistUpdate.apple_music_playlist_id = playlistId;
+  else if (primaryService === 'apple_music') {
+    playlistUpdate.apple_music_playlist_id = playlistId;
+    if (playlistUrl) playlistUpdate.apple_music_playlist_url = playlistUrl;
+  }
 
   await supabase.from('shared_items').update(playlistUpdate).eq('id', sharedItemId);
 

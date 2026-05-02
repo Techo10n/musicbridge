@@ -37,7 +37,7 @@ export async function registerForPushNotifications(userId: string): Promise<stri
   // Android needs a notification channel
   if (Platform.OS === 'android') {
     await ExpoNotifications.setNotificationChannelAsync('default', {
-      name: 'MusicBridge',
+      name: 'Museaic',
       importance: ExpoNotifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
     });

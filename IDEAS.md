@@ -6,7 +6,6 @@
 
 - Activity feed — see what friends have recently shared or saved
 - Comments + reactions on shared songs and playlists
-- Music Stories — ephemeral 24h "now playing" posts, Instagram Stories style
 - Real-time listening status — Discord-style "currently listening to" shown on friend profiles
 - Listening streaks — share a song with a friend daily to keep a streak alive (Snapchat model)
 - Taste compatibility score — per-friend % match based on overlapping artists and genres
@@ -73,7 +72,3 @@
 - Terms of Service screen/link — add the real legal document destination
 - Privacy Policy screen/link — add the real legal document destination
 - App Store rating link — wire to the production store listing once available
-
-## FIXES
-
-- "streaming services" and "sign out" should appear in account settings, not just on a users profile.

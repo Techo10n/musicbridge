@@ -91,10 +91,17 @@ export async function disconnectYouTubeMusic(userId: string): Promise<void> {
 
 // ─── Token management ─────────────────────────────────────────────────────────
 
+let _tokenCache: { userId: string; token: string; expiresAt: number } | null = null;
+const _topicChannelCache = new Map<string, string>(); // primaryArtist → channelId
+
 /**
  * Returns a valid YouTube access token, refreshing if expired.
  */
 export async function getYouTubeAccessToken(userId: string): Promise<string | null> {
+  if (_tokenCache?.userId === userId && _tokenCache.expiresAt > Date.now() + 60_000) {
+    return _tokenCache.token;
+  }
+
   const { data, error } = await supabase
     .from('users')
     .select('youtube_access_token, youtube_refresh_token, youtube_token_expiry')
@@ -107,6 +114,7 @@ export async function getYouTubeAccessToken(userId: string): Promise<string | nu
   if (data.youtube_token_expiry) {
     const expiry = new Date(data.youtube_token_expiry);
     if (expiry > new Date(Date.now() + 60_000)) {
+      _tokenCache = { userId, token: data.youtube_access_token, expiresAt: expiry.getTime() };
       return data.youtube_access_token;
     }
   }
@@ -133,13 +141,14 @@ export async function getYouTubeAccessToken(userId: string): Promise<string | nu
       expires_in: number;
     };
 
-    const expiry = new Date(Date.now() + token.expires_in * 1000).toISOString();
+    const expiresAt = Date.now() + token.expires_in * 1000;
+    _tokenCache = { userId, token: token.access_token, expiresAt };
 
     await supabase
       .from('users')
       .update({
         youtube_access_token: token.access_token,
-        youtube_token_expiry: expiry,
+        youtube_token_expiry: new Date(expiresAt).toISOString(),
       })
       .eq('id', userId);
 
@@ -175,7 +184,7 @@ export function cleanChannelToArtist(channelTitle: string): string {
 }
 
 // Common video-title suffixes that should be stripped before storing/searching.
-const TITLE_SUFFIX_RE = /\s*[\[(](official\s*(music\s*)?video|official\s*audio|lyrics?|audio|visualizer|hd|4k|explicit|prod\.?[^\])"]*|ft\.?[^\])"]*|feat\.?[^\])"]*)[^\])"]*[\])]/gi;
+const TITLE_SUFFIX_RE = /\s*[\[(](official(?:\s*(music\s*)?video|\s*audio)?|lyrics?|audio|visualizer|hd|4k|explicit|prod\.?[^\])"]*|ft\.?[^\])"]*|feat\.?[^\])"]*)[^\])"]*[\])]/gi;
 
 /**
  * Parses a raw YouTube video title into a clean { artist, title } pair.
@@ -194,7 +203,7 @@ export function parseYouTubeVideoTitle(rawTitle: string): { artist: string; titl
   if (!match) return null;
 
   const artist = match[1].trim();
-  const title = match[2].replace(TITLE_SUFFIX_RE, '').trim();
+  const title = cleanTitle(match[2].replace(TITLE_SUFFIX_RE, '').trim());
 
   if (!artist || !title || artist.length > 80 || title.length > 150) return null;
   return { artist, title };
@@ -212,7 +221,7 @@ export function extractYouTubeTrackInfo(
 ): { artist: string; title: string; artistFromTitle: boolean } {
   const parsed = parseYouTubeVideoTitle(videoTitle);
   if (parsed) return { ...parsed, artistFromTitle: true };
-  return { artist: cleanChannelToArtist(channelTitle), title: videoTitle, artistFromTitle: false };
+  return { artist: cleanChannelToArtist(channelTitle), title: cleanTitle(videoTitle), artistFromTitle: false };
 }
 
 /**
@@ -439,9 +448,11 @@ export async function searchTrack(
     }
   };
 
-  // Searches for the artist's Topic channel by name.
+  // Searches for the artist's Topic channel by name, with session-level cache.
   // Uses primaryArtist so multi-artist strings don't break the lookup.
   const findTopicChannelId = async (): Promise<string | null> => {
+    const cacheKey = primaryArtist.toLowerCase();
+    if (_topicChannelCache.has(cacheKey)) return _topicChannelCache.get(cacheKey)!;
     try {
       const res = await fetch(
         `${YOUTUBE_API}/search?q=${encodeURIComponent(`${primaryArtist} - Topic`)}&type=channel&part=snippet&maxResults=10`,
@@ -454,7 +465,9 @@ export async function searchTrack(
       const match = (data.items ?? []).find((ch) =>
         ch.snippet.title.toLowerCase().endsWith(' - topic'),
       );
-      return match?.id.channelId ?? null;
+      const channelId = match?.id.channelId ?? null;
+      if (channelId) _topicChannelCache.set(cacheKey, channelId);
+      return channelId;
     } catch {
       return null;
     }
@@ -474,110 +487,35 @@ export async function searchTrack(
     }
   };
 
-  // ── Phase 1: 2 parallel queries ──────────────────────────────────────────────
-  // Always use primaryArtist — the first artist is the main artist, and the full
-  // comma-separated string confuses YouTube search results.
-  const [baseItems, audioItems] = await Promise.all([
-    searchVideos(`${cleanedTitle} ${primaryArtist}`, 'base'),
-    searchVideos(`${cleanedTitle} ${primaryArtist} official audio`, 'official audio'),
-  ]);
-
-  const phase1All = [...baseItems, ...audioItems];
-  const phase1Topic = phase1All.filter(isTopicChannel);
-  const phase1Variants = phase1Topic.filter((i) => isBadVariant(i.snippet?.title ?? '', cleanedTitle));
-
-  console.log(
-    `[YTM] searchTrack("${title}" / "${artist}") phase 1: ` +
-    `${phase1All.length} results, ${phase1Topic.length} Topic-channel (${phase1Variants.length} are variants)`,
-  );
-
-  const phase1Best = pickBestCleanTopicResult(phase1All, cleanedTitle, primaryArtist, isTopicChannel);
-  if (phase1Best) {
-    console.log(
-      `[YTM] Phase 1 hit — "${phase1Best.snippet?.title}" by "${phase1Best.snippet?.channelTitle}" ` +
-      `(score ${titleScore(phase1Best.snippet?.title ?? '', cleanedTitle)}, artist ${artistTokenScore(phase1Best.snippet?.channelTitle ?? '', primaryArtist)}) — ${phase1Best.id.videoId}`,
-    );
-    return phase1Best.id.videoId;
-  }
-
-  if (phase1Topic.length > 0) {
-    console.warn(
-      `[YTM] Phase 1: ${phase1Topic.length} Topic result(s) all variants — proceeding to phase 2:\n` +
-      phase1Topic.map((i) => `  "${i.snippet?.title}" (${i.id.videoId})`).join('\n'),
-    );
-  } else {
-    console.log(`[YTM] Phase 1: no Topic-channel results. Proceeding to phase 2…`);
-  }
-
-  // ── Phase 2: search within Topic channels, using two channel ID sources ───────
-  //
-  // Source A: channelId values already embedded in phase 1 variant results.
-  //   These are the most reliable — we know those channels are Topic channels.
-  // Source B: channel name search for "${primaryArtist} - Topic".
-  //   Runs in parallel with A so there's no extra latency when A succeeds.
-  const variantChannelIds = [
-    ...new Set(
-      phase1Variants
-        .map((i) => i.snippet?.channelId)
-        .filter((id): id is string => !!id),
-    ),
-  ];
-
-  const [searchedChannelId] = await Promise.all([findTopicChannelId()]);
-
-  const allChannelIds = [
-    ...new Set([...variantChannelIds, searchedChannelId].filter((id): id is string => !!id)),
-  ];
-
-  console.log(
-    `[YTM] Phase 2 channel sources — from variants: [${variantChannelIds.join(', ')}], ` +
-    `from name search: ${searchedChannelId ?? 'none'}`,
-  );
-
-  if (allChannelIds.length > 0) {
-    const channelResultSets = await Promise.all(allChannelIds.map(searchWithinChannel));
-    const allChannelItems = channelResultSets.flat();
-
-    // All items came from Topic channels; tag them so pickBestCleanTopicResult
-    // can process them without needing to check channelTitle.
-    const tagged = allChannelItems.map((i) => ({
+  // ── Topic channel lookup (direct) ────────────────────────────────────────────
+  const channelId = await findTopicChannelId();
+  if (channelId) {
+    const items = await searchWithinChannel(channelId);
+    const tagged = items.map((i) => ({
       ...i,
       snippet: { ...i.snippet, channelTitle: `${primaryArtist} - Topic` },
     }));
-
-    const phase2Best = pickBestCleanTopicResult(tagged, cleanedTitle, primaryArtist, () => true);
-    if (phase2Best) {
-      console.log(
-        `[YTM] Phase 2 hit — "${phase2Best.snippet?.title}" ` +
-        `(score ${titleScore(phase2Best.snippet?.title ?? '', cleanedTitle)}, artist ${artistTokenScore(phase2Best.snippet?.channelTitle ?? '', primaryArtist)}) — ${phase2Best.id.videoId}`,
-      );
-      return phase2Best.id.videoId;
+    const best = pickBestCleanTopicResult(tagged, cleanedTitle, primaryArtist, () => true);
+    if (best) {
+      console.log(`[YTM] Topic channel hit — "${best.snippet?.title}" (${best.id.videoId})`);
+      return best.id.videoId;
     }
-
-    console.warn(
-      `[YTM] Phase 2: ${allChannelItems.length} in-channel video(s) all variants:\n` +
-      allChannelItems
-        .map((i) => `  "${i.snippet?.title}" (score ${titleScore(i.snippet?.title ?? '', title)}, variant: ${isBadVariant(i.snippet?.title ?? '', title)})`)
-        .join('\n'),
-    );
+    console.warn(`[YTM] Topic channel found but no clean match for "${cleanedTitle}" — trying broad fallback`);
   } else {
-    console.warn(`[YTM] Phase 2: no Topic channel IDs found for "${primaryArtist}"`);
+    console.warn(`[YTM] No Topic channel found for "${primaryArtist}" — trying broad fallback`);
   }
 
-  // ── Both phases failed ────────────────────────────────────────────────────────
-  const nonTopicLog = phase1All
-    .filter((i) => !isTopicChannel(i))
-    .map((i) => `  "${i.snippet?.title}" [${i.snippet?.channelTitle}] (${i.id.videoId})`)
-    .join('\n');
+  // ── Broad fallback ────────────────────────────────────────────────────────────
+  const broadResults = await searchVideos(`${cleanedTitle} ${primaryArtist}`, 'fallback');
+  const fallbackBest = pickBestCleanTopicResult(broadResults, cleanedTitle, primaryArtist, isTopicChannel);
+  if (fallbackBest) {
+    console.log(`[YTM] Broad fallback hit — "${fallbackBest.snippet?.title}" (${fallbackBest.id.videoId})`);
+    return fallbackBest.id.videoId;
+  }
 
-  console.error(
-    `[YTM] No clean Topic-channel video found for "${title}" by "${artist}".\n` +
-    `Non-Topic results (rejected):\n${nonTopicLog || '  (none)'}`,
-  );
-
+  console.error(`[YTM] No clean Topic-channel video found for "${title}" by "${artist}".`);
   throw new Error(
-    `youtube_music_topic_not_found: "${title}" by "${artist}" — no canonical YouTube Music Song found. ` +
-    `${phase1Variants.length} Topic-channel variant(s) and ${phase1All.length - phase1Topic.length} non-Topic video(s) were rejected.`,
+    `youtube_music_topic_not_found: "${title}" by "${artist}" — no canonical YouTube Music Song found.`,
   );
 }
 
@@ -633,7 +571,7 @@ export async function createPlaylist(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          snippet: { title: name, description: 'Shared via MusicBridge' },
+          snippet: { title: name, description: 'Shared via Museaic' },
           status: { privacyStatus: 'private' },
         }),
       },

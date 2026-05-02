@@ -122,7 +122,7 @@ export function AppBar({
             <View style={styles.logoMark}>
               <Text style={styles.logoMarkGlyph}>∿</Text>
             </View>
-            <Text style={styles.logoText}>musicbridge</Text>
+            <Text style={styles.logoText}>museaic</Text>
           </View>
         )}
         {title && <Text style={styles.appBarTitle}>{title}</Text>}

@@ -80,9 +80,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     // Keep session in sync with Supabase auth state changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    } = supabase.auth.onAuthStateChange(async (event, s) => {
       setSession(s);
       if (s) {
+        // TOKEN_REFRESHED only updates the session token — the user profile hasn't
+        // changed, so skip the profile re-fetch and loading flash entirely.
+        if (event === 'TOKEN_REFRESHED') return;
         setLoading(true);
         await fetchUserProfile(s.user.id);
       } else {

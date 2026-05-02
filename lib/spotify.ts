@@ -39,6 +39,8 @@ const SCOPES = [
 
 const SPOTIFY_RECONNECT_REQUIRED_KEY = 'spotify_reconnect_required';
 
+let _tokenCache: { userId: string; token: string; expiresAt: number } | null = null;
+
 export async function getSpotifyReconnectRequired(): Promise<boolean> {
   return (await AsyncStorage.getItem(SPOTIFY_RECONNECT_REQUIRED_KEY)) === 'true';
 }
@@ -60,7 +62,7 @@ async function clearSpotifyReconnectRequired(): Promise<void> {
 export async function connectSpotify(userId: string): Promise<boolean> {
   try {
     const redirectUri = AuthSession.makeRedirectUri({
-      scheme: 'musicbridge',
+      scheme: 'museaic',
       path: 'callback',
     });
 
@@ -112,6 +114,7 @@ export async function connectSpotify(userId: string): Promise<boolean> {
  * Disconnects Spotify by clearing stored tokens.
  */
 export async function disconnectSpotify(userId: string, skipClearReconnect = false): Promise<void> {
+  _tokenCache = null;
   await supabase
     .from('users')
     .update({
@@ -132,6 +135,10 @@ export async function disconnectSpotify(userId: string, skipClearReconnect = fal
  * Returns null if the user is not connected to Spotify.
  */
 export async function getSpotifyAccessToken(userId: string): Promise<string | null> {
+  if (_tokenCache?.userId === userId && _tokenCache.expiresAt > Date.now() + 60_000) {
+    return _tokenCache.token;
+  }
+
   const { data, error } = await supabase
     .from('users')
     .select('spotify_access_token, spotify_refresh_token, spotify_token_expiry')
@@ -144,6 +151,7 @@ export async function getSpotifyAccessToken(userId: string): Promise<string | nu
   if (data.spotify_token_expiry) {
     const expiry = new Date(data.spotify_token_expiry);
     if (expiry > new Date(Date.now() + 60_000)) {
+      _tokenCache = { userId, token: data.spotify_access_token, expiresAt: expiry.getTime() };
       return data.spotify_access_token;
     }
   }
@@ -184,7 +192,10 @@ export async function getSpotifyAccessToken(userId: string): Promise<string | nu
       expires_in: number;
     };
 
-    const expiry = new Date(Date.now() + token.expires_in * 1000).toISOString();
+    const expiresAt = Date.now() + token.expires_in * 1000;
+    const expiry = new Date(expiresAt).toISOString();
+
+    _tokenCache = { userId, token: token.access_token, expiresAt };
 
     await supabase
       .from('users')
@@ -348,7 +359,7 @@ export async function createPlaylist(
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name, public: false, description: 'Shared via MusicBridge' }),
+        body: JSON.stringify({ name, public: false, description: 'Shared via Museaic' }),
       },
     );
     if (!createRes.ok) {

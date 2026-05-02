@@ -36,8 +36,8 @@ function extractReelFromIncomingUrl(incomingUrl: string): string | null {
  *
  * Clipboard detection fires on app mount and every time the app returns to the
  * foreground. Inbound links support flows like:
- *   musicbridge://import-reel?url=<encoded reel url>
- *   musicbridge://import-reel?text=<shared text containing a reel url>
+ *   museaic://import-reel?url=<encoded reel url>
+ *   museaic://import-reel?text=<shared text containing a reel url>
  */
 export function useClipboardReel(scopeKey?: string | null, enabled = true) {
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);

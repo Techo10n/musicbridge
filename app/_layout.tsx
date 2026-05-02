@@ -4,12 +4,15 @@ import { useEffect, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider, useAuth } from '../hooks/useAuth';
 import { useNotifications } from '../hooks/useNotifications';
 import { useClipboardReel } from '../hooks/useClipboardReel';
 import { ReelImportBanner } from '../components/ReelImportBanner';
 import { ReelImportModal } from '../components/ReelImportModal';
 import { getSpotifyReconnectRequired } from '../lib/spotify';
+
+const tutorialKey = (userId: string) => `museaic_tutorial_seen_${userId}`;
 
 /**
  * Inner navigator — reacts to auth state and redirects accordingly.
@@ -94,6 +97,27 @@ function RootLayoutNav() {
       cancelled = true;
     };
   }, [loading, router, session, shownSpotifyReconnectPrompt, user]);
+
+  useEffect(() => {
+    if (!session || !user || loading) return;
+
+    let cancelled = false;
+    void (async () => {
+      const key = tutorialKey(user.id);
+      const seen = await AsyncStorage.getItem(key);
+      if (cancelled || seen) return;
+      await AsyncStorage.setItem(key, '1');
+      Alert.alert(
+        'Welcome to Museaic',
+        'Connect your streaming services in Settings, share songs from the center tab, and use Library to open saved playlists and reel finds.',
+        [{ text: 'Got it' }],
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, session, user]);
 
   // Only show reel import UI when logged in
   const showReelUI = reelUiReady;

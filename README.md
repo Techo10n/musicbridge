@@ -16,6 +16,7 @@ Long-term vision: social music platform with feeds, following, collaborative pla
 | Routing | Expo Router (file-based) |
 | Backend | Supabase (PostgreSQL + Auth + RLS + Realtime) |
 | Language | TypeScript |
+| Node.js | 22.13.0 via `.nvmrc` |
 
 > `npm install --legacy-peer-deps` required (react-dom peer dep conflict with Expo SDK 55 / React 19).
 
@@ -24,12 +25,16 @@ Long-term vision: social music platform with feeds, following, collaborative pla
 ## Running Locally
 
 ```bash
+nvm use                    # or install/use Node 22.13.0
 cp .env.example .env.local   # fill in credentials (see SETUP.md)
 npx expo start --dev-client  # Metro bundler for the custom iOS dev client
 npx expo run:ios             # iOS native build
 npx expo run:android         # Android native build
 npm run typecheck            # app TypeScript check (excludes Deno edge functions)
+npm test                     # Jest + jest-expo test suite
+npm run verify               # typecheck + tests
 supabase db push             # apply new Supabase migrations to linked dev project
+eas env:push production --path .env.local --force  # sync EXPO_PUBLIC_* vars before TestFlight builds
 ```
 
 See `SETUP.md` for full credential setup (Supabase, Spotify, Google, Apple Music).
@@ -48,12 +53,12 @@ musicbridge/
 │   │   └── register.tsx        2-step registration: credentials → primary service → optional immediate service connection
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar (Ionicons)
-│       ├── home.tsx            Feed of received shared items with working inbox/following/mixes filters, story posting/reactions, editable story captions, and top-bar search/notifications/share actions
+│       ├── home.tsx            Feed of received shared items with self-contained inbox cards, aligned sender/action headers, working inbox/following/mixes filters, story posting/reactions, editable story captions, and top-bar search/notifications/share actions
 │       ├── friends.tsx         People tab with auto-search, suggested follows, and data-based taste match scores
 │       ├── library.tsx         User's streaming library with sort controls, All Songs/Reel Songs pseudo-playlists, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
 │       ├── notifications.tsx   Notification inbox for recent shares and new followers
-│       ├── profile.tsx         Profile + avatar picker + service connections, quick connect/share profile, favorite-song search + sign out
-│       ├── settings.tsx        Settings screen with keyboard-aware profile editing, avatar upload, password reset, persisted toggles, and placeholder legal/rating rows
+│       ├── profile.tsx         Profile + avatar picker, data-derived taste tags, share profile, favorite-song search
+│       ├── settings.tsx        Settings screen with keyboard-aware profile editing, streaming service management, avatar upload, password reset, persisted toggles, and placeholder legal/rating rows
 │       └── share.tsx           Center-tab reel paste screen for manual reel identification
 ├── components/
 │   ├── SongCard.tsx
@@ -89,7 +94,18 @@ musicbridge/
 │   └── apple-music/
 │       ├── index.ts            JS bridge for the local Expo module
 │       └── ios/                Native iOS MusicKit / StoreKit module
+├── ios/
+│   └── ShareExtension/         iOS share sheet extension that forwards shared reel URLs/text into `museaic://import-reel`
 ├── types/index.ts
+├── __tests__/
+│   ├── utils.test.ts          Matching/utility helper coverage
+│   ├── reelParser.test.ts     Reel URL parser coverage
+│   ├── ui.test.tsx            Shared UI primitive behavior
+│   ├── useReactions.test.ts   Reaction hook state, optimistic updates, rollback
+│   ├── notifications.test.ts  Push notification helper behavior
+│   └── reelLists.test.ts      Reel-list persistence, migration, fallback behavior
+├── test/
+│   └── jest.setup.ts          Jest setup for React Native Testing Library
 ├── supabase/
 │   ├── functions/
 │   │   ├── convert-playlist/index.ts    Edge Function: server-side conversion + progress
@@ -101,9 +117,30 @@ musicbridge/
 │       ├── 004_follows_and_profile.sql
 │       ├── 005_push_tokens.sql
 │       ├── 006_reel_import_history.sql
-│       └── 007_reel_import_songs_rpc.sql
+│       ├── 007_reel_import_songs_rpc.sql
+│       └── 008_apple_music_playlist_url.sql
 └── .env.example
 ```
+
+---
+
+## Testing and TDD
+
+Production behavior changes should be test-first. Add or update a failing Jest test for the bug/feature, implement the smallest fix, then run the targeted test and `npm run verify` when feasible.
+
+Test stack:
+
+| Tool | Purpose |
+|---|---|
+| Jest + `jest-expo` | Expo/React Native test runner |
+| React Native Testing Library | User-visible component and hook behavior |
+| TypeScript | Static validation via `npm run typecheck` |
+
+See `knowledge-base/testing-and-tdd.md` for the full workflow agents must follow.
+
+`npm run typecheck` can sit quietly for a minute or two while TypeScript loads Expo/React Native declaration files. Wait for the final result before assuming it is hung.
+
+Current baseline coverage includes utility matching, reel URL parsing, shared UI primitives, reaction-hook optimistic updates, notification helpers, and reel-list persistence/fallback paths.
 
 ---
 
@@ -246,7 +283,7 @@ Unique constraint on `(follower_id, following_id)` and check `(follower_id <> fo
 | `type` | enum: song / playlist |
 | `title`, `artist`, `cover_image_url` | text |
 | `spotify_id`, `apple_music_id`, `youtube_music_id` | text (nullable) |
-| `spotify_playlist_id`, `apple_music_playlist_id`, `youtube_music_playlist_id` | text (nullable) |
+| `spotify_playlist_id`, `apple_music_playlist_id`, `apple_music_playlist_url`, `youtube_music_playlist_id` | text (nullable) |
 | `tracks` | jsonb — `[{title, artist, spotify_id, apple_music_id, youtube_music_id}]` |
 | `message` | text |
 | `opened` | boolean |
@@ -299,14 +336,17 @@ Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets
 
 ## Instagram Reel Import
 
-Users can paste an Instagram/TikTok reel URL from the center-tab share action, share an Instagram reel URL to MusicBridge, or copy it to the clipboard. The app detects clipboard/shared URLs on foreground and shows a slim banner for any authenticated user.
+Users can paste an Instagram/TikTok reel URL from the center-tab share action, use the iOS share sheet extension from Instagram/reel pages, share an Instagram reel URL to MusicBridge, or copy it to the clipboard. The app detects clipboard/shared URLs on foreground and shows a slim banner for any authenticated user.
+
+Before TestFlight builds, push Expo public env vars to EAS production with `eas env:push production --path .env.local --force`. Reel analysis also requires deployed Supabase secrets: `AUDD_API_TOKEN` for audio fingerprinting and `ANTHROPIC_API_KEY` for frame OCR.
 
 **Flow**:
 1. `useClipboardReel` polls the clipboard once auth/profile hydration finishes and every time the app returns to the foreground after that. Dismissed/pending reel state is scoped to the current signed-in user so switching accounts does not suppress the same reel on another profile.
-2. `ReelImportBanner` appears at the top of every screen with a "Find Song" button.
-3. Tapping "Find Song" or submitting the center-tab reel paste screen opens `ReelImportModal`, which calls the `parse-reel` Edge Function.
-4. On success: shows an ordered song list that can be opened in the user's primary service, saved as a reel list in Library, or shared with a friend. The live "Best match so far" card is also tappable.
-5. On failure: shows a brief error state and auto-closes after 2 seconds.
+2. The iOS Share Extension accepts URL/text shares, then opens `museaic://import-reel?text=<shared payload>` so the existing deep-link parser can extract the reel URL without requiring copy/paste.
+3. `ReelImportBanner` appears at the top of every screen with a "Find Song" button.
+4. Tapping "Find Song" or submitting the center-tab reel paste screen opens `ReelImportModal`, which calls the `parse-reel` Edge Function.
+5. On success: shows an ordered song list that can be opened in the user's primary service, saved as a reel list in Library, or shared with a friend. The live "Best match so far" card is also tappable.
+6. On failure: shows a brief error state and auto-closes after 2 seconds.
 
 Saved reel lists are persisted in Supabase via `reel_imports` + `reel_import_songs` (migration `006_reel_import_history.sql`). Song replacement uses the atomic `upsert_reel_import_songs` RPC from migration `007_reel_import_songs_rpc.sql`. The app falls back to local storage only if those tables/functions are unavailable, with a short retry backoff before trying remote storage again.
 
@@ -315,9 +355,9 @@ Saved reel lists are persisted in Supabase via `reel_imports` + `reel_import_son
 | Stage | Method | Notes |
 |---|---|---|
 | 1 | Instagram metadata scrape | Hits Instagram GraphQL with a mobile-style header set. Parses `clips_music_attribution_info`, caption text, preview comments, plus `video_url` / `video_duration` for follow-up analysis. Caption parsing is intentionally strict to avoid false positives from natural-language captions. |
-| 2 | AudD audio fingerprinting | Uploads the reel file once to `https://enterprise.audd.io/` for a full enterprise scan, aggregates repeated chunk hits, canonicalizes titles/artists through iTunes, and returns `matchCount` + `orderHint` so the client can rank results. Requires `AUDD_API_TOKEN` Supabase secret. |
-| 3 | Client frame OCR | `ReelImportModal` extracts a small early sample plus a larger late sample with `expo-video-thumbnails`, sends those frames back to the edge function, and Claude Haiku is instructed to return songs only when both song title and artist are directly readable on-screen. Album-cover inference is explicitly disallowed. |
-| 4 | Client confidence merge | The modal ranks raw `audioSongs`, `metadataSong`, `textSongs`, and OCR hits together. Audio-only intros/interludes are penalized, repeated OCR hits get boosted, and final ordering prefers the earliest observed reel position. OCR hits are canonicalized through iTunes with a small typo-tolerant fallback so minor frame-reading mistakes can still resolve to the real track. |
+| 2 | AudD audio fingerprinting | Downloads Instagram media with browser-style headers, uploads the reel file once to `https://enterprise.audd.io/` for a full enterprise scan, aggregates repeated chunk hits, canonicalizes titles/artists through iTunes, and returns `matchCount` + `orderHint` so the client can rank results. Requires `AUDD_API_TOKEN` Supabase secret. |
+| 3 | Client frame OCR | `ReelImportModal` extracts staged frames from different sections of the reel with `expo-video-thumbnails`, sends those frames back to the edge function, and Claude Haiku is instructed to return songs only when both song title and artist are directly readable on-screen. Title-only text, edit captions, usernames, playlist labels, and album-cover inference are explicitly rejected. |
+| 4 | Client confidence merge | The modal ranks raw `audioSongs`, `metadataSong`, `textSongs`, and OCR hits together. Instagram metadata attribution is treated as a viable standalone result, audio-only intros/interludes are penalized, repeated OCR hits get boosted, and final ordering prefers the earliest observed reel position. OCR hits are canonicalized through iTunes with a small typo-tolerant fallback so minor frame-reading mistakes can still resolve to the real track. |
 | 5 | Staged vision fallback | Vision OCR runs whenever the initial metadata/audio/text result is still thin. Most reels use a staged late → middle → early fallback. Short dense reels instead use a single full-timeline dense OCR sweep, which is better for 1-2 second song cards where every part of the reel changes quickly. OCR batches are kept small so Claude is less likely to collapse adjacent cards together. |
 
 If all stages miss, the modal shows "Couldn't identify the song" and closes.

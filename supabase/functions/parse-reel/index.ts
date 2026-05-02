@@ -29,6 +29,15 @@ const IG_GRAPHQL_HEADERS: Record<string, string> = {
   'Origin': 'https://www.instagram.com',
 };
 
+const IG_MEDIA_HEADERS: Record<string, string> = {
+  'User-Agent':
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1',
+  'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://www.instagram.com/',
+  'Origin': 'https://www.instagram.com',
+};
+
 // ─── Per-request context ──────────────────────────────────────────────────────
 
 interface RequestContext {
@@ -458,7 +467,7 @@ async function downloadVideoForFingerprinting(
 ): Promise<DownloadedVideo | null> {
   try {
     ctx.dbg(`Stage-Audio: downloading video for file upload ${videoUrl.slice(0, 80)}…`);
-    const res = await fetch(videoUrl);
+    const res = await fetch(videoUrl, { headers: IG_MEDIA_HEADERS });
     if (!res.ok) {
       ctx.dbg(`Stage-Audio: video download HTTP ${res.status}`);
       return null;
@@ -706,14 +715,18 @@ async function fingerprintWholeVideo(
 
 // ─── Vision: client-extracted frames + Claude Haiku ──────────────────────────
 
+interface VisionResult {
+  songs: { title: string; artist: string }[];
+}
+
 async function extractSongsFromFrames(
   frames: string[],
   ctx: RequestContext,
-): Promise<{ title: string; artist: string }[]> {
-  if (frames.length === 0) return [];
+): Promise<VisionResult> {
+  if (frames.length === 0) return { songs: [] };
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) { ctx.dbg('Stage-Vision: ANTHROPIC_API_KEY not set — skipping'); return []; }
+  if (!apiKey) { ctx.dbg('Stage-Vision: ANTHROPIC_API_KEY not set — skipping'); return { songs: [] }; }
 
   try {
     const imageContent = frames.map(f => ({
@@ -737,7 +750,7 @@ async function extractSongsFromFrames(
             ...imageContent,
             {
               type: 'text',
-              text: 'These are sequential frames from an Instagram reel. Return songs ONLY when the frame text itself explicitly shows both the song title and the artist name. Do not infer from album covers, cover art, artist photos, vinyl sleeves, tracklists, aesthetic text, captions, hashtags, playlist names, genres, or partial text. If you only see an album name or recognizable cover, do not guess the song. Return ONLY valid JSON — an array of objects like [{"title":"Song Name","artist":"Artist Name"}]. If the title+artist pair is not directly readable on-screen, return [].',
+              text: 'Look at these frames and find song titles with their artist names written as text.\n\nReturn ONLY this JSON:\n{"songs":[{"title":"...","artist":"..."}]}\n\nOnly include entries where BOTH a song title AND its artist are directly readable on screen as nearby text.\n\nDo not return title-only text, playlist labels, captions, quotes, edit names, usernames, hashtags, or any text without a readable artist name. Never guess from artwork, photos, or album covers. Only read text.\n\nIf you see nothing with both title and artist: {"songs":[]}',
             },
           ],
         }],
@@ -745,18 +758,20 @@ async function extractSongsFromFrames(
     });
 
     const data = await res.json() as { content?: Array<{ type: string; text: string }> };
-    const text = data.content?.find(c => c.type === 'text')?.text ?? '[]';
+    const text = data.content?.find(c => c.type === 'text')?.text ?? '';
     ctx.dbg(`Stage-Vision: Claude response: ${text.slice(0, 300)}`);
 
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) { ctx.dbg('Stage-Vision: no JSON array in response'); return []; }
+    const objMatch = text.match(/\{[\s\S]*\}/);
+    if (!objMatch) { ctx.dbg('Stage-Vision: no JSON object in response'); return { songs: [] }; }
 
-    const parsed = JSON.parse(jsonMatch[0]) as { title: string; artist: string }[];
-    ctx.dbg(`Stage-Vision: ${parsed.length} song(s) from frames`);
-    return parsed;
+    const parsed = JSON.parse(objMatch[0]) as { songs?: { title: string; artist: string }[] };
+    const songs = (Array.isArray(parsed.songs) ? parsed.songs : [])
+      .filter((song) => song?.title?.trim() && song?.artist?.trim());
+    ctx.dbg(`Stage-Vision: ${songs.length} song(s) with title+artist from frames`);
+    return { songs };
   } catch (err) {
     ctx.dbg(`Stage-Vision: failed: ${err}`);
-    return [];
+    return { songs: [] };
   }
 }
 
@@ -827,12 +842,13 @@ Deno.serve(async (req) => {
 
     if (visionOnly) {
       ctx.dbg(`Stage-Vision: ${clientFrames.length} client frame(s) provided`);
-      const visionSongs = await extractSongsFromFrames(clientFrames, ctx);
+      const { songs: visionSongs } = await extractSongsFromFrames(clientFrames, ctx);
       const canonicalVisionSongs = (await Promise.all(
         visionSongs.map((song) => canonicalizeTrack({ ...song, coverUrl: null })),
       )).filter((song): song is ReelSong => !!song);
       const allSongs = deduplicateSongs(canonicalVisionSongs);
-      const source = allSongs.length > 0 ? 'vision' : 'none';
+      const sources = [canonicalVisionSongs.length > 0 && 'vision'].filter(Boolean);
+      const source = allSongs.length > 0 ? sources.join('+') : 'none';
       ctx.dbg(`RESULT: ${allSongs.length} song(s) via [${source}]`);
       return jsonResp({ songs: allSongs, source, debug: ctx.debugNotes });
     }
@@ -866,7 +882,8 @@ Deno.serve(async (req) => {
     let visionSongs: { title: string; artist: string }[] = [];
     if (clientFrames.length > 0) {
       ctx.dbg(`Stage-Vision: using ${clientFrames.length} client frame(s)`);
-      visionSongs = await extractSongsFromFrames(clientFrames, ctx);
+      const { songs: vs } = await extractSongsFromFrames(clientFrames, ctx);
+      visionSongs = vs;
     } else {
       ctx.dbg('Stage-Vision: skipped — no client frames provided');
     }
@@ -893,6 +910,7 @@ Deno.serve(async (req) => {
     return jsonResp({
       songs: allSongs,
       audioSongs,
+      visionSongs: deduplicateSongs(visionSongs.map(s => ({ ...s, coverUrl: null }))),
       metadataSong: igSong,
       textSongs: deduplicateSongs([
         ...captionSongs.map(s => ({ ...s, coverUrl: null })),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Image, Modal,
+  ActivityIndicator, Alert, Image, Modal,
   ScrollView, Share, StyleSheet, Switch, Text, TextInput,
   TouchableOpacity, View,
 } from 'react-native';
@@ -10,7 +10,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { useProfileStats } from '../../hooks/useProfileStats';
-import { MusicServiceButton } from '../../components/MusicServiceButton';
 import { MusicService, LibraryPlaylist, FavoriteSong } from '../../types';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
@@ -21,14 +20,12 @@ import { supabase } from '../../lib/supabase';
 import { Avatar, AppBar, IconBtn, CoverArt, ServiceDot, serviceLabelShort, SectionTitle } from '../../components/ui';
 import { colors } from '../../lib/theme';
 
-const SERVICES: MusicService[] = ['spotify', 'apple_music', 'youtube_music'];
 const SERVICE_LABELS: Record<MusicService, string> = {
   spotify: 'Spotify', apple_music: 'Apple Music', youtube_music: 'YouTube Music',
 };
 const SERVICE_COLORS: Record<MusicService, string> = {
   spotify: '#1DB954', apple_music: '#fc3c44', youtube_music: '#FF0000',
 };
-const GENRE_TAGS = ['neo-soul', 'shoegaze', 'r&b', 'jazz', 'bedroom-pop'];
 
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
@@ -44,13 +41,11 @@ function timeAgo(iso: string): string {
 }
 
 export default function Profile() {
-  const { user, signOut, setPrimaryService, refreshUser } = useAuth();
+  const { user, refreshUser } = useAuth();
   const router = useRouter();
   const { following, followers, getFollowCounts } = useFollows();
   const stats = useProfileStats();
 
-  const [loadingService, setLoadingService] = useState<MusicService | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarPreviewUri, setAvatarPreviewUri] = useState<string | null>(null);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
@@ -217,98 +212,20 @@ export default function Profile() {
     } finally { setLoadingLibrary(false); }
   };
 
-  const isConnected = (svc: MusicService) => {
-    switch (svc) {
-      case 'spotify': return !!user?.spotify_access_token;
-      case 'apple_music': return !!user?.apple_music_user_token;
-      case 'youtube_music': return !!user?.youtube_access_token;
-    }
-  };
-
-  const handleConnect = async (svc: MusicService) => {
-    if (!user) return;
-    setLoadingService(svc);
-    try {
-      let ok = false;
-      switch (svc) {
-        case 'spotify': ok = await Spotify.connectSpotify(user.id); break;
-        case 'apple_music': ok = await AppleMusic.connectAppleMusic(user.id); break;
-        case 'youtube_music': ok = await YouTubeMusic.connectYouTubeMusic(user.id); break;
-      }
-      if (ok) { await refreshUser(); Alert.alert('Connected!', `${SERVICE_LABELS[svc]} connected.`); }
-      else Alert.alert('Failed', `Could not connect ${SERVICE_LABELS[svc]}.`);
-    } catch (err) { Alert.alert('Error', err instanceof Error ? err.message : 'Failed'); }
-    finally { setLoadingService(null); }
-  };
-
-  const handleDisconnect = (svc: MusicService) => {
-    const userId = user?.id;
-    if (!userId) return;
-    Alert.alert(`Disconnect ${SERVICE_LABELS[svc]}?`, 'You can reconnect anytime.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Disconnect', style: 'destructive', onPress: async () => {
-        setLoadingService(svc);
-        try {
-          switch (svc) {
-            case 'spotify': await Spotify.disconnectSpotify(userId); break;
-            case 'apple_music': await AppleMusic.disconnectAppleMusic(userId); break;
-            case 'youtube_music': await YouTubeMusic.disconnectYouTubeMusic(userId); break;
-          }
-          await refreshUser();
-        } finally { setLoadingService(null); }
-      }},
-    ]);
-  };
-
-  const handleSetPrimary = async (svc: MusicService) => {
-    if (!user || user.primary_service === svc) return;
-    try { await setPrimaryService(svc); }
-    catch { Alert.alert('Error', 'Could not update primary service'); }
-  };
-
-  const handleConnectMissingService = () => {
-    const missing = SERVICES.filter(svc => !isConnected(svc));
-    if (missing.length === 0) return;
-    if (missing.length === 1) {
-      void handleConnect(missing[0]);
-      return;
-    }
-
-    Alert.alert(
-      'Connect a service',
-      'Choose a streaming service to connect.',
-      [
-        ...missing.map(svc => ({ text: SERVICE_LABELS[svc], onPress: () => void handleConnect(svc) })),
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
-  };
-
   const handleShareProfile = async () => {
     if (!user) return;
     try {
       await Share.share({
-        message: `Follow ${user.display_name} on MusicBridge: musicbridge://profile/${user.username}`,
+        message: `Follow ${user.display_name} on Museaic: museaic://profile/${user.username}`,
       });
     } catch {
       Alert.alert('Share unavailable', 'Could not open the system share sheet.');
     }
   };
 
-  const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: async () => {
-        setSigningOut(true);
-        try { await signOut(); } finally { setSigningOut(false); }
-      }},
-    ]);
-  };
-
   if (!user) return <View style={styles.loadingScreen}><ActivityIndicator color={colors.primary} /></View>;
 
   const initials = user.display_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
-  const primarySvc = user.primary_service as MusicService | null;
   const avatarUri = avatarPreviewUri ?? user.avatar_url;
   const visiblePublicShares = publicShares.slice(0, 8);
 
@@ -362,35 +279,12 @@ export default function Profile() {
             ? <Text style={styles.bio}>{user.bio}</Text>
             : <Text style={styles.bioPlaceholder}>No bio yet</Text>
           }
-          {/* Genre chips */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagRow}>
-            {GENRE_TAGS.map(t => (
-              <View key={t} style={styles.tag}><Text style={styles.tagText}>{t}</Text></View>
-            ))}
-          </ScrollView>
-        </View>
-
-        {/* ── Connected services chips ── */}
-        <View style={styles.svcRow}>
-          {SERVICES.filter(isConnected).map(svc => (
-            <TouchableOpacity
-              key={svc}
-              style={[styles.svcChip, primarySvc === svc && styles.svcChipPrimary]}
-              onPress={() => handleSetPrimary(svc)}
-              activeOpacity={0.8}
-            >
-              <View style={[styles.svcDot, { backgroundColor: SERVICE_COLORS[svc] }]} />
-              <Text style={styles.svcChipText}>
-                {svc === 'spotify' ? 'Spotify' : svc === 'apple_music' ? 'Apple' : 'YT Music'}
-              </Text>
-              {primarySvc === svc && <Text style={styles.svcPrimaryBadge}>Primary</Text>}
-            </TouchableOpacity>
-          ))}
-          {SERVICES.some(s => !isConnected(s)) && (
-            <TouchableOpacity style={styles.svcChipAdd} onPress={handleConnectMissingService} activeOpacity={0.8}>
-              <Ionicons name="add" size={14} color={colors.fg3} />
-              <Text style={styles.svcChipAddText}>Connect</Text>
-            </TouchableOpacity>
+          {stats.tasteTags.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagRow}>
+              {stats.tasteTags.map(t => (
+                <View key={t} style={styles.tag}><Text style={styles.tagText}>{t}</Text></View>
+              ))}
+            </ScrollView>
           )}
         </View>
 
@@ -509,48 +403,12 @@ export default function Profile() {
           )}
         </View>
 
-        {/* ── Streaming services ── */}
-        <SectionTitle title="Streaming Services" />
-        <View style={{ paddingHorizontal: 16 }}>
-          <Text style={styles.serviceSubtitle}>Connect your services so friends can share music you can play.</Text>
-          {SERVICES.map(svc => (
-            <View key={svc}>
-              <MusicServiceButton
-                service={svc}
-                connected={isConnected(svc)}
-                onConnect={() => handleConnect(svc)}
-                onDisconnect={() => handleDisconnect(svc)}
-                loading={loadingService === svc}
-                isPrimary={primarySvc === svc}
-              />
-              {isConnected(svc) && primarySvc !== svc && (
-                <TouchableOpacity style={styles.setPrimaryRow} onPress={() => handleSetPrimary(svc)}>
-                  <Text style={styles.setPrimaryText}>Set as primary</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          ))}
-          {primarySvc && (
-            <View style={styles.primaryInfo}>
-              <View style={[styles.primaryDot, { backgroundColor: SERVICE_COLORS[primarySvc] }]} />
-              <Text style={styles.primaryInfoText}>Songs open in <Text style={styles.primaryInfoHighlight}>{SERVICE_LABELS[primarySvc]}</Text></Text>
-            </View>
-          )}
-        </View>
-
         {/* ── Listening history toggle ── */}
         {!!user.spotify_access_token && (
           <SectionTitle title="Listening History" right={
             <Switch value={stats.historyOptIn} onValueChange={stats.setHistoryOptIn} trackColor={{ false: colors.line2, true: colors.primary }} thumbColor="#fff" />
           } />
         )}
-
-        {/* ── Sign out ── */}
-        <View style={{ paddingHorizontal: 16, marginTop: 20 }}>
-          <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} disabled={signingOut} activeOpacity={0.8}>
-            {signingOut ? <ActivityIndicator color={colors.coral} size="small" /> : <Text style={styles.signOutText}>Sign Out</Text>}
-          </TouchableOpacity>
-        </View>
 
         <View style={{ height: 48 }} />
       </ScrollView>
@@ -679,15 +537,7 @@ const styles = StyleSheet.create({
   tag: { backgroundColor: colors.bgCard, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: colors.line },
   tagText: { fontSize: 11, color: colors.fg3, fontWeight: '600' },
 
-  // Service chips
-  svcRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 12, flexWrap: 'wrap' },
-  svcChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.bgCard, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: colors.line },
-  svcChipPrimary: { borderColor: colors.primary },
   svcDot: { width: 8, height: 8, borderRadius: 4 },
-  svcChipText: { fontSize: 12, color: colors.fg2, fontWeight: '600' },
-  svcPrimaryBadge: { fontSize: 10, color: colors.primary, fontWeight: '700' },
-  svcChipAdd: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: colors.line, borderStyle: 'dashed' },
-  svcChipAddText: { fontSize: 12, color: colors.fg3 },
 
   // Edit / share buttons
   actionRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 16 },
@@ -762,19 +612,6 @@ const styles = StyleSheet.create({
   shareRowTime: { fontSize: 11, color: colors.fg3 },
   emptyPublic: { alignItems: 'center', paddingVertical: 24 },
   emptyPublicText: { color: colors.fg4, fontSize: 13, fontStyle: 'italic' },
-
-  // Service section
-  serviceSubtitle: { color: colors.fg3, fontSize: 13, lineHeight: 18, marginBottom: 14, marginTop: -4 },
-  setPrimaryRow: { alignSelf: 'flex-end', marginTop: -8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 4 },
-  setPrimaryText: { color: colors.fg3, fontSize: 12, textDecorationLine: 'underline' },
-  primaryInfo: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
-  primaryDot: { width: 8, height: 8, borderRadius: 4 },
-  primaryInfoText: { color: colors.fg3, fontSize: 13 },
-  primaryInfoHighlight: { color: colors.fg2, fontWeight: '600' },
-
-  // Sign out
-  signOutBtn: { backgroundColor: colors.bgCard, borderRadius: 12, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: colors.line },
-  signOutText: { color: colors.coral, fontSize: 16, fontWeight: '600' },
 
   // Modals
   modal: { flex: 1, backgroundColor: colors.bg },

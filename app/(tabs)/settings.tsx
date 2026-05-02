@@ -11,6 +11,11 @@ import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
 import { AppBar, IconBtn, Avatar, CoverArt } from '../../components/ui';
+import { MusicServiceButton } from '../../components/MusicServiceButton';
+import { MusicService } from '../../types';
+import * as Spotify from '../../lib/spotify';
+import * as AppleMusic from '../../lib/appleMusic';
+import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { colors } from '../../lib/theme';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -35,6 +40,17 @@ const defaultPrefs: SettingsPrefs = {
 };
 
 const settingsKey = (userId: string) => `musicbridge_settings_${userId}`;
+const SERVICES: MusicService[] = ['spotify', 'apple_music', 'youtube_music'];
+const SERVICE_LABELS: Record<MusicService, string> = {
+  spotify: 'Spotify',
+  apple_music: 'Apple Music',
+  youtube_music: 'YouTube Music',
+};
+const SERVICE_COLORS: Record<MusicService, string> = {
+  spotify: '#1DB954',
+  apple_music: '#fc3c44',
+  youtube_music: '#FF0000',
+};
 
 function Row({
   icon, label, value, onPress, danger, toggle, toggleVal, onToggle, noChevron,
@@ -70,7 +86,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function Settings() {
-  const { user, session, signOut, refreshUser } = useAuth();
+  const { user, session, signOut, refreshUser, setPrimaryService } = useAuth();
   const router = useRouter();
   const params = useLocalSearchParams<{ edit?: string }>();
 
@@ -80,6 +96,7 @@ export default function Settings() {
   const [draftBio, setDraftBio] = useState('');
   const [saving, setSaving] = useState(false);
   const [changingPhoto, setChangingPhoto] = useState(false);
+  const [loadingService, setLoadingService] = useState<MusicService | null>(null);
 
   // Privacy toggles
   const [publicProfile, setPublicProfile] = useState(true);
@@ -181,10 +198,73 @@ export default function Settings() {
     ]);
   };
 
+  const isConnected = (svc: MusicService) => {
+    switch (svc) {
+      case 'spotify': return !!user?.spotify_access_token;
+      case 'apple_music': return !!user?.apple_music_user_token;
+      case 'youtube_music': return !!user?.youtube_access_token;
+    }
+  };
+
+  const handleConnect = async (svc: MusicService) => {
+    if (!user || loadingService) return;
+    setLoadingService(svc);
+    try {
+      let ok = false;
+      switch (svc) {
+        case 'spotify': ok = await Spotify.connectSpotify(user.id); break;
+        case 'apple_music': ok = await AppleMusic.connectAppleMusic(user.id); break;
+        case 'youtube_music': ok = await YouTubeMusic.connectYouTubeMusic(user.id); break;
+      }
+      await refreshUser();
+      Alert.alert(ok ? 'Connected' : 'Connection failed', ok ? `${SERVICE_LABELS[svc]} connected.` : `Could not connect ${SERVICE_LABELS[svc]}.`);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Could not connect service.');
+    } finally {
+      setLoadingService(null);
+    }
+  };
+
+  const handleDisconnect = (svc: MusicService) => {
+    const userId = user?.id;
+    if (!userId || loadingService) return;
+    Alert.alert(`Disconnect ${SERVICE_LABELS[svc]}?`, 'You can reconnect anytime.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          setLoadingService(svc);
+          try {
+            switch (svc) {
+              case 'spotify': await Spotify.disconnectSpotify(userId); break;
+              case 'apple_music': await AppleMusic.disconnectAppleMusic(userId); break;
+              case 'youtube_music': await YouTubeMusic.disconnectYouTubeMusic(userId); break;
+            }
+            await refreshUser();
+          } catch {
+            Alert.alert('Error', `Could not disconnect ${SERVICE_LABELS[svc]}.`);
+          } finally {
+            setLoadingService(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleSetPrimary = async (svc: MusicService) => {
+    if (!user || user.primary_service === svc) return;
+    try {
+      await setPrimaryService(svc);
+    } catch {
+      Alert.alert('Error', 'Could not update your primary service.');
+    }
+  };
+
   const handleDeleteAccount = () => {
     Alert.alert('Delete Account', 'This permanently removes your account and all data. This cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => Alert.alert('Contact Support', 'Email support@musicbridge.app to delete your account.') },
+      { text: 'Delete', style: 'destructive', onPress: () => Alert.alert('Contact Support', 'Email support@museaic.app to delete your account.') },
     ]);
   };
 
@@ -224,6 +304,7 @@ export default function Settings() {
   if (!user) return null;
 
   const initials = (user.display_name ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+  const primarySvc = user.primary_service as MusicService | null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -253,11 +334,39 @@ export default function Settings() {
 
         {/* ── Account ── */}
         <Section title="Account">
+          <Row icon="log-out-outline" label="Sign Out" onPress={handleSignOut} danger />
           <Row icon="person-outline" label="Display Name" value={user.display_name} onPress={openEdit} />
           <Row icon="at-outline" label="Username" value={`@${user.username}`} noChevron />
           <Row icon="mail-outline" label="Email" value={(user as any).email ?? 'Not available'} noChevron />
           <Row icon="camera-outline" label="Change Photo" value={changingPhoto ? 'Updating...' : undefined} onPress={handleChangePhoto} />
           <Row icon="key-outline" label="Change Password" onPress={handleChangePassword} />
+        </Section>
+
+        {/* ── Streaming services ── */}
+        <Section title="Streaming Services">
+          <View style={styles.serviceSectionIntro}>
+            <Text style={styles.serviceSectionText}>
+              Manage connected services and choose where shared songs open.
+            </Text>
+          </View>
+          {SERVICES.map((svc) => (
+            <View key={svc} style={styles.serviceSettingBlock}>
+              <MusicServiceButton
+                service={svc}
+                connected={isConnected(svc)}
+                onConnect={() => handleConnect(svc)}
+                onDisconnect={() => handleDisconnect(svc)}
+                loading={loadingService === svc}
+                isPrimary={primarySvc === svc}
+              />
+              {isConnected(svc) && primarySvc !== svc && (
+                <TouchableOpacity style={styles.setPrimaryRow} onPress={() => handleSetPrimary(svc)} activeOpacity={0.8}>
+                  <View style={[styles.serviceDot, { backgroundColor: SERVICE_COLORS[svc] }]} />
+                  <Text style={styles.setPrimaryText}>Set {SERVICE_LABELS[svc]} as primary</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))}
         </Section>
 
         {/* ── Privacy ── */}
@@ -278,16 +387,15 @@ export default function Settings() {
 
         {/* ── App ── */}
         <Section title="App">
-          <Row icon="information-circle-outline" label="About MusicBridge" onPress={() => Alert.alert('MusicBridge', 'v1.0.0 — Made with ♥')} />
+          <Row icon="information-circle-outline" label="About Museaic" onPress={() => Alert.alert('Museaic', 'v1.0.0 — Made with ♥')} />
           <Row icon="document-text-outline" label="Terms of Service" onPress={() => showUnavailable('Terms of Service')} />
           <Row icon="shield-outline" label="Privacy Policy" onPress={() => showUnavailable('Privacy Policy')} />
           <Row icon="star-outline" label="Rate the App" onPress={() => showUnavailable('Rate the App')} />
-          <Row icon="chatbubble-outline" label="Send Feedback" onPress={() => Alert.alert('Feedback', 'Email hello@musicbridge.app')} />
+          <Row icon="chatbubble-outline" label="Send Feedback" onPress={() => Alert.alert('Feedback', 'Email hello@museaic.app')} />
         </Section>
 
         {/* ── Danger zone ── */}
         <Section title="Account Actions">
-          <Row icon="log-out-outline" label="Sign Out" onPress={handleSignOut} danger />
           <Row icon="trash-outline" label="Delete Account" onPress={handleDeleteAccount} danger />
         </Section>
 
@@ -372,6 +480,20 @@ const styles = StyleSheet.create({
     marginHorizontal: 16, backgroundColor: colors.bgCard,
     borderRadius: 14, borderWidth: 1, borderColor: colors.line, overflow: 'hidden',
   },
+  serviceSectionIntro: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 6 },
+  serviceSectionText: { color: colors.fg3, fontSize: 13, lineHeight: 18 },
+  serviceSettingBlock: { paddingHorizontal: 12, paddingVertical: 6 },
+  setPrimaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: -6,
+  },
+  serviceDot: { width: 8, height: 8, borderRadius: 4 },
+  setPrimaryText: { color: colors.fg3, fontSize: 12, fontWeight: '600' },
 
   settingRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

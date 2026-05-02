@@ -14,6 +14,10 @@
     "lib/**/*.tsx",
     "modules/**/*.ts",
     "modules/**/*.tsx",
+    "test/**/*.ts",
+    "test/**/*.tsx",
+    "__tests__/**/*.ts",
+    "__tests__/**/*.tsx",
     "types/**/*.ts",
     "*.ts",
     "*.tsx"

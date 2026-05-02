@@ -38,6 +38,7 @@ const APPLE_MUSIC_PLAYLIST_URL_RETRY_DELAY_MS = 1_000;
 
 let cachedDeveloperToken: { token: string; expiresAt: number } | null = null;
 let cachedStorefront: string | null = null;
+let _userTokenCache: { userId: string; token: string } | null = null;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -275,6 +276,7 @@ export async function connectAppleMusic(userId: string): Promise<boolean> {
  * Disconnects Apple Music by clearing the stored user token.
  */
 export async function disconnectAppleMusic(userId: string): Promise<void> {
+  _userTokenCache = null;
   await supabase
     .from('users')
     .update({ apple_music_user_token: null })
@@ -284,6 +286,8 @@ export async function disconnectAppleMusic(userId: string): Promise<void> {
 // ─── Token management ─────────────────────────────────────────────────────────
 
 async function getUserToken(userId: string): Promise<string | null> {
+  if (_userTokenCache?.userId === userId) return _userTokenCache.token;
+
   const { data, error } = await supabase
     .from('users')
     .select('apple_music_user_token')
@@ -291,6 +295,7 @@ async function getUserToken(userId: string): Promise<string | null> {
     .single();
 
   if (error || !data?.apple_music_user_token) return null;
+  _userTokenCache = { userId, token: data.apple_music_user_token };
   return data.apple_music_user_token;
 }
 
@@ -363,7 +368,7 @@ export async function createPlaylist(
 
   try {
     const body = {
-      attributes: { name, description: 'Shared via MusicBridge' },
+      attributes: { name, description: 'Shared via Museaic' },
       relationships: {
         tracks: {
           data: trackIds.map((id) => ({ id, type: 'songs' })),
@@ -445,6 +450,17 @@ export function getAppleMusicPlaylistDeepLink(
     'music://music.apple.com/library',
     'https://music.apple.com/library',
   ];
+}
+
+export async function resolveAppleMusicPlaylistLinks(
+  userId: string,
+  playlistId: string,
+  canonicalUrl?: string | null,
+): Promise<string[]> {
+  const resolvedUrl = canonicalUrl
+    ?? await getLibraryPlaylistCatalogUrl(userId, playlistId)
+    ?? await getLibraryPlaylistUrl(userId, playlistId);
+  return getAppleMusicPlaylistDeepLink(playlistId, resolvedUrl);
 }
 
 // ─── Library ──────────────────────────────────────────────────────────────────

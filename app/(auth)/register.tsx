@@ -116,7 +116,7 @@ export default function Register() {
 
       Alert.alert(
         `Connect ${getServiceLabel(service)}?`,
-        'Connecting now gives MusicBridge immediate access to open songs and create playlists on your default service.',
+        'Connecting now gives Museaic immediate access to open songs and create playlists on your default service.',
         [
           {
             text: 'Later',
@@ -158,7 +158,7 @@ export default function Register() {
     return (
       <View style={styles.container}>
         <View style={styles.inner}>
-          <Text style={styles.logo}>musicbridge</Text>
+          <Text style={styles.logo}>museaic</Text>
           <Text style={styles.stepTitle}>Choose your primary service</Text>
           <Text style={styles.stepSubtitle}>
             This is where you'll listen — you can still share to friends on other services.
@@ -197,7 +197,7 @@ export default function Register() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.logo}>musicbridge</Text>
+        <Text style={styles.logo}>museaic</Text>
         <Text style={styles.stepTitle}>Create your account</Text>
 
         {error && <Text style={styles.error}>{error}</Text>}

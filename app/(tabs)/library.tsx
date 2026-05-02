@@ -614,7 +614,7 @@ export default function LibraryScreen() {
                           activeOpacity={0.8}
                         >
                           <View style={styles.reelListIcon}>
-                            <Ionicons name="list-outline" size={22} color={colors.primaryInk} />
+                            <Ionicons name="list-outline" size={24} color={colors.primaryInk} />
                           </View>
                           <View style={styles.rowInfo}>
                             <Text style={styles.rowTitle} numberOfLines={1}>{entry.list.title}</Text>
@@ -748,7 +748,7 @@ export default function LibraryScreen() {
                       activeOpacity={0.8}
                     >
                       <View style={styles.reelListIcon}>
-                        <Ionicons name="list-outline" size={22} color={colors.primaryInk} />
+                        <Ionicons name="list-outline" size={24} color={colors.primaryInk} />
                       </View>
                       <View style={styles.rowInfo}>
                         <Text style={styles.rowTitle} numberOfLines={1}>{entry.list.title}</Text>

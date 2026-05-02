@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Linking, Modal,
-  ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View,
+  Alert, FlatList, Linking, Modal,
+  StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -9,10 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { useSharedItems } from '../../hooks/useSharedItems';
-import { useStories, Story } from '../../hooks/useStories';
 import { useReactions } from '../../hooks/useReactions';
 import { PlaylistModal } from '../../components/PlaylistModal';
-import { StoryViewer } from '../../components/StoryViewer';
 import { AppBar, Avatar, CoverArt, IconBtn, serviceLabelShort, ServiceDot } from '../../components/ui';
 import { SharedItem, MusicService } from '../../types';
 import { colors } from '../../lib/theme';
@@ -25,219 +23,6 @@ import { supabase } from '../../lib/supabase';
 
 type HomeTab = 'inbox' | 'following' | 'mixes';
 const REACTIONS_ROW = ['🔥', '❤️', '🤯', '😮'];
-
-// ─── StoryTray ────────────────────────────────────────────────────────────────
-function StoryTray({
-  storyGroups,
-  myUserId,
-  onViewStory,
-  onPostStory,
-}: {
-  storyGroups: Map<string, Story[]>;
-  myUserId: string;
-  onViewStory: (stories: Story[]) => void;
-  onPostStory: () => void;
-}) {
-  const entries = [...storyGroups.entries()];
-  const others = entries.filter(([uid]) => uid !== myUserId);
-
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.storyTrayContent}
-      style={styles.storyTray}
-    >
-      {/* Own status */}
-      <TouchableOpacity style={styles.storyItem} onPress={onPostStory} activeOpacity={0.8}>
-        <View style={styles.storyOwnRing}>
-          <View style={styles.storyOwnInner}>
-            <Ionicons name="person" size={24} color={colors.fg3} />
-          </View>
-          <View style={styles.storyOwnPlus}>
-            <Ionicons name="add" size={13} color={colors.primaryInk} />
-          </View>
-        </View>
-        <Text style={styles.storyLabel} numberOfLines={1}>Your status</Text>
-      </TouchableOpacity>
-
-      {others.map(([uid, stories]) => {
-        if (!stories || stories.length === 0) return null;
-        const first = stories[0];
-        const user = first.user;
-        return (
-          <TouchableOpacity key={uid} style={styles.storyItem} onPress={() => onViewStory(stories)} activeOpacity={0.8}>
-            <Avatar
-              name={user?.display_name ?? '?'}
-              avatarUrl={user?.avatar_url}
-              size={56}
-              ring="primary"
-            />
-            <Text style={styles.storyLabel} numberOfLines={1}>
-              {user?.display_name?.split(' ')[0] ?? '?'}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </ScrollView>
-  );
-}
-
-// ─── PostStoryModal ───────────────────────────────────────────────────────────
-function PostStoryModal({ visible, onClose, onPost }: {
-  visible: boolean;
-  onClose: () => void;
-  onPost: (title: string, artist: string, caption: string, service: string) => void;
-}) {
-  const { user } = useAuth();
-  const [q, setQ] = useState('');
-  const [results, setResults] = useState<{ title: string; artist: string; cover: string }[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [caption, setCaption] = useState('');
-  const [picked, setPicked] = useState<{ title: string; artist: string } | null>(null);
-
-  const handleSearch = useCallback(async () => {
-    if (!q.trim() || !user?.primary_service) return;
-    setSearching(true);
-    setSearchError(null);
-    try {
-      if (user.primary_service === 'spotify' && user.spotify_access_token) {
-        const tracks = await Spotify.searchTracks(user.id, q.trim());
-        setResults(tracks.slice(0, 6).map(t => ({
-          title: t.name,
-          artist: t.artists.map(a => a.name).join(', '),
-          cover: t.album.images[0]?.url ?? '',
-        })));
-      } else if (user.primary_service === 'apple_music' && user.apple_music_user_token) {
-        const tracks = await AppleMusic.searchTracks(user.id, q.trim());
-        setResults(tracks.slice(0, 6).map(t => ({
-          title: t.attributes.name,
-          artist: t.attributes.artistName,
-          cover: t.attributes.artwork ? AppleMusic.resolveArtworkUrl(t.attributes.artwork.url, 150) : '',
-        })));
-      } else if (user.primary_service === 'youtube_music' && user.youtube_access_token) {
-        const tracks = await YouTubeMusic.searchTracks(user.id, q.trim());
-        setResults(tracks.slice(0, 6).map(t => {
-          const info = extractYouTubeTrackInfo(t.snippet.channelTitle, t.snippet.title);
-          return {
-            title: info.title,
-            artist: info.artist,
-            cover: t.snippet.thumbnails.medium?.url ?? '',
-          };
-        }));
-      }
-    } catch (err) {
-      console.error('[PostStoryModal] search failed:', err);
-      const message = err instanceof Error ? err.message : 'Could not search for songs.';
-      setResults([]);
-      setSearchError(message);
-      Alert.alert('Search failed', message);
-    } finally { setSearching(false); }
-  }, [q, user]);
-
-  useEffect(() => {
-    if (!visible) return;
-    if (!q.trim()) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      void handleSearch();
-    }, 200);
-
-    return () => {
-      clearTimeout(timeoutId);
-    };
-  }, [handleSearch, q, visible]);
-
-  const handlePost = () => {
-    if (!picked || !user?.primary_service) return;
-    onPost(picked.title, picked.artist, caption.trim(), user.primary_service);
-    setQ(''); setResults([]); setCaption(''); setPicked(null);
-    onClose();
-  };
-
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={styles.postModal}>
-        <View style={styles.postModalHeader}>
-          <Text style={styles.postModalTitle}>Post a Story</Text>
-          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={colors.fg3} /></TouchableOpacity>
-        </View>
-        {picked ? (
-          <View style={styles.postModalPicked}>
-            <View style={styles.postModalPickedCard}>
-              <Ionicons name="musical-note" size={24} color={colors.primary} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.postModalPickedTitle} numberOfLines={1}>{picked.title}</Text>
-                <Text style={styles.postModalPickedArtist} numberOfLines={1}>{picked.artist}</Text>
-              </View>
-              <TouchableOpacity onPress={() => setPicked(null)}>
-                <Ionicons name="close-circle" size={20} color={colors.fg3} />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.postModalCaptionRow}>
-              <Text style={styles.postModalLabel}>Caption (optional)</Text>
-              <View style={styles.postModalInput}>
-                <TextInput
-                  style={{ flex: 1, color: colors.fg, fontSize: 14, padding: 0 }}
-                  placeholder="Add a caption…"
-                  placeholderTextColor={colors.fg3}
-                  value={caption}
-                  onChangeText={setCaption}
-                  maxLength={120}
-                  returnKeyType="done"
-                />
-              </View>
-            </View>
-            <TouchableOpacity style={styles.postBtn} onPress={handlePost} activeOpacity={0.85}>
-              <Ionicons name="radio-outline" size={16} color={colors.primaryInk} />
-              <Text style={styles.postBtnText}>Post Story</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <>
-            <View style={styles.postModalSearchRow}>
-            <View style={styles.postModalSearchInput}>
-              <Ionicons name="search" size={16} color={colors.fg3} />
-              <TextInput
-                style={{ flex: 1, color: colors.fg, fontSize: 14 }}
-                placeholder="Search for a song…"
-                placeholderTextColor={colors.fg3}
-                value={q}
-                onChangeText={setQ}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-                onSubmitEditing={() => void handleSearch()}
-              />
-              </View>
-              <TouchableOpacity style={styles.postModalSearchBtn} onPress={handleSearch} disabled={searching}>
-                {searching ? <ActivityIndicator color={colors.primaryInk} size="small" /> : <Text style={styles.postModalSearchBtnText}>Search</Text>}
-              </TouchableOpacity>
-            </View>
-            {results.map((r, i) => (
-              <TouchableOpacity key={i} style={styles.postModalResult} onPress={() => setPicked(r)} activeOpacity={0.8}>
-                <CoverArt uri={r.cover} size={44} radius={8} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.postModalResultTitle} numberOfLines={1}>{r.title}</Text>
-                  <Text style={styles.postModalResultArtist} numberOfLines={1}>{r.artist}</Text>
-                </View>
-                <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
-              </TouchableOpacity>
-            ))}
-            {searchError && (
-              <Text style={styles.postModalError}>{searchError}</Text>
-            )}
-          </>
-        )}
-      </View>
-    </Modal>
-  );
-}
 
 // ─── FeedRow ──────────────────────────────────────────────────────────────────
 function FeedRow({
@@ -259,96 +44,97 @@ function FeedRow({
 }) {
   const [showReactions, setShowReactions] = useState(false);
   const isUnread = !item.opened;
-  const type = item.type === 'playlist' ? 'sent a playlist' : 'sent a song';
+  const shareType = item.type === 'playlist' ? 'sent a playlist' : 'sent a song';
   const svc = viewerService ?? (item.sender?.primary_service as MusicService) ?? 'spotify';
   const totalReactions = Object.values(reactionMap).reduce((a, b) => a + b, 0);
 
   return (
-    <View style={[styles.feedRow, isUnread && styles.feedRowUnread]}>
-      <Avatar
-        name={item.sender?.display_name ?? '?'}
-        avatarUrl={item.sender?.avatar_url ?? null}
-        size={36}
-      />
-      <View style={{ flex: 1, minWidth: 0 }}>
-        {/* Header */}
-        <Text style={styles.feedRowHeader} numberOfLines={1}>
-          <Text style={styles.feedRowSender}>{item.sender?.display_name ?? 'Someone'}</Text>
-          <Text style={styles.feedRowMeta}> {type} · {timeAgo(item.created_at)}</Text>
-        </Text>
-
-        {/* Card */}
-        <TouchableOpacity
-          style={styles.feedCard}
-          onPress={() => onPress(item)}
-          activeOpacity={0.85}
-          disabled={isResolving}
-        >
-          {/* Cover + service overlay */}
-          <View style={{ position: 'relative', flexShrink: 0 }}>
-            <CoverArt uri={item.cover_image_url} size={56} radius={12} />
-            <View style={styles.svcOverlay}>
-              <ServiceDot service={svc} size={12} />
-            </View>
+    <View style={[styles.feedCard, isUnread && styles.feedCardUnread]}>
+      <View style={styles.feedCardHeader}>
+        <View style={styles.senderIdentity}>
+          <Avatar
+            name={item.sender?.display_name ?? '?'}
+            avatarUrl={item.sender?.avatar_url ?? null}
+            size={34}
+          />
+          <View style={styles.senderTextWrap}>
+            <Text style={styles.feedRowSender} numberOfLines={1}>{item.sender?.display_name ?? 'Someone'}</Text>
           </View>
+        </View>
+        <View style={styles.headerAction}>
+          <Text style={styles.shareTypeText} numberOfLines={1}>{shareType} · {timeAgo(item.created_at)}</Text>
+          {isUnread && <View style={styles.unreadDot} />}
+          {isResolving ? <Ionicons name="sync" size={17} color={colors.fg3} /> : null}
+        </View>
+      </View>
 
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[styles.feedCardTitle, isUnread && styles.feedCardTitleUnread]} numberOfLines={1}>
-              {item.title}
-            </Text>
-            {item.artist ? (
-              <Text style={styles.feedCardArtist} numberOfLines={1}>{item.artist}</Text>
-            ) : null}
-            <View style={styles.feedCardMeta}>
-              <View style={styles.feedChip}>
-                <Text style={styles.feedChipText}>{item.type}</Text>
-              </View>
-              <Text style={styles.feedCardService} numberOfLines={1}>
-                opens in your {serviceLabelShort(svc)}
-              </Text>
-            </View>
+      <TouchableOpacity
+        style={styles.feedMediaRow}
+        onPress={() => onPress(item)}
+        activeOpacity={0.85}
+        disabled={isResolving}
+      >
+        <View style={{ position: 'relative', flexShrink: 0 }}>
+          <CoverArt uri={item.cover_image_url} size={58} radius={12} />
+          <View style={styles.svcOverlay}>
+            <ServiceDot service={svc} size={12} />
           </View>
-
-          {isResolving
-            ? <Ionicons name="sync" size={18} color={colors.fg3} />
-            : <Ionicons name="play" size={18} color={colors.fg2} />
-          }
-        </TouchableOpacity>
-
-        {/* Message bubble */}
-        {item.message ? (
-          <View style={styles.messageBubble}>
-            <Text style={styles.messageBubbleText}>"{item.message}"</Text>
-          </View>
-        ) : null}
-
-        {/* Reaction strip */}
-        <View style={styles.reactionStrip}>
-          {totalReactions > 0 && (
-            <View style={styles.existingReactions}>
-              {Object.entries(reactionMap).filter(([, c]) => c > 0).map(([e, c]) => (
-                <TouchableOpacity key={e} style={[styles.reactionPill, myReaction === e && styles.reactionPillActive]} onPress={() => onReact(e)}>
-                  <Text style={styles.reactionEmoji}>{e}</Text>
-                  {c > 1 && <Text style={styles.reactionCount}>{c}</Text>}
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-          <TouchableOpacity style={styles.addReactionBtn} onPress={() => setShowReactions(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name={showReactions ? 'close' : 'happy-outline'} size={16} color={colors.fg3} />
-          </TouchableOpacity>
         </View>
 
-        {showReactions && (
-          <View style={styles.emojiPicker}>
-            {REACTIONS_ROW.map(e => (
-              <TouchableOpacity key={e} style={[styles.emojiPickerBtn, myReaction === e && styles.emojiPickerBtnActive]} onPress={() => { onReact(e); setShowReactions(false); }}>
-                <Text style={styles.emojiPickerEmoji}>{e}</Text>
-              </TouchableOpacity>
-            ))}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[styles.feedCardTitle, isUnread && styles.feedCardTitleUnread]} numberOfLines={1}>
+            {item.title}
+          </Text>
+          {item.artist ? (
+            <Text style={styles.feedCardArtist} numberOfLines={1}>{item.artist}</Text>
+          ) : null}
+          <View style={styles.feedCardMeta}>
+            <View style={styles.feedChip}>
+              <Text style={styles.feedChipText}>{item.type}</Text>
+            </View>
+            <Text style={styles.feedCardService} numberOfLines={1}>
+              opens in your {serviceLabelShort(svc)}
+            </Text>
           </View>
-        )}
+        </View>
+
+        <Ionicons name="play-circle" size={38} color={colors.primary} style={{ opacity: isResolving ? 0.4 : 1 }} />
+      </TouchableOpacity>
+
+      {item.message ? (
+        <View style={styles.messageBubble}>
+          <Text style={styles.messageBubbleText}>"{item.message}"</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.reactionStrip}>
+        <View style={styles.existingReactions}>
+          {Object.entries(reactionMap).filter(([, c]) => c > 0).map(([e, c]) => {
+            const isMine = myReaction === e;
+            const othersCount = c - (isMine ? 1 : 0);
+            return (
+              <TouchableOpacity key={e} style={[styles.reactionPill, isMine && styles.reactionPillActive]} onPress={() => onReact(e)}>
+                <Text style={styles.reactionEmoji}>{e}</Text>
+                {othersCount > 0 && <Text style={styles.reactionCount}>{othersCount}</Text>}
+              </TouchableOpacity>
+            );
+          })}
+          {totalReactions === 0 ? <Text style={styles.noReactionsText}>No reactions yet</Text> : null}
+        </View>
+        <TouchableOpacity style={styles.addReactionBtn} onPress={() => setShowReactions(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name={showReactions ? 'close' : 'happy-outline'} size={16} color={colors.fg3} />
+        </TouchableOpacity>
       </View>
+
+      {showReactions && (
+        <View style={styles.emojiPicker}>
+          {REACTIONS_ROW.map(e => (
+            <TouchableOpacity key={e} style={[styles.emojiPickerBtn, myReaction === e && styles.emojiPickerBtnActive]} onPress={() => { onReact(e); setShowReactions(false); }}>
+              <Text style={styles.emojiPickerEmoji}>{e}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -369,20 +155,17 @@ export default function Home() {
   const router = useRouter();
   const { items, loading, refreshing, refresh, markAsOpened, unreadCount } = useSharedItems();
   const { followingIds } = useFollows();
-  const { storyGroups, postStory, reactToStory } = useStories();
   const itemIds = useMemo(() => items.map(i => i.id), [items]);
   const { reactions, myReactions, react } = useReactions(itemIds);
 
   const [tab, setTab] = useState<HomeTab>('inbox');
   const [playlistModalItem, setPlaylistModalItem] = useState<SharedItem | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
-  const [viewingStories, setViewingStories] = useState<Story[] | null>(null);
-  const [postStoryVisible, setPostStoryVisible] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   const handleItemPress = async (item: SharedItem) => {
-    await markAsOpened(item.id);
+    void markAsOpened(item.id);
     if (item.type === 'playlist') { setPlaylistModalItem(item); return; }
 
     const primaryService = user?.primary_service as MusicService | null;
@@ -413,17 +196,12 @@ export default function Home() {
           break;
         }
       }
-      for (const l of links) { try { await Linking.openURL(l); return; } catch {} }
+      for (const l of links) { try { await Linking.openURL(l); return; } catch { } }
       Alert.alert('App not found', `Make sure ${primaryService.replace('_', ' ')} is installed.`);
     } catch (err: any) {
       const msg = err?.message === 'timeout' ? 'Timed out.' : err?.message === 'youtube_quota_exceeded' ? 'YouTube quota reached.' : 'Could not open song.';
       Alert.alert('Error', msg);
     } finally { setResolvingId(null); }
-  };
-
-  const handlePostStory = async (title: string, artist: string, caption: string, service: string) => {
-    try { await postStory({ song_title: title, song_artist: artist, service, caption }); }
-    catch { Alert.alert('Error', 'Could not post story.'); }
   };
 
   const filteredItems = items.filter((item) => {
@@ -476,16 +254,6 @@ export default function Home() {
 
       <View style={styles.divider} />
 
-      {/* Story tray */}
-      <StoryTray
-        storyGroups={storyGroups}
-        myUserId={user?.id ?? ''}
-        onViewStory={stories => setViewingStories(stories)}
-        onPostStory={() => setPostStoryVisible(true)}
-      />
-
-      <View style={styles.divider} />
-
       {/* Feed */}
       <FlatList
         data={filteredItems}
@@ -526,21 +294,6 @@ export default function Home() {
         item={playlistModalItem}
         visible={playlistModalItem !== null}
         onClose={() => setPlaylistModalItem(null)}
-      />
-
-      {viewingStories && (
-        <StoryViewer
-          stories={viewingStories}
-          visible={viewingStories !== null}
-          onClose={() => setViewingStories(null)}
-          onReact={(storyId, emoji) => reactToStory(storyId, emoji)}
-        />
-      )}
-
-      <PostStoryModal
-        visible={postStoryVisible}
-        onClose={() => setPostStoryVisible(false)}
-        onPost={handlePostStory}
       />
 
       <Modal visible={searchVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSearchVisible(false)}>
@@ -611,54 +364,37 @@ const styles = StyleSheet.create({
 
   divider: { height: 1, backgroundColor: colors.line },
 
-  // Story tray
-  storyTray: { flexGrow: 0 },
-  storyTrayContent: { paddingHorizontal: 16, paddingVertical: 12, gap: 14 },
-  storyItem: { alignItems: 'center', gap: 5, minWidth: 64 },
-  storyOwnRing: {
-    width: 62, height: 62, borderRadius: 31,
-    backgroundColor: colors.bgCard,
-    borderWidth: 1, borderColor: colors.line,
-    alignItems: 'center', justifyContent: 'center',
-    position: 'relative',
-  },
-  storyOwnInner: { alignItems: 'center', justifyContent: 'center' },
-  storyOwnPlus: {
-    position: 'absolute', right: -2, bottom: -2,
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: colors.bg,
-  },
-  storyLabel: { fontSize: 11, color: colors.fg2, maxWidth: 64, textAlign: 'center' },
-
   // Feed
-  feedRow: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderLeftWidth: 3,
-    borderLeftColor: 'transparent',
-    alignItems: 'flex-start',
-  },
-  feedRowUnread: {
-    borderLeftColor: colors.primary,
-    backgroundColor: 'rgba(124,91,244,0.045)',
-  },
-  feedRowHeader: { fontSize: 13, marginBottom: 6 },
   feedRowSender: { color: colors.fg, fontWeight: '600' },
   feedRowMeta: { color: colors.fg3 },
 
   feedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 10,
     backgroundColor: colors.bgCard,
     borderWidth: 1, borderColor: colors.line,
-    borderRadius: 14,
+    borderLeftWidth: 1,
+    borderRadius: 16,
     padding: 12,
   },
+  feedCardUnread: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+    backgroundColor: 'rgba(124,91,244,0.055)',
+  },
+  feedCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 10,
+  },
+  senderIdentity: { flexDirection: 'row', alignItems: 'center', gap: 9, flex: 1, minWidth: 0 },
+  senderTextWrap: { flex: 1, minWidth: 0 },
+  headerAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, maxWidth: '48%', paddingRight: 6 },
+  shareTypeText: { color: colors.fg3, fontSize: 12 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
+  feedMediaRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   svcOverlay: {
     position: 'absolute', right: -3, bottom: -3,
     width: 20, height: 20, borderRadius: 10,
@@ -677,19 +413,16 @@ const styles = StyleSheet.create({
   },
   feedChipText: { fontSize: 10, color: colors.fg3 },
   feedCardService: { fontSize: 11, color: colors.fg3, flexShrink: 1 },
-
   messageBubble: {
-    marginTop: 7,
+    marginTop: 10,
     paddingHorizontal: 12, paddingVertical: 8,
     backgroundColor: colors.bgElev,
     borderRadius: 12,
-    maxWidth: '90%',
-    alignSelf: 'flex-start',
   },
   messageBubbleText: { color: colors.fg2, fontSize: 13, lineHeight: 18 },
 
   // Reactions
-  reactionStrip: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 6 },
+  reactionStrip: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8 },
   existingReactions: { flexDirection: 'row', gap: 5, flexWrap: 'wrap', flex: 1 },
   reactionPill: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -700,7 +433,12 @@ const styles = StyleSheet.create({
   reactionPillActive: { borderColor: colors.primary, backgroundColor: 'rgba(124,91,244,0.12)' },
   reactionEmoji: { fontSize: 14 },
   reactionCount: { fontSize: 11, color: colors.fg3 },
-  addReactionBtn: { padding: 2 },
+  noReactionsText: { color: colors.fg4, fontSize: 12, paddingVertical: 4 },
+  addReactionBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.bgElev, borderWidth: 1, borderColor: colors.line,
+  },
   emojiPicker: {
     flexDirection: 'row', gap: 8, marginTop: 4, paddingVertical: 6,
   },
@@ -716,53 +454,6 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', paddingTop: 100, gap: 10, paddingHorizontal: 40 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.fg },
   emptySubtitle: { fontSize: 14, color: colors.fg3, textAlign: 'center', lineHeight: 20 },
-
-  // Post story modal
-  postModal: { flex: 1, backgroundColor: colors.bg },
-  postModalHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 20, borderBottomWidth: 1, borderBottomColor: colors.line,
-  },
-  postModalTitle: { fontSize: 20, fontWeight: '700', color: colors.fg },
-  postModalSearchRow: { flexDirection: 'row', gap: 10, padding: 16 },
-  postModalSearchInput: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: colors.bgCard, borderRadius: 999,
-    paddingHorizontal: 14, paddingVertical: 11,
-    borderWidth: 1, borderColor: colors.line,
-  },
-  postModalSearchBtn: {
-    backgroundColor: colors.primary, borderRadius: 10,
-    paddingHorizontal: 16, paddingVertical: 11, justifyContent: 'center',
-  },
-  postModalSearchBtnText: { color: colors.primaryInk, fontSize: 14, fontWeight: '700' },
-  postModalResult: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: colors.line,
-  },
-  postModalResultTitle: { color: colors.fg, fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  postModalResultArtist: { color: colors.fg3, fontSize: 12 },
-  postModalError: { color: colors.coral, fontSize: 13, paddingHorizontal: 16, paddingTop: 4 },
-  postModalPicked: { padding: 20, gap: 16 },
-  postModalPickedCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: colors.bgCard, borderRadius: 14, padding: 14,
-    borderWidth: 1, borderColor: colors.primary,
-  },
-  postModalPickedTitle: { color: colors.fg, fontSize: 15, fontWeight: '600' },
-  postModalPickedArtist: { color: colors.fg3, fontSize: 12, marginTop: 2 },
-  postModalLabel: { color: colors.fg3, fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
-  postModalCaptionRow: { gap: 6 },
-  postModalInput: {
-    backgroundColor: colors.bgCard, borderRadius: 12, padding: 12,
-    borderWidth: 1, borderColor: colors.line, minHeight: 56,
-  },
-  postBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 16,
-  },
-  postBtnText: { color: colors.primaryInk, fontSize: 16, fontWeight: '700' },
 
   searchModal: { flex: 1, backgroundColor: colors.bg },
   searchModalHeader: {

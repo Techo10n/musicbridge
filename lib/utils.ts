@@ -45,9 +45,10 @@ export function cleanTitle(title: string): string {
   if (!title) return '';
   return title
     .replace(
-      /[\(\[](remaster(ed)?|\d{4} remaster|remastered \d{4}|deluxe|anniversary|expanded|bonus track|radio edit|single version|album version|feat\.[^\)\]]*|ft\.[^\)\]]*)[\)\]]/gi,
+      /[\(\[]([^)\]]*(remaster(ed)?|\d{4} remaster|remastered \d{4}|deluxe|anniversary|expanded|bonus track|radio edit|single version|album version|official audio|official music video|official video|visualizer|lyrics?|audio|feat\.|ft\.)[^)\]]*)[\)\]]/gi,
       '',
     )
+    .replace(/\s+-\s+(official audio|official music video|official video|visualizer|lyrics?|audio)$/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }

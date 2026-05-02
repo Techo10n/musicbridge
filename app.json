@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "musicbridge",
+    "name": "Museaic",
     "slug": "musicbridge",
     "scheme": [
-      "musicbridge",
+      "museaic",
       "com.googleusercontent.apps.215416693574-ul79o63f153r4eapd9n5a6067roa132b"
     ],
     "version": "1.0.0",
@@ -17,11 +17,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "buildNumber": "2",
+      "buildNumber": "12",
       "bundleIdentifier": "com.techolon.musicbridge",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSAppleMusicUsageDescription": "MusicBridge uses Apple Music to share and discover music with your friends.",
+        "NSAppleMusicUsageDescription": "Museaic uses Apple Music to share and discover music with your friends.",
         "LSApplicationQueriesSchemes": [
           "spotify",
           "vnd.youtube",
@@ -50,7 +50,7 @@
       [
         "expo-router",
         {
-          "origin": "musicbridge://"
+          "origin": "museaic://"
         }
       ],
       "expo-secure-store",
@@ -66,7 +66,7 @@
     ],
     "extra": {
       "router": {
-        "origin": "musicbridge://"
+        "origin": "museaic://"
       },
       "eas": {
         "projectId": "a417b41a-56d9-4a34-8e13-f96072339330"

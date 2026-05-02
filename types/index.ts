@@ -69,6 +69,7 @@ export interface SharedItem {
   // Per-service playlist IDs (playlists)
   spotify_playlist_id: string | null;
   apple_music_playlist_id: string | null;
+  apple_music_playlist_url?: string | null;
   youtube_music_playlist_id: string | null;
   // Playlist track list
   tracks: Track[] | null;

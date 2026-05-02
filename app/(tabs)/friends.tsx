@@ -372,13 +372,13 @@ function PersonRow({
       <Avatar name={user.display_name} avatarUrl={user.avatar_url} size={48} />
       <View style={styles.personInfo}>
         <View style={styles.personNameRow}>
-          <Text style={styles.personName}>{user.display_name}</Text>
+          <Text style={styles.personName} numberOfLines={1}>{user.display_name}</Text>
           {streak != null && <Text style={styles.streakBadge}>🔥{streak}</Text>}
         </View>
         <View style={styles.personMeta}>
           {svc && <ServiceDot service={svc} size={8} />}
-          <Text style={styles.personUsername}>@{user.username}</Text>
-          {isMutual && <Text style={styles.mutualBadge}>· mutual</Text>}
+          <Text style={styles.personUsername} numberOfLines={1}>@{user.username}</Text>
+          {isMutual && <Text style={styles.mutualBadge} numberOfLines={1}>· mutual</Text>}
         </View>
         {matchPct != null && (
           <View style={styles.matchRow}>
@@ -511,11 +511,11 @@ const styles = StyleSheet.create({
   },
   personInfo: { flex: 1, minWidth: 0 },
   personNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  personName: { fontSize: 15, fontWeight: '600', color: colors.fg },
+  personName: { fontSize: 15, fontWeight: '600', color: colors.fg, flexShrink: 1 },
   streakBadge: { fontSize: 12 },
   personMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  personUsername: { fontSize: 12, color: colors.fg3 },
-  mutualBadge: { fontSize: 11, color: colors.violet },
+  personUsername: { fontSize: 12, color: colors.fg3, flexShrink: 1 },
+  mutualBadge: { fontSize: 11, color: colors.violet, flexShrink: 0 },
   matchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
   matchPct: { fontSize: 11, color: colors.fg3, fontVariant: ['tabular-nums'] },
 

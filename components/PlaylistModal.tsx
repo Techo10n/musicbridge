@@ -69,12 +69,12 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       setFailureReason(null);
       setCreatedPlaylistId(
         primaryService === 'spotify'
-          ? item.spotify_playlist_id
-          : primaryService === 'apple_music'
-            ? item.apple_music_playlist_id
-            : item.youtube_music_playlist_id,
+            ? item.spotify_playlist_id
+            : primaryService === 'apple_music'
+              ? item.apple_music_playlist_id
+              : item.youtube_music_playlist_id,
       );
-      setCreatedPlaylistUrl(null);
+      setCreatedPlaylistUrl(primaryService === 'apple_music' ? item.apple_music_playlist_url ?? null : null);
       return;
     }
 
@@ -123,11 +123,12 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
   const openCreatedPlaylist = async () => {
     if (!createdPlaylistId || !primaryService) return;
+    if (primaryService === 'apple_music' && !user?.id) return;
     const urls =
       primaryService === 'spotify'
         ? [`spotify:playlist:${createdPlaylistId}`, `https://open.spotify.com/playlist/${createdPlaylistId}`]
         : primaryService === 'apple_music'
-          ? AppleMusic.getAppleMusicPlaylistDeepLink(createdPlaylistId, createdPlaylistUrl)
+          ? await AppleMusic.resolveAppleMusicPlaylistLinks(user?.id ?? '', createdPlaylistId, createdPlaylistUrl)
           : [`https://music.youtube.com/playlist?list=${createdPlaylistId}`];
     console.log('[PlaylistModal] opening created playlist', {
       primaryService,
