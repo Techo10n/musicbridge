@@ -10,51 +10,24 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		186968B8E2341F803C6B407A /* libPods-musicbridge.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 6A1AEA194230C01206878159 /* libPods-musicbridge.a */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		4970BA5846910FDC9C464A12 /* ShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D3D25549AE392AF2DFB9D435 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		7B0A727A281B679397F1A234 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48E075D53EEC92352F7661F8 /* ExpoModulesProvider.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		E5F5C0BA2AF6CC03EC23C4AF /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38B196C9803E8639483210EB /* ShareViewController.swift */; };
 		E21DD1B8F38D9E23DEBFE775 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F541F29B5F2793095CE49329 /* PrivacyInfo.xcprivacy */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
-/* Begin PBXContainerItemProxy section */
-		82F1F93DE1E51D9E96364F2B /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 2381441B65C63B008755CE89;
-			remoteInfo = ShareExtension;
-		};
-/* End PBXContainerItemProxy section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		4EFD2D7388F7982BBBF98062 /* Embed App Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				4970BA5846910FDC9C464A12 /* ShareExtension.appex in Embed App Extensions */,
-			);
-			name = "Embed App Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		13B07F961A680F5B00A75B9A /* Museaic.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Museaic.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = musicbridge/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = musicbridge/Info.plist; sourceTree = "<group>"; };
-		38B196C9803E8639483210EB /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		48E075D53EEC92352F7661F8 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-musicbridge/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		6A1AEA194230C01206878159 /* libPods-musicbridge.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-musicbridge.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7EB5E8D9C70368EE5190157 /* Pods-musicbridge.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-musicbridge.release.xcconfig"; path = "Target Support Files/Pods-musicbridge/Pods-musicbridge.release.xcconfig"; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = musicbridge/SplashScreen.storyboard; sourceTree = "<group>"; };
 		AD139C42618AEFFC1461A806 /* Pods-musicbridge.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-musicbridge.debug.xcconfig"; path = "Target Support Files/Pods-musicbridge/Pods-musicbridge.debug.xcconfig"; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
-		D3D25549AE392AF2DFB9D435 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		EA980E1307FC3FEEBA0C9098 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = musicbridge/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* musicbridge-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "musicbridge-Bridging-Header.h"; path = "musicbridge/musicbridge-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -62,13 +35,6 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		CF8BF49EFAB659A2656C896C /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		13B07F8C1A680F5B00A75B9A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -139,7 +105,6 @@
 			isa = PBXGroup;
 			children = (
 				13B07FAE1A68108700A75B9A /* musicbridge */,
-				9DFEA614BDC1B3908429218E /* ShareExtension */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
@@ -155,18 +120,8 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* Museaic.app */,
-				D3D25549AE392AF2DFB9D435 /* ShareExtension.appex */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		9DFEA614BDC1B3908429218E /* ShareExtension */ = {
-			isa = PBXGroup;
-			children = (
-				38B196C9803E8639483210EB /* ShareViewController.swift */,
-				EA980E1307FC3FEEBA0C9098 /* Info.plist */,
-			);
-			path = ShareExtension;
 			sourceTree = "<group>";
 		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
@@ -190,7 +145,6 @@
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
-				4EFD2D7388F7982BBBF98062 /* Embed App Extensions */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
 				34B946154882F998C0A0EDFB /* [CP] Embed Pods Frameworks */,
@@ -199,28 +153,11 @@
 			buildRules = (
 			);
 			dependencies = (
-				0D60994CF0AF618C1E7F28B4 /* PBXTargetDependency */,
 			);
 			name = musicbridge;
 			productName = musicbridge;
 			productReference = 13B07F961A680F5B00A75B9A /* Museaic.app */;
 			productType = "com.apple.product-type.application";
-		};
-		2381441B65C63B008755CE89 /* ShareExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = A878187CC70D2C6163A1E735 /* Build configuration list for PBXNativeTarget "ShareExtension" */;
-			buildPhases = (
-				3274A0F923685749A7FD863E /* Sources */,
-				CF8BF49EFAB659A2656C896C /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = ShareExtension;
-			productName = ShareExtension;
-			productReference = D3D25549AE392AF2DFB9D435 /* ShareExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -232,9 +169,6 @@
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
 						LastSwiftMigration = 1250;
-					};
-					2381441B65C63B008755CE89 = {
-						CreatedOnToolsVersion = 16.0;
 					};
 				};
 			};
@@ -252,7 +186,6 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* musicbridge */,
-				2381441B65C63B008755CE89 /* ShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -414,14 +347,6 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		3274A0F923685749A7FD863E /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				E5F5C0BA2AF6CC03EC23C4AF /* ShareViewController.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		13B07F871A680F5B00A75B9A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -433,64 +358,8 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
-/* Begin PBXTargetDependency section */
-		0D60994CF0AF618C1E7F28B4 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 2381441B65C63B008755CE89 /* ShareExtension */;
-			targetProxy = 82F1F93DE1E51D9E96364F2B /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		D3A0E45125B0AA8AED447576 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2KGG3J66J3;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ShareExtension/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.techolon.musicbridge.ShareExtension;
-				PRODUCT_NAME = "Museaic Share";
-				SKIP_INSTALL = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
-		E847E0E1E25EBAD6B38ED395 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2KGG3J66J3;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ShareExtension/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.techolon.musicbridge.ShareExtension;
-				PRODUCT_NAME = "Museaic Share";
-				SKIP_INSTALL = YES;
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AD139C42618AEFFC1461A806 /* Pods-musicbridge.debug.xcconfig */;
@@ -684,15 +553,6 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A878187CC70D2C6163A1E735 /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E847E0E1E25EBAD6B38ED395 /* Debug */,
-				D3A0E45125B0AA8AED447576 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "musicbridge" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

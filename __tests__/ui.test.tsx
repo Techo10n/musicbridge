@@ -31,9 +31,9 @@ describe('Chip', () => {
 
   it('calls onPress for interactive chips', () => {
     const onPress = jest.fn();
-    const { getByText } = render(<Chip label="Reels" onPress={onPress} />);
+    const { getByText } = render(<Chip label="Playlists" onPress={onPress} />);
 
-    fireEvent.press(getByText('Reels'));
+    fireEvent.press(getByText('Playlists'));
 
     expect(onPress).toHaveBeenCalledTimes(1);
   });

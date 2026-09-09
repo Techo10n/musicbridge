@@ -1,8 +1,6 @@
-import { useState } from 'react';
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../../lib/theme';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -28,128 +26,73 @@ function ShareTabButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-// Minimal create-action bottom sheet
-function CreateMenuModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const insets = useSafeAreaInsets();
+export default function TabLayout() {
   const router = useRouter();
 
-  const items = [
-    {
-      icon: 'paper-plane-outline' as IoniconName,
-      label: 'Share a song',
-      sub: 'Send to a friend',
-      onPress: () => { onClose(); router.push('/(tabs)/friends'); },
-    },
-    {
-      icon: 'radio-outline' as IoniconName,
-      label: 'Identify a reel',
-      sub: 'Find a song from a clip',
-      onPress: () => { onClose(); router.push('/(tabs)/share'); },
-    },
-  ];
-
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-      statusBarTranslucent
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: {
+          backgroundColor: colors.bgElev,
+          borderTopColor: colors.line,
+          borderTopWidth: 1,
+          height: 80,
+          paddingBottom: 20,
+          paddingTop: 10,
+        },
+        tabBarActiveTintColor: colors.fg,
+        tabBarInactiveTintColor: colors.fg3,
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '600' },
+      }}
     >
-      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose} />
-      <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
-        <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle}>Share</Text>
-        {items.map((item) => (
-          <TouchableOpacity key={item.label} style={styles.sheetRow} onPress={item.onPress} activeOpacity={0.8}>
-            <View style={styles.sheetIconBox}>
-              <Ionicons name={item.icon} size={22} color={colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sheetRowLabel}>{item.label}</Text>
-              <Text style={styles.sheetRowSub}>{item.sub}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.fg3} />
-          </TouchableOpacity>
-        ))}
-      </View>
-    </Modal>
-  );
-}
-
-export default function TabLayout() {
-  const [createMenuVisible, setCreateMenuVisible] = useState(false);
-
-  return (
-    <>
-      <Tabs
-        screenOptions={{
-          headerShown: false,
-          tabBarStyle: {
-            backgroundColor: colors.bgElev,
-            borderTopColor: colors.line,
-            borderTopWidth: 1,
-            height: 80,
-            paddingBottom: 20,
-            paddingTop: 10,
-          },
-          tabBarActiveTintColor: colors.fg,
-          tabBarInactiveTintColor: colors.fg3,
-          tabBarLabelStyle: { fontSize: 10, fontWeight: '600' },
+      <Tabs.Screen
+        name="home"
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ focused }) => <TabIcon name="home" focused={focused} />,
         }}
-      >
-        <Tabs.Screen
-          name="home"
-          options={{
-            title: 'Home',
-            tabBarIcon: ({ focused }) => <TabIcon name="home" focused={focused} />,
-          }}
-        />
-        <Tabs.Screen
-          name="library"
-          options={{
-            title: 'Library',
-            tabBarIcon: ({ focused }) => <TabIcon name="library" focused={focused} />,
-          }}
-        />
-        <Tabs.Screen
-          name="share"
-          options={{
-            title: '',
-            tabBarButton: () => (
-              <ShareTabButton onPress={() => setCreateMenuVisible(true)} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="friends"
-          options={{
-            title: 'People',
-            tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
-          }}
-        />
-        <Tabs.Screen
-          name="profile"
-          options={{
-            title: 'You',
-            tabBarIcon: ({ focused }) => <TabIcon name="person" focused={focused} />,
-          }}
-        />
-        <Tabs.Screen
-          name="settings"
-          options={{ href: null }} // hidden from tab bar, navigated via router.push
-        />
-        <Tabs.Screen
-          name="notifications"
-          options={{ href: null }} // hidden from tab bar, navigated via router.push
-        />
-      </Tabs>
-
-      <CreateMenuModal
-        visible={createMenuVisible}
-        onClose={() => setCreateMenuVisible(false)}
       />
-    </>
+      <Tabs.Screen
+        name="library"
+        options={{
+          title: 'Library',
+          tabBarIcon: ({ focused }) => <TabIcon name="library" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="share"
+        options={{
+          title: '',
+          // Center pill — a shortcut straight to sharing a song with a friend.
+          tabBarButton: () => (
+            <ShareTabButton onPress={() => router.push('/(tabs)/friends')} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="friends"
+        options={{
+          title: 'People',
+          tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'You',
+          tabBarIcon: ({ focused }) => <TabIcon name="person" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{ href: null }} // hidden from tab bar, navigated via router.push
+      />
+      <Tabs.Screen
+        name="notifications"
+        options={{ href: null }} // hidden from tab bar, navigated via router.push
+      />
+    </Tabs>
   );
 }
 

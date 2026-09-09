@@ -12,16 +12,12 @@ import { useLibrary } from '../../hooks/useLibrary';
 import { LibraryArtist, LibraryPlaylist, LibraryTrack, Track, User } from '../../types';
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
 import { FriendPickerModal } from '../../components/FriendPickerModal';
-import { deleteReelList, getSavedReelLists, SavedReelList } from '../../lib/reelLists';
 import { sendPushNotification } from '../../lib/notifications';
 import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, serviceLabelShort } from '../../components/ui';
 import { colors } from '../../lib/theme';
 
-type FilterChip = 'all' | 'playlists' | 'songs' | 'reels' | 'artists';
+type FilterChip = 'all' | 'playlists' | 'songs' | 'artists';
 type SortMode = 'recent' | 'name' | 'count';
-type ReelEntry =
-  | { kind: 'song'; id: string; track: LibraryTrack; sourceTitle: string; createdAt: string }
-  | { kind: 'list'; id: string; list: SavedReelList };
 
 const PLAYLIST_SEARCH_PRELOAD_LIMIT = 35;
 
@@ -60,9 +56,6 @@ export default function LibraryScreen() {
   const [selectedPlaylistTracks, setSelectedPlaylistTracks] = useState<LibraryTrack[] | null>(null);
   const [playlistModalVisible, setPlaylistModalVisible] = useState(false);
   const [playlistTrackIndex, setPlaylistTrackIndex] = useState<Record<string, LibraryTrack[]>>({});
-  const [savedReelLists, setSavedReelLists] = useState<SavedReelList[]>([]);
-  const [selectedReelList, setSelectedReelList] = useState<SavedReelList | null>(null);
-  const [reelSongsVisible, setReelSongsVisible] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pendingSongShare, setPendingSongShare] = useState<LibraryTrack | null>(null);
   const [pendingPlaylistShare, setPendingPlaylistShare] = useState<LibraryPlaylist | null>(null);
@@ -71,24 +64,16 @@ export default function LibraryScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const fetchedLibraryKey = useRef<string | null>(null);
 
-  const loadReelLists = useCallback(async () => {
-    if (!userId) { setSavedReelLists([]); return; }
-    try {
-      const lists = await getSavedReelLists(userId);
-      setSavedReelLists(lists);
-    } catch { setSavedReelLists([]); }
-  }, [userId]);
 
   useFocusEffect(useCallback(() => {
-    void loadReelLists();
     const key = userId && primaryService ? `${userId}:${primaryService}` : null;
     if (key && fetchedLibraryKey.current !== key) {
       fetchedLibraryKey.current = key;
       void fetchLibrary();
     }
-  }, [fetchLibrary, loadReelLists, primaryService, userId]));
+  }, [fetchLibrary, primaryService, userId]));
 
-  const handleRefresh = async () => { await Promise.all([fetchLibrary(), loadReelLists()]); };
+  const handleRefresh = async () => { await fetchLibrary(); };
 
   useEffect(() => {
     let cancelled = false;
@@ -169,30 +154,11 @@ export default function LibraryScreen() {
     finally { setSharingSong(false); setPendingSongShare(null); setPendingPlaylistShare(null); }
   };
 
-  const handleDeleteReelList = () => {
-    if (!user || !selectedReelList) return;
-    Alert.alert('Delete reel list?', 'This removes the saved list.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        try { await deleteReelList(user.id, selectedReelList.id); setSelectedReelList(null); await loadReelLists(); }
-        catch { Alert.alert('Error', 'Could not delete.'); }
-      }},
-    ]);
-  };
 
   const handleArtistPress = (artist: LibraryArtist) => {
     Alert.alert('Artist page unavailable', `${artist.name} artist pages are not currently available.`);
   };
 
-  const reelSongs = useMemo(() => savedReelLists.flatMap((list) => (
-    list.songs.map((song, index) => ({
-      ...song,
-      id: `${list.id}:${index}`,
-      sourceListId: list.id,
-      sourceTitle: list.title,
-      sourceCreatedAt: list.createdAt,
-    }))
-  )), [savedReelLists]);
   const indexedPlaylistSongs = useMemo(() => playlists.flatMap((playlist) => (
     (playlistTrackIndex[playlist.id] ?? []).map((track) => ({
       ...track,
@@ -204,19 +170,6 @@ export default function LibraryScreen() {
     ...savedTracks.map((track, index) => ({ kind: 'saved' as const, track, sortIndex: index })),
     ...indexedPlaylistSongs.map((track, index) => ({ kind: 'playlist' as const, track, sortIndex: savedTracks.length + index })),
   ], [indexedPlaylistSongs, savedTracks]);
-  const reelSongRows = useMemo(() => reelSongs.map((song, index) => ({
-      kind: 'reel' as const,
-      track: {
-        id: song.id,
-        title: song.title,
-        artist: song.artist,
-        coverUrl: song.coverUrl ?? '',
-        service: (user?.primary_service ?? 'spotify') as LibraryTrack['service'],
-      },
-      sourceTitle: song.sourceTitle,
-      sourceListId: song.sourceListId,
-      sortIndex: index,
-    })), [reelSongs, user?.primary_service]);
   const sortedPlaylists = useMemo(() => [...playlists].sort((a, b) => {
     if (sortMode === 'name') return compareName(a.name, b.name);
     if (sortMode === 'count') return b.trackCount - a.trackCount;
@@ -246,73 +199,23 @@ export default function LibraryScreen() {
     trackCount: allSongsTracks.length,
     service: (primaryService ?? 'spotify') as LibraryTrack['service'],
   }), [allSongsTracks.length, primaryService]);
-  const sortedReelSongs = useMemo(() => [...reelSongRows].sort((a, b) => {
-    if (sortMode === 'name') return compareName(a.track.title, b.track.title);
-    if (sortMode === 'count') return compareName(a.track.artist, b.track.artist);
-    return a.sortIndex - b.sortIndex;
-  }), [reelSongRows, sortMode]);
-  const reelEntries = useMemo<ReelEntry[]>(() => {
-    const entries: ReelEntry[] = [];
-    savedReelLists.forEach((list) => {
-      if (list.songs.length > 1) {
-        entries.push({ kind: 'list', id: list.id, list });
-        return;
-      }
-
-      const song = list.songs[0];
-      if (!song) return;
-      entries.push({
-        kind: 'song',
-        id: `${list.id}:0`,
-        sourceTitle: list.title,
-        createdAt: list.createdAt,
-        track: {
-          id: `${list.id}:0`,
-          title: song.title,
-          artist: song.artist,
-          coverUrl: song.coverUrl ?? '',
-          service: (primaryService ?? 'spotify') as LibraryTrack['service'],
-        },
-      });
-    });
-
-    return entries.sort((a, b) => {
-      if (sortMode === 'name') {
-        const nameA = a.kind === 'list' ? a.list.title : a.track.title;
-        const nameB = b.kind === 'list' ? b.list.title : b.track.title;
-        return compareName(nameA, nameB);
-      }
-      if (sortMode === 'count') {
-        const countA = a.kind === 'list' ? a.list.songs.length : 1;
-        const countB = b.kind === 'list' ? b.list.songs.length : 1;
-        return countB - countA;
-      }
-      const dateA = a.kind === 'list' ? a.list.createdAt : a.createdAt;
-      const dateB = b.kind === 'list' ? b.list.createdAt : b.createdAt;
-      return new Date(dateB).getTime() - new Date(dateA).getTime();
-    });
-  }, [primaryService, savedReelLists, sortMode]);
   const sortedArtists = useMemo(() => [...followedArtists].sort((a, b) => {
     if (sortMode === 'name' || sortMode === 'count') return compareName(a.name, b.name);
     return 0;
   }), [followedArtists, sortMode]);
   const showPlaylists = filter === 'all' || filter === 'playlists';
   const showSongs = filter === 'all' || filter === 'songs';
-  const showReels = filter === 'all' || filter === 'reels';
   const showArtists = filter === 'all' || filter === 'artists';
   const showSongsSection = showSongs;
-  const showReelSongsSection = showReels && reelEntries.length > 0;
-  const filterOptions: Array<{ id: FilterChip; label: string; count: number }> = [
-    { id: 'all', label: 'All', count: playlists.length + sortedSongs.length + reelEntries.length + followedArtists.length },
+  const filterOptions: { id: FilterChip; label: string; count: number }[] = [
+    { id: 'all', label: 'All', count: playlists.length + sortedSongs.length + followedArtists.length },
     { id: 'playlists', label: 'Playlists', count: playlists.length },
     { id: 'songs', label: 'Songs', count: sortedSongs.length },
-    { id: 'reels', label: 'Reels', count: reelEntries.length },
     { id: 'artists', label: 'Artists', count: followedArtists.length },
   ];
   const hasVisibleContent = (
     (showPlaylists && playlists.length > 0)
     || showSongsSection
-    || showReelSongsSection
     || (showArtists && followedArtists.length > 0)
   );
   const dedupedSearchSongs = useMemo(() => {
@@ -323,19 +226,14 @@ export default function LibraryScreen() {
       coverUrl: string;
       track: LibraryTrack;
       playlistNames: string[];
-      sourceTitles: string[];
     }>();
 
-    [...sortedSongs, ...sortedReelSongs].forEach((row) => {
+    sortedSongs.forEach((row) => {
       const key = normalizeTrackKey(row.track.title, row.track.artist);
       const existing = map.get(key);
       const playlistName = row.kind === 'playlist'
         ? (row.track as LibraryTrack & { playlistName?: string }).playlistName
         : undefined;
-      const sourceTitle = row.kind === 'reel'
-        ? (row as { sourceTitle?: string }).sourceTitle
-        : undefined;
-
       if (!existing) {
         map.set(key, {
           id: key,
@@ -344,18 +242,16 @@ export default function LibraryScreen() {
           coverUrl: row.track.coverUrl,
           track: row.track,
           playlistNames: playlistName ? [playlistName] : [],
-          sourceTitles: sourceTitle ? [sourceTitle] : [],
         });
         return;
       }
 
       if (!existing.coverUrl && row.track.coverUrl) existing.coverUrl = row.track.coverUrl;
       if (playlistName && !existing.playlistNames.includes(playlistName)) existing.playlistNames.push(playlistName);
-      if (sourceTitle && !existing.sourceTitles.includes(sourceTitle)) existing.sourceTitles.push(sourceTitle);
     });
 
     return [...map.values()];
-  }, [sortedReelSongs, sortedSongs]);
+  }, [sortedSongs]);
   const normalizedQuery = normalizeSearch(searchQuery);
   const searchResults = useMemo(() => {
     const queryMatchesSongTitle = normalizedQuery
@@ -384,32 +280,17 @@ export default function LibraryScreen() {
           song.playlistNames.length > 1
             ? `${song.playlistNames.length} playlists`
             : song.playlistNames[0],
-          song.sourceTitles.length > 0 ? 'Reel' : '',
         ].filter(Boolean).join(' · '),
         searchText: [
           song.title,
           song.artist,
           ...song.playlistNames,
-          ...song.sourceTitles,
         ].join(' '),
         coverUrl: song.coverUrl,
         onPress: () => {
           setPendingSongShare(song.track);
           setPendingPlaylistShare(null);
           setPickerVisible(true);
-        },
-      })),
-      ...savedReelLists.map((list) => ({
-        id: `reel:${list.id}`,
-        title: list.title,
-        subtitle: `${list.songs.length} songs · Reel`,
-        searchText: [
-          list.title,
-          ...list.songs.flatMap((song) => [song.title, song.artist]),
-        ].join(' '),
-        coverUrl: list.songs[0]?.coverUrl ?? null,
-        onPress: () => {
-          setSelectedReelList(list);
         },
       })),
       ...followedArtists.map((artist) => ({
@@ -424,7 +305,7 @@ export default function LibraryScreen() {
       if (!normalizedQuery) return true;
       return normalizeSearch(entry.searchText).includes(normalizedQuery);
     });
-  }, [dedupedSearchSongs, followedArtists, normalizedQuery, playlistTrackIndex, playlists, savedReelLists]);
+  }, [dedupedSearchSongs, followedArtists, normalizedQuery, playlistTrackIndex, playlists]);
 
   if (!user?.primary_service) {
     return (
@@ -472,7 +353,7 @@ export default function LibraryScreen() {
           ['recent', 'Recent'],
           ['name', 'Name'],
           ['count', 'Count'],
-        ] as Array<[SortMode, string]>).map(([mode, label]) => (
+        ] as [SortMode, string][]).map(([mode, label]) => (
           <TouchableOpacity
             key={mode}
             style={[styles.sortChip, sortMode === mode && styles.sortChipActive]}
@@ -492,7 +373,7 @@ export default function LibraryScreen() {
       ) : error ? (
         <View style={styles.emptyScreen}>
           <Ionicons name="warning-outline" size={40} color={colors.coral} />
-          <Text style={styles.emptyTitle}>Couldn't load library</Text>
+          <Text style={styles.emptyTitle}>Couldn&apos;t load library</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={fetchLibrary}>
             <Text style={styles.retryBtnText}>Try Again</Text>
           </TouchableOpacity>
@@ -595,79 +476,6 @@ export default function LibraryScreen() {
             </>
           )}
 
-          {/* Reel songs */}
-          {showReels && reelEntries.length > 0 && (
-            <>
-              <SectionTitle
-                title={filter === 'reels' ? 'Reel Songs' : 'Reels'}
-                right={<Text style={styles.sortLabel}>{reelEntries.length} item{reelEntries.length === 1 ? '' : 's'}</Text>}
-              />
-              <View style={styles.listSection}>
-                {filter === 'reels' ? (
-                  reelEntries.map((entry, idx) => {
-                    if (entry.kind === 'list') {
-                      return (
-                        <TouchableOpacity
-                          key={entry.id}
-                          style={[styles.row, idx < reelEntries.length - 1 && styles.rowSep]}
-                          onPress={() => setSelectedReelList(entry.list)}
-                          activeOpacity={0.8}
-                        >
-                          <View style={styles.reelListIcon}>
-                            <Ionicons name="list-outline" size={24} color={colors.primaryInk} />
-                          </View>
-                          <View style={styles.rowInfo}>
-                            <Text style={styles.rowTitle} numberOfLines={1}>{entry.list.title}</Text>
-                            <Text style={styles.rowMetaText}>{entry.list.songs.length} songs · Reel list</Text>
-                          </View>
-                          <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
-                        </TouchableOpacity>
-                      );
-                    }
-
-                    return (
-                      <TouchableOpacity
-                        key={entry.id}
-                        style={[styles.row, idx < reelEntries.length - 1 && styles.rowSep]}
-                        onPress={() => { setPendingSongShare(entry.track); setPendingPlaylistShare(null); setPickerVisible(true); }}
-                        activeOpacity={0.8}
-                      >
-                        <CoverArt uri={entry.track.coverUrl} size={44} radius={8} />
-                        <View style={styles.rowInfo}>
-                          <Text style={styles.rowTitle} numberOfLines={1}>{entry.track.title}</Text>
-                          <Text style={styles.rowMetaText} numberOfLines={1}>{entry.track.artist}</Text>
-                        </View>
-                        <TouchableOpacity
-                          style={styles.rowAction}
-                          onPress={() => { setPendingSongShare(entry.track); setPendingPlaylistShare(null); setPickerVisible(true); }}
-                          disabled={sharingSong}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Ionicons name="paper-plane-outline" size={18} color={colors.fg3} />
-                        </TouchableOpacity>
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (
-                  <TouchableOpacity
-                    style={styles.row}
-                    onPress={() => setReelSongsVisible(true)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.reelSongsIcon}>
-                      <Ionicons name="film-outline" size={24} color={colors.primaryInk} />
-                    </View>
-                    <View style={styles.rowInfo}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>Reel Songs</Text>
-                      <Text style={styles.rowMetaText}>{reelEntries.length} saved reel item{reelEntries.length === 1 ? '' : 's'}</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </>
-          )}
-
           {/* Followed artists */}
           {showArtists && followedArtists.length > 0 && (
             <>
@@ -716,119 +524,6 @@ export default function LibraryScreen() {
         onSelect={handleSongShareFriendSelected}
       />
 
-      <Modal visible={reelSongsVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setReelSongsVisible(false)}>
-        <View style={styles.reelModal}>
-          <View style={styles.reelModalHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.reelModalTitle} numberOfLines={1}>Reel Songs</Text>
-              <Text style={styles.reelModalSub}>{reelEntries.length} item{reelEntries.length === 1 ? '' : 's'}</Text>
-            </View>
-            <TouchableOpacity onPress={() => setReelSongsVisible(false)} style={styles.iconPad}>
-              <Ionicons name="close" size={22} color={colors.fg3} />
-            </TouchableOpacity>
-          </View>
-          {reelEntries.length === 0 ? (
-            <View style={styles.emptyInline}>
-              <Ionicons name="film-outline" size={44} color={colors.fg4} />
-              <Text style={styles.emptyInlineTitle}>No Results.</Text>
-              <Text style={styles.emptyInlineSub}>Saved songs from reels will appear here.</Text>
-            </View>
-          ) : (
-            <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 12 }}>
-              {reelEntries.map((entry, idx) => {
-                if (entry.kind === 'list') {
-                  return (
-                    <TouchableOpacity
-                      key={entry.id}
-                      style={[styles.row, idx > 0 && styles.rowSep]}
-                      onPress={() => {
-                        setReelSongsVisible(false);
-                        setSelectedReelList(entry.list);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <View style={styles.reelListIcon}>
-                        <Ionicons name="list-outline" size={24} color={colors.primaryInk} />
-                      </View>
-                      <View style={styles.rowInfo}>
-                        <Text style={styles.rowTitle} numberOfLines={1}>{entry.list.title}</Text>
-                        <Text style={styles.rowMetaText}>{entry.list.songs.length} songs · Reel list</Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
-                    </TouchableOpacity>
-                  );
-                }
-
-                return (
-                  <TouchableOpacity
-                    key={entry.id}
-                    style={[styles.row, idx > 0 && styles.rowSep]}
-                    onPress={() => {
-                      setReelSongsVisible(false);
-                      setPendingSongShare(entry.track);
-                      setPendingPlaylistShare(null);
-                      setPickerVisible(true);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <CoverArt uri={entry.track.coverUrl} size={44} radius={8} />
-                    <View style={styles.rowInfo}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{entry.track.title}</Text>
-                      <Text style={styles.rowMetaText} numberOfLines={1}>{entry.track.artist}</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.rowAction}
-                      onPress={() => {
-                        setReelSongsVisible(false);
-                        setPendingSongShare(entry.track);
-                        setPendingPlaylistShare(null);
-                        setPickerVisible(true);
-                      }}
-                      disabled={sharingSong}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="paper-plane-outline" size={18} color={colors.fg3} />
-                    </TouchableOpacity>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          )}
-        </View>
-      </Modal>
-
-      {/* Reel list detail modal */}
-      <Modal visible={selectedReelList !== null} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSelectedReelList(null)}>
-        <View style={styles.reelModal}>
-          <View style={styles.reelModalHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.reelModalTitle} numberOfLines={1}>{selectedReelList?.title ?? 'Reel list'}</Text>
-              <Text style={styles.reelModalSub}>{selectedReelList?.songs.length ?? 0} songs</Text>
-            </View>
-            <TouchableOpacity onPress={handleDeleteReelList} style={styles.iconPad}>
-              <Ionicons name="trash-outline" size={20} color={colors.coral} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setSelectedReelList(null)} style={styles.iconPad}>
-              <Ionicons name="close" size={22} color={colors.fg3} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 12 }}>
-            {selectedReelList?.songs.map((song, idx) => (
-              <View key={`${song.title}-${idx}`} style={[styles.row, idx > 0 && styles.rowSep]}>
-                <View style={styles.trackIdx}>
-                  <Text style={styles.trackIdxText}>{String(idx + 1).padStart(2, '0')}</Text>
-                </View>
-                <CoverArt uri={song.coverUrl} size={42} radius={6} />
-                <View style={styles.rowInfo}>
-                  <Text style={styles.rowTitle} numberOfLines={1}>{song.title}</Text>
-                  <Text style={styles.rowMetaText} numberOfLines={1}>{song.artist}</Text>
-                </View>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      </Modal>
-
       <Modal visible={searchVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSearchVisible(false)}>
         <View style={styles.searchModal}>
           <View style={styles.searchModalHeader}>
@@ -841,7 +536,7 @@ export default function LibraryScreen() {
             <Ionicons name="search-outline" size={16} color={colors.fg3} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Search playlists, songs, reels, artists…"
+              placeholder="Search playlists, songs, artists…"
               placeholderTextColor={colors.fg4}
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -936,16 +631,6 @@ const styles = StyleSheet.create({
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rowMetaText: { fontSize: 12, color: colors.fg3 },
   rowAction: { padding: 4 },
-  reelListIcon: {
-    width: 56, height: 56, borderRadius: 10,
-    backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  reelSongsIcon: {
-    width: 56, height: 56, borderRadius: 10,
-    backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
   allSongsIcon: {
     width: 56, height: 56, borderRadius: 10,
     backgroundColor: colors.primary,
@@ -970,19 +655,6 @@ const styles = StyleSheet.create({
 
   retryBtn: { backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 8 },
   retryBtnText: { color: colors.primaryInk, fontSize: 15, fontWeight: '600' },
-
-  reelModal: { flex: 1, backgroundColor: colors.bg },
-  reelModalHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16,
-    borderBottomWidth: 1, borderBottomColor: colors.line,
-  },
-  reelModalTitle: { fontSize: 18, fontWeight: '700', color: colors.fg },
-  reelModalSub: { fontSize: 13, color: colors.fg3, marginTop: 2 },
-  iconPad: { padding: 6 },
-
-  trackIdx: { width: 28, alignItems: 'flex-end' },
-  trackIdxText: { fontSize: 11, color: colors.fg3, fontVariant: ['tabular-nums'] },
 
   searchModal: { flex: 1, backgroundColor: colors.bg },
   searchModalHeader: {
