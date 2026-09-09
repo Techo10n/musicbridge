@@ -16,14 +16,27 @@ export function useSharedItems() {
     try {
       const { data, error } = await supabase
         .from('shared_items')
-        .select(
-          `*, sender:sender_id(id, username, display_name, avatar_url, primary_service)`,
-        )
+        .select('*')
         .eq('recipient_id', session.user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setItems((data as SharedItem[]) ?? []);
+      const rows = data ?? [];
+
+      // Sender display fields live in the public-profile view, not the
+      // owner-only `users` table, so fetch them separately and merge.
+      const senderIds = Array.from(new Set(rows.map((r) => r.sender_id as string)));
+      const senderById = new Map<string, unknown>();
+      if (senderIds.length > 0) {
+        const { data: senders } = await supabase
+          .from('user_public_profiles')
+          .select('id, username, display_name, avatar_url, primary_service')
+          .in('id', senderIds);
+        for (const s of senders ?? []) senderById.set(s.id as string, s);
+      }
+
+      const withSenders = rows.map((r) => ({ ...r, sender: senderById.get(r.sender_id as string) ?? null }));
+      setItems(withSenders as SharedItem[]);
     } catch (err) {
       console.error('[useSharedItems] fetch error:', err);
     } finally {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Follow, User } from '../types';
+import { User } from '../types';
 import { useAuth } from './useAuth';
 import { sendPushNotification } from '../lib/notifications';
 
@@ -17,24 +17,30 @@ export function useFollows() {
     if (!userId) return;
     setLoading(true);
     try {
+      // `follows` only stores ids; the public profile fields for the other
+      // side of each edge live in `user_public_profiles`, not the owner-only
+      // `users` table, so this is a lookup followed by a batched fetch rather
+      // than a single PostgREST embed.
       const [followingRes, followersRes] = await Promise.all([
-        // People the current user follows
-        supabase
-          .from('follows')
-          .select('following:following_id(id, username, display_name, avatar_url, primary_service, favorite_song)')
-          .eq('follower_id', userId),
-        // People who follow the current user
-        supabase
-          .from('follows')
-          .select('follower:follower_id(id, username, display_name, avatar_url, primary_service, favorite_song)')
-          .eq('following_id', userId),
+        supabase.from('follows').select('following_id').eq('follower_id', userId),
+        supabase.from('follows').select('follower_id').eq('following_id', userId),
       ]);
 
-      const followingData = (followingRes.data ?? []) as unknown as Array<{ following: User }>;
-      const followersData = (followersRes.data ?? []) as unknown as Array<{ follower: User }>;
+      const followingIdList = (followingRes.data ?? []).map((r) => r.following_id as string);
+      const followerIdList = (followersRes.data ?? []).map((r) => r.follower_id as string);
+      const allIds = Array.from(new Set([...followingIdList, ...followerIdList]));
 
-      const followingUsers = followingData.map((r) => r.following).filter(Boolean);
-      const followerUsers = followersData.map((r) => r.follower).filter(Boolean);
+      const profileById = new Map<string, User>();
+      if (allIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('user_public_profiles')
+          .select('id, username, display_name, avatar_url, primary_service, favorite_song')
+          .in('id', allIds);
+        for (const p of (profiles ?? []) as User[]) profileById.set(p.id, p);
+      }
+
+      const followingUsers = followingIdList.map((id) => profileById.get(id)).filter((u): u is User => !!u);
+      const followerUsers = followerIdList.map((id) => profileById.get(id)).filter((u): u is User => !!u);
 
       setFollowing(followingUsers);
       setFollowers(followerUsers);
@@ -109,7 +115,7 @@ export function useFollows() {
     async (query: string): Promise<User[]> => {
       if (!query.trim()) return [];
       const { data, error } = await supabase
-        .from('users')
+        .from('user_public_profiles')
         .select('id, username, display_name, avatar_url, primary_service, favorite_song')
         .ilike('username', `%${query.trim()}%`)
         .neq('id', userId ?? '')
@@ -124,7 +130,7 @@ export function useFollows() {
     if (!userId) return [];
 
     const { data, error } = await supabase
-      .from('users')
+      .from('user_public_profiles')
       .select('id, username, display_name, avatar_url, primary_service, favorite_song')
       .neq('id', userId)
       .limit(60);

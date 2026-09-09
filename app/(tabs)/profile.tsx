@@ -17,7 +17,7 @@ import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { extractYouTubeTrackInfo } from '../../lib/youtubeMusic';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
 import { supabase } from '../../lib/supabase';
-import { Avatar, AppBar, IconBtn, CoverArt, ServiceDot, serviceLabelShort, SectionTitle } from '../../components/ui';
+import { AppBar, IconBtn, CoverArt, ServiceDot, SectionTitle } from '../../components/ui';
 import { colors } from '../../lib/theme';
 
 const SERVICE_LABELS: Record<MusicService, string> = {
@@ -74,7 +74,9 @@ export default function Profile() {
       try {
         const { count } = await supabase.from('shared_items').select('id', { count: 'exact', head: true }).eq('sender_id', user.id);
         setSharedCount(count ?? 0);
-      } catch {}
+      } catch (err) {
+        console.error('[profile] shared count fetch error:', err);
+      }
     })();
     // Load public shares
     setLoadingPublic(true);
@@ -82,12 +84,26 @@ export default function Profile() {
       try {
         const { data } = await supabase
           .from('shared_items')
-          .select('*, sender:users!shared_items_sender_id_fkey(id, username, display_name, avatar_url, primary_service)')
+          .select('*')
           .eq('sender_id', user.id)
           .order('created_at', { ascending: false })
           .limit(20);
-        setPublicShares(data ?? []);
-      } catch {} finally { setLoadingPublic(false); }
+        // These are always the signed-in user's own shares, so `sender` is
+        // just `user` — no need to hit `user_public_profiles` for it.
+        const withSender = (data ?? []).map((item) => ({
+          ...item,
+          sender: {
+            id: user.id,
+            username: user.username,
+            display_name: user.display_name,
+            avatar_url: user.avatar_url,
+            primary_service: user.primary_service,
+          },
+        }));
+        setPublicShares(withSender);
+      } catch (err) {
+        console.error('[profile] public shares fetch error:', err);
+      } finally { setLoadingPublic(false); }
     })();
   }, [user, getFollowCounts]);
 

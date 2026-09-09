@@ -130,6 +130,13 @@ export async function disconnectSpotify(userId: string, skipClearReconnect = fal
 
 // ─── Token management ─────────────────────────────────────────────────────────
 
+// In-flight refresh promises, keyed by userId. Spotify rotates refresh
+// tokens on use, so two concurrent expired-token calls both POSTing a
+// refresh can invalidate each other's new refresh token and trip the
+// reconnect-required path. Callers racing on the same user share one
+// in-flight refresh instead.
+const _inFlightRefresh = new Map<string, Promise<string | null>>();
+
 /**
  * Returns a valid Spotify access token for the given user, refreshing if needed.
  * Returns null if the user is not connected to Spotify.
@@ -139,6 +146,17 @@ export async function getSpotifyAccessToken(userId: string): Promise<string | nu
     return _tokenCache.token;
   }
 
+  const existing = _inFlightRefresh.get(userId);
+  if (existing) return existing;
+
+  const promise = fetchOrRefreshSpotifyToken(userId).finally(() => {
+    _inFlightRefresh.delete(userId);
+  });
+  _inFlightRefresh.set(userId, promise);
+  return promise;
+}
+
+async function fetchOrRefreshSpotifyToken(userId: string): Promise<string | null> {
   const { data, error } = await supabase
     .from('users')
     .select('spotify_access_token, spotify_refresh_token, spotify_token_expiry')
@@ -434,12 +452,12 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
       if (!res.ok) break;
       const data = await res.json() as {
         next: string | null;
-        items: Array<{
+        items: ({
           id: string;
           name: string;
-          images: Array<{ url: string }>;
+          images: { url: string }[];
           tracks: { total: number };
-        } | null>;
+        } | null)[];
       };
       for (const p of data.items) {
         if (!p) continue;
@@ -477,7 +495,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
       if (!res.ok) break;
       const data = await res.json() as {
         next: string | null;
-        items: Array<{ track: SpotifyTrack | null }>;
+        items: { track: SpotifyTrack | null }[];
       };
       for (const item of data.items) {
         if (!item.track) continue;
@@ -556,7 +574,7 @@ export async function streamSavedTracks(
 
     if (!res.ok) break;
 
-    let data: { next: string | null; items: Array<{ track: SpotifyTrack }> };
+    let data: { next: string | null; items: { track: SpotifyTrack }[] };
     try {
       data = await res.json();
     } catch {
@@ -594,7 +612,7 @@ export async function getFollowedArtists(userId: string): Promise<LibraryArtist[
     if (!res.ok) return [];
     const data = await res.json() as {
       artists: {
-        items: Array<{ id: string; name: string; images: Array<{ url: string }> }>;
+        items: { id: string; name: string; images: { url: string }[] }[];
       };
     };
     return data.artists.items.map((a) => ({
@@ -688,7 +706,7 @@ export async function getRecentlyPlayed(userId: string, limit = 20): Promise<Rec
     );
     if (!res.ok) return [];
     const data = await res.json() as {
-      items: Array<{ track: SpotifyTrack; played_at: string }>;
+      items: { track: SpotifyTrack; played_at: string }[];
     };
     return data.items.map((item) => ({
       id: item.track.id,

@@ -41,7 +41,7 @@ interface NotifItem {
 type FollowRow = {
   id: string;
   created_at: string;
-  follower: Array<Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'>> | null;
+  follower: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'> | null;
 };
 
 function timeAgo(iso: string): string {
@@ -65,14 +65,35 @@ export default function ActivityScreen() {
     if (!user?.id) { setFollowRows([]); setLoadingFollows(false); return; }
     setLoadingFollows(true);
     try {
-      const { data } = await supabase
+      const { data: follows } = await supabase
         .from('follows')
-        .select('id, created_at, follower:follower_id(id, username, display_name, avatar_url, primary_service)')
+        .select('id, created_at, follower_id')
         .eq('following_id', user.id)
         .order('created_at', { ascending: false })
         .limit(25);
-      setFollowRows((data as unknown as FollowRow[]) ?? []);
-    } catch { setFollowRows([]); }
+      const rows = follows ?? [];
+
+      // `follower_id` only names the row; public profile fields live in
+      // `user_public_profiles`, not the now owner-only `users` table.
+      const followerIds = Array.from(new Set(rows.map((r) => r.follower_id as string)));
+      const profileById = new Map<string, Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'>>();
+      if (followerIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('user_public_profiles')
+          .select('id, username, display_name, avatar_url, primary_service')
+          .in('id', followerIds);
+        for (const p of profiles ?? []) profileById.set(p.id, p);
+      }
+
+      setFollowRows(rows.map((r) => ({
+        id: r.id,
+        created_at: r.created_at,
+        follower: profileById.get(r.follower_id as string) ?? null,
+      })));
+    } catch (err) {
+      console.error('[notifications] follow activity fetch error:', err);
+      setFollowRows([]);
+    }
     finally { setLoadingFollows(false); }
   }, [user?.id]);
 
@@ -93,7 +114,7 @@ export default function ActivityScreen() {
     }));
 
     const followNotifs: NotifItem[] = followRows.flatMap(entry => {
-      const f = entry.follower?.[0];
+      const f = entry.follower;
       if (!f) return [];
       return [{
         id: `follow:${entry.id}`,

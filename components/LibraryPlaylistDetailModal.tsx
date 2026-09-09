@@ -37,7 +37,11 @@ function toTrackPayload(t: LibraryTrack): Track {
     artist: t.artist,
     spotify_id: t.service === 'spotify' ? t.id : null,
     apple_music_id: t.service === 'apple_music' ? t.id : null,
-    youtube_music_id: t.service === 'youtube_music' ? t.id : null,
+    // Only canonical "Artist - Topic" videos are real YouTube Music songs.
+    // An unverified library video id would deep-link the recipient to a music
+    // video (or the wrong content), so send null and let the recipient's open
+    // path re-resolve through the strict searchTrack() rules.
+    youtube_music_id: t.service === 'youtube_music' && t.ytTopicVerified ? t.id : null,
   };
 }
 
@@ -52,7 +56,9 @@ async function openTrackInService(userId: string | undefined, track: LibraryTrac
     try {
       const supported = await Linking.canOpenURL(url);
       if (supported) { await Linking.openURL(url); return; }
-    } catch {}
+    } catch {
+      continue; // try the next candidate URL
+    }
   }
 }
 

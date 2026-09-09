@@ -172,7 +172,7 @@ async function getLibraryPlaylistCatalogUrl(
     });
     if (!res.ok) return null;
     const data = await res.json() as {
-      data?: Array<{ attributes?: { url?: string } }>;
+      data?: { attributes?: { url?: string } }[];
     };
     return data.data?.[0]?.attributes?.url ?? null;
   } catch {
@@ -596,7 +596,7 @@ export async function getTopTracks(userId: string, limit = 5): Promise<TopTrack[
     });
     if (!res.ok) return [];
     const data = await res.json() as {
-      data?: Array<AppleMusicTrack & { type?: string }>;
+      data?: (AppleMusicTrack & { type?: string })[];
     };
 
     const tracks = (data.data ?? [])

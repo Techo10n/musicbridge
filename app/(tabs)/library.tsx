@@ -39,7 +39,14 @@ function toTrackPayload(t: LibraryTrack): Track {
     artist: t.artist,
     spotify_id: t.service === 'spotify' ? t.id : null,
     apple_music_id: t.service === 'apple_music' ? t.id : null,
-    youtube_music_id: t.service === 'youtube_music' ? t.id : null,
+    // Only a video confirmed to come from an "Artist - Topic" channel is a
+    // valid YouTube Music Song id (see decisions.md "Never add non-Topic
+    // videos to YouTube Music"). A library playlist can hold a regular video
+    // that isn't one — sending its raw id would let the recipient's device
+    // build a mix-radio deep link to something that isn't a Song. Leave it
+    // null instead so the recipient re-resolves by title/artist through the
+    // same strict `searchTrack` path used when no id is stored at all.
+    youtube_music_id: t.service === 'youtube_music' && t.ytTopicVerified ? t.id : null,
   };
 }
 
@@ -125,7 +132,11 @@ export default function LibraryScreen() {
           cover_image_url: pendingSongShare.coverUrl,
           spotify_id: pendingSongShare.service === 'spotify' ? pendingSongShare.id : null,
           apple_music_id: pendingSongShare.service === 'apple_music' ? pendingSongShare.id : null,
-          youtube_music_id: pendingSongShare.service === 'youtube_music' ? pendingSongShare.id : null,
+          // Only trust ids confirmed to be from an "Artist - Topic" channel —
+          // see the matching comment on toTrackPayload above.
+          youtube_music_id: pendingSongShare.service === 'youtube_music' && pendingSongShare.ytTopicVerified
+            ? pendingSongShare.id
+            : null,
           message: message || null,
         }).select('id').single();
         if (dbError) throw dbError;

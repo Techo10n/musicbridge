@@ -98,6 +98,13 @@ export interface LibraryTrack {
   artist: string;
   coverUrl: string;
   service: MusicService;
+  // YouTube Music only: whether `id` was confirmed to come from an
+  // "Artist - Topic" channel — the only channel type YouTube Music renders
+  // as a Song. Undefined for other services. A `false`/undefined value means
+  // `id` is a plain video id that must not be trusted as a canonical Song id
+  // (e.g. for sharing or building a music-mix deep link) — see
+  // youtube-music.md "Never add non-Topic videos to YouTube Music".
+  ytTopicVerified?: boolean;
 }
 
 export interface LibraryArtist {
@@ -147,10 +154,10 @@ export interface WrappedStats {
 export interface SpotifyTrack {
   id: string;
   name: string;
-  artists: Array<{ name: string }>;
+  artists: { name: string }[];
   album: {
     name: string;
-    images: Array<{ url: string; width: number; height: number }>;
+    images: { url: string; width: number; height: number }[];
   };
   uri: string;
   popularity?: number;
@@ -159,7 +166,7 @@ export interface SpotifyTrack {
 export interface SpotifyArtist {
   id: string;
   name: string;
-  images: Array<{ url: string }>;
+  images: { url: string }[];
   genres: string[];
   popularity: number;
 }
@@ -167,10 +174,10 @@ export interface SpotifyArtist {
 export interface SpotifyPlaylist {
   id: string;
   name: string;
-  images: Array<{ url: string }>;
+  images: { url: string }[];
   tracks: {
     total: number;
-    items: Array<{ track: SpotifyTrack }>;
+    items: { track: SpotifyTrack }[];
   };
 }
 

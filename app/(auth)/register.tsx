@@ -20,7 +20,7 @@ import { MusicService } from '../../types';
 
 type Step = 'credentials' | 'service';
 
-const SERVICES: Array<{ id: MusicService; label: string; color: string; description: string }> = [
+const SERVICES: { id: MusicService; label: string; color: string; description: string }[] = [
   {
     id: 'spotify',
     label: 'Spotify',
@@ -161,7 +161,7 @@ export default function Register() {
           <Text style={styles.logo}>museaic</Text>
           <Text style={styles.stepTitle}>Choose your primary service</Text>
           <Text style={styles.stepSubtitle}>
-            This is where you'll listen — you can still share to friends on other services.
+            This is where you&apos;ll listen — you can still share to friends on other services.
           </Text>
 
           {error && <Text style={styles.error}>{error}</Text>}

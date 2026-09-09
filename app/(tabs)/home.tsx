@@ -17,7 +17,6 @@ import { colors } from '../../lib/theme';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
-import { extractYouTubeTrackInfo } from '../../lib/youtubeMusic';
 import { withTimeout } from '../../lib/utils';
 import { supabase } from '../../lib/supabase';
 
@@ -103,7 +102,7 @@ function FeedRow({
 
       {item.message ? (
         <View style={styles.messageBubble}>
-          <Text style={styles.messageBubbleText}>"{item.message}"</Text>
+          <Text style={styles.messageBubbleText}>&quot;{item.message}&quot;</Text>
         </View>
       ) : null}
 
@@ -192,11 +191,20 @@ export default function Home() {
           if (!ymid && item.title && item.artist) {
             ymid = await withTimeout(YouTubeMusic.searchTrack(user!.id, item.title, item.artist), 10_000);
           }
-          if (ymid) { links = YouTubeMusic.getYouTubeMusicDeepLink(ymid); supabase.from('shared_items').update({ youtube_music_id: ymid }).eq('id', item.id); }
+          if (ymid) {
+            links = YouTubeMusic.getYouTubeMusicDeepLink(ymid);
+            // Cache the resolved id on the share so future opens skip the
+            // search. Fire-and-forget is fine — the link above already has
+            // what it needs — but don't let a write failure vanish silently.
+            void supabase.from('shared_items').update({ youtube_music_id: ymid }).eq('id', item.id)
+              .then(({ error }) => {
+                if (error) console.error('[home] failed to cache resolved youtube_music_id:', error);
+              });
+          }
           break;
         }
       }
-      for (const l of links) { try { await Linking.openURL(l); return; } catch { } }
+      for (const l of links) { try { await Linking.openURL(l); return; } catch { continue; } }
       Alert.alert('App not found', `Make sure ${primaryService.replace('_', ' ')} is installed.`);
     } catch (err: any) {
       const msg = err?.message === 'timeout' ? 'Timed out.' : err?.message === 'youtube_quota_exceeded' ? 'YouTube quota reached.' : 'Could not open song.';

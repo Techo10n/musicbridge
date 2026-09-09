@@ -290,41 +290,41 @@ async function searchSpotify(token: string, title: string, artist: string): Prom
 async function searchYouTube(token: string, title: string, artist: string): Promise<string | null> {
   const t = cleanTitle(title);
   const a = cleanArtistName(artist);
-  const q = encodeURIComponent(`${t} ${a}`);
+  const primaryArtist = a.split(',')[0].trim();
+  const q = encodeURIComponent(`${t} ${primaryArtist}`);
 
+  // videoCategoryId=10 (Music) is enough; topicId uses deprecated Freebase IDs
+  // that return 403s under load — same fix already applied to the client's
+  // lib/youtubeMusic.ts searchTrack.
   const res = await fetch(
-    `https://www.googleapis.com/youtube/v3/search?q=${q}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10&topicId=/m/04rlf`,
+    `https://www.googleapis.com/youtube/v3/search?q=${q}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!res.ok) return null;
 
   const data = await res.json();
-  const items: Array<{ id: { videoId: string }; snippet: { title: string; channelTitle: string; description?: string } }> =
+  const items: Array<{ id: { videoId: string }; snippet: { title: string; channelTitle: string } }> =
     data.items ?? [];
 
-  const best =
-    items.find((i) => {
-      const ch = i.snippet.channelTitle?.toLowerCase() ?? '';
-      const vt = i.snippet.title?.toLowerCase() ?? '';
-      const desc = i.snippet.description?.toLowerCase() ?? '';
-      return (
-        ch.endsWith(' - topic') ||
-        vt.includes('official audio') ||
-        desc.includes('provided to youtube')
-      );
-    }) ??
-    items.find((i) => {
-      const vt = i.snippet.title?.toLowerCase() ?? '';
-      return (
-        !vt.includes('music video') &&
-        !vt.includes('lyric') &&
-        !vt.includes('live') &&
-        !vt.includes('official video')
-      );
-    }) ??
-    items[0];
+  // Only "Artist - Topic" channels render as Songs in YouTube Music — see
+  // decisions.md "Never add non-Topic videos to YouTube Music". Anything else
+  // (VEVO, user uploads, lyric videos) shows up in the library as a
+  // wrong-looking video, so a missing song beats a wrong one: no items[0]
+  // fallback, mirroring the client's strict searchTrack behavior.
+  const topicItems = items.filter((i) => {
+    const ch = i.snippet.channelTitle?.toLowerCase() ?? '';
+    return ch.endsWith(' - topic') || ch === 'topic';
+  });
+  if (topicItems.length === 0) return null;
 
-  return best?.id?.videoId ?? null;
+  const best = topicItems.reduce((bestSoFar, candidate) =>
+    wordCoverage(t, candidate.snippet.title) > wordCoverage(t, bestSoFar.snippet.title)
+      ? candidate
+      : bestSoFar,
+  );
+  // Reject a zero-title-score match even from a Topic channel — same rule as
+  // the client (see decisions.md "Reject zero-title-score matches").
+  return wordCoverage(t, best.snippet.title) > 0 ? best.id.videoId : null;
 }
 
 async function searchAppleMusic(

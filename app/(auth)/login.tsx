@@ -86,7 +86,7 @@ export default function Login() {
         <Link href="/(auth)/register" asChild>
           <TouchableOpacity style={styles.linkRow} activeOpacity={0.7}>
             <Text style={styles.linkText}>
-              Don't have an account?{' '}
+              Don&apos;t have an account?{' '}
               <Text style={styles.linkHighlight}>Sign Up</Text>
             </Text>
           </TouchableOpacity>

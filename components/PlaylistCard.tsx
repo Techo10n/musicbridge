@@ -63,7 +63,7 @@ export function PlaylistCard({ item, onPress }: PlaylistCardProps) {
 
         {item.message && (
           <Text style={styles.message} numberOfLines={2}>
-            "{item.message}"
+            &quot;{item.message}&quot;
           </Text>
         )}
       </View>

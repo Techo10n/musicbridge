@@ -1,3 +1,5 @@
+import { getAppleMusicPlaylistDeepLink } from '../lib/appleMusic';
+
 jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(),
   setItem: jest.fn(),
@@ -15,8 +17,6 @@ jest.mock('../modules/apple-music', () => ({
   requestMusicStorefrontCountryCode: jest.fn(),
   requestMusicUserToken: jest.fn(),
 }));
-
-import { getAppleMusicPlaylistDeepLink } from '../lib/appleMusic';
 
 describe('getAppleMusicPlaylistDeepLink', () => {
   it('falls back to the generic library instead of guessing unavailable playlist URLs', () => {

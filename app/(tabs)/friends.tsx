@@ -10,7 +10,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { ShareModal } from '../../components/ShareModal';
 import { UserProfileModal } from '../../components/UserProfileModal';
-import { Avatar, AppBar, IconBtn, TasteBar, ServiceDot, serviceLabelShort } from '../../components/ui';
+import { Avatar, AppBar, IconBtn, TasteBar, ServiceDot } from '../../components/ui';
 import { User } from '../../types';
 import { colors } from '../../lib/theme';
 

@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
-import { AppBar, IconBtn, Avatar, CoverArt } from '../../components/ui';
+import { AppBar, Avatar } from '../../components/ui';
 import { MusicServiceButton } from '../../components/MusicServiceButton';
 import { MusicService } from '../../types';
 import * as Spotify from '../../lib/spotify';
@@ -303,7 +303,6 @@ export default function Settings() {
 
   if (!user) return null;
 
-  const initials = (user.display_name ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
   const primarySvc = user.primary_service as MusicService | null;
 
   return (

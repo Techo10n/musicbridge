@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { SharedItem, Track } from '../types';
+import { SharedItem } from '../types';
 import { serviceName } from './ServiceBadge';
 import { useAuth } from '../hooks/useAuth';
 import * as AppleMusic from '../lib/appleMusic';
@@ -139,7 +139,9 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     for (const url of urls) {
       try {
         if (await Linking.canOpenURL(url)) { await Linking.openURL(url); return; }
-      } catch { }
+      } catch {
+        continue; // try the next candidate URL
+      }
     }
   };
 

@@ -94,6 +94,11 @@ export async function disconnectYouTubeMusic(userId: string): Promise<void> {
 let _tokenCache: { userId: string; token: string; expiresAt: number } | null = null;
 const _topicChannelCache = new Map<string, string>(); // primaryArtist → channelId
 
+// In-flight refresh promises, keyed by userId — see the matching comment in
+// lib/spotify.ts. Concurrent expired-token calls should share one refresh
+// rather than each POST their own.
+const _inFlightRefresh = new Map<string, Promise<string | null>>();
+
 /**
  * Returns a valid YouTube access token, refreshing if expired.
  */
@@ -102,6 +107,17 @@ export async function getYouTubeAccessToken(userId: string): Promise<string | nu
     return _tokenCache.token;
   }
 
+  const existing = _inFlightRefresh.get(userId);
+  if (existing) return existing;
+
+  const promise = fetchOrRefreshYouTubeToken(userId).finally(() => {
+    _inFlightRefresh.delete(userId);
+  });
+  _inFlightRefresh.set(userId, promise);
+  return promise;
+}
+
+async function fetchOrRefreshYouTubeToken(userId: string): Promise<string | null> {
   const { data, error } = await supabase
     .from('users')
     .select('youtube_access_token, youtube_refresh_token, youtube_token_expiry')
@@ -428,7 +444,7 @@ export async function searchTrack(
       if (!res.ok) {
         if (res.status === 403) {
           try {
-            const body = await res.json() as { error?: { errors?: Array<{ reason: string }> } };
+            const body = await res.json() as { error?: { errors?: { reason: string }[] } };
             if (body?.error?.errors?.[0]?.reason === 'quotaExceeded') {
               throw new Error('youtube_quota_exceeded');
             }
@@ -460,7 +476,7 @@ export async function searchTrack(
       );
       if (!res.ok) return null;
       const data = await res.json() as {
-        items?: Array<{ id: { channelId: string }; snippet: { title: string } }>;
+        items?: { id: { channelId: string }; snippet: { title: string } }[];
       };
       const match = (data.items ?? []).find((ch) =>
         ch.snippet.title.toLowerCase().endsWith(' - topic'),
@@ -529,8 +545,10 @@ export async function searchTracks(userId: string, query: string): Promise<YouTu
 
   try {
     const q = encodeURIComponent(query);
+    // videoCategoryId=10 (Music) is enough; topicId uses deprecated Freebase
+    // IDs that started returning 403s under load — same fix as searchTrack.
     const res = await fetch(
-      `${YOUTUBE_API}/search?q=${q}&type=video&part=snippet,id&maxResults=25&videoCategoryId=10&topicId=/m/04rlf`,
+      `${YOUTUBE_API}/search?q=${q}&type=video&part=snippet,id&maxResults=25&videoCategoryId=10`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (!res.ok) return [];
@@ -657,10 +675,10 @@ async function batchGetVideoMeta(
       });
       if (!res.ok) continue;
       const data = await res.json() as {
-        items: Array<{
+        items: {
           id: string;
           snippet: { categoryId: string; description?: string; tags?: string[] };
-        }>;
+        }[];
       };
       for (const item of data.items) {
         result.set(item.id, {
@@ -704,14 +722,14 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
     );
     if (!res.ok) return [];
     const data = await res.json() as {
-      items: Array<{
+      items: {
         id: string;
         snippet: {
           title: string;
           thumbnails: { medium?: { url: string }; default?: { url: string } };
         };
         contentDetails: { itemCount: number };
-      }>;
+      }[];
     };
 
     const playlists: LibraryPlaylist[] = data.items.map((p) => ({
@@ -737,7 +755,7 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
           });
           if (!r.ok) return null;
           const d = await r.json() as {
-            items?: Array<{ snippet: { resourceId: { videoId: string } } }>;
+            items?: { snippet: { resourceId: { videoId: string } } }[];
           };
           return d.items?.[0]?.snippet?.resourceId?.videoId ?? null;
         } catch {
@@ -776,7 +794,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
   const accessToken = await getYouTubeAccessToken(userId);
   if (!accessToken) return [];
 
-  const rawTracks: Array<LibraryTrack & { artistFromTitle: boolean }> = [];
+  const rawTracks: (LibraryTrack & { artistFromTitle: boolean })[] = [];
   let pageToken: string | undefined;
 
   do {
@@ -793,14 +811,14 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
       if (!res.ok) break;
       const data = await res.json() as {
         nextPageToken?: string;
-        items: Array<{
+        items: {
           snippet: {
             title: string;
             videoOwnerChannelTitle?: string;
             resourceId: { videoId: string };
             thumbnails: { medium?: { url: string } };
           };
-        }>;
+        }[];
       };
       for (const item of data.items) {
         if (
@@ -811,6 +829,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
           item.snippet.videoOwnerChannelTitle ?? '',
           item.snippet.title,
         );
+        const ownerChannel = (item.snippet.videoOwnerChannelTitle ?? '').toLowerCase();
         rawTracks.push({
           id: item.snippet.resourceId.videoId,
           title: info.title,
@@ -818,6 +837,12 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
           artistFromTitle: info.artistFromTitle,
           coverUrl: item.snippet.thumbnails.medium?.url ?? '',
           service: 'youtube_music',
+          // "Artist - Topic" is the only channel type YouTube Music renders
+          // as a Song. A library playlist can contain a regular video that
+          // still passes the videoCategoryId=10 filter below (a lyric video,
+          // a cover) — those ids must not be trusted as canonical elsewhere
+          // (sharing, mix-URL construction) the way searchTrack's results are.
+          ytTopicVerified: ownerChannel.endsWith(' - topic') || ownerChannel === 'topic',
         });
         if (maxTracks !== undefined && rawTracks.length >= maxTracks) break;
       }
@@ -885,7 +910,7 @@ function looksLikeMusicChannel(title: string): boolean {
 export async function getSubscribedChannels(
   userId: string,
   limit = 50,
-): Promise<Array<{ id: string; name: string; imageUrl: string }>> {
+): Promise<{ id: string; name: string; imageUrl: string }[]> {
   const accessToken = await getYouTubeAccessToken(userId);
   if (!accessToken) return [];
 
@@ -896,13 +921,13 @@ export async function getSubscribedChannels(
     );
     if (!res.ok) return [];
     const data = await res.json() as {
-      items: Array<{
+      items: {
         snippet: {
           resourceId: { channelId: string };
           title: string;
           thumbnails: { medium?: { url: string }; default?: { url: string } };
         };
-      }>;
+      }[];
     };
     return data.items
       .filter((item) => looksLikeMusicChannel(item.snippet.title))
@@ -934,7 +959,7 @@ export async function getSubscribedChannels(
  *  - topTrack: the most recently liked track (best available proxy)
  */
 export async function analyzeYouTubeLibrary(userId: string): Promise<{
-  topArtists: Array<{ name: string; count: number }>;
+  topArtists: { name: string; count: number }[];
   likedCount: number;
   playlistCount: number;
   topTrack: LibraryTrack | null;

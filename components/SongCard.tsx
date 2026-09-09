@@ -62,7 +62,7 @@ export function SongCard({ item, isResolving, onPress }: SongCardProps) {
 
         {item.message && (
           <Text style={styles.message} numberOfLines={2}>
-            "{item.message}"
+            &quot;{item.message}&quot;
           </Text>
         )}
       </View>

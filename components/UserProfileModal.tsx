@@ -10,7 +10,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useFollows } from '../hooks/useFollows';
 import { colors } from '../lib/theme';
 import { User } from '../types';
-import { Avatar, CoverArt, ServiceDot, serviceLabelShort, TasteBar } from './ui';
+import { CoverArt, serviceLabelShort } from './ui';
 import { ShareModal } from './ShareModal';
 
 interface UserProfileModalProps {
@@ -44,7 +44,10 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
     setLoading(true);
     void (async () => {
       try {
-        const { data } = await supabase.from('users').select('*').eq('id', userId).single();
+        // Another user's row — public profile view only, never the base
+        // `users` table, which now only allows owner-only reads of the OAuth
+        // token columns it holds.
+        const { data } = await supabase.from('user_public_profiles').select('*').eq('id', userId).single();
         setProfile(data as User);
 
         // Follow counts

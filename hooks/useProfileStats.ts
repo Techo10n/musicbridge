@@ -50,7 +50,9 @@ export function useProfileStats() {
     try {
       const raw = await AsyncStorage.getItem(getPinnedKey(user.id));
       if (raw) setPinnedPlaylists(JSON.parse(raw) as LibraryPlaylist[]);
-    } catch {}
+    } catch (err) {
+      console.warn('[useProfileStats] loadPinned error:', err);
+    }
   }, [user]);
 
   const pinPlaylist = useCallback(async (playlist: LibraryPlaylist) => {
@@ -79,14 +81,18 @@ export function useProfileStats() {
     try {
       const val = await AsyncStorage.getItem(getHistoryOptInKey(user.id));
       setHistoryOptIn(val === 'true');
-    } catch {}
+    } catch (err) {
+      console.warn('[useProfileStats] loadHistoryPref error:', err);
+    }
   }, [user]);
 
   const setHistoryOptInPref = useCallback(async (enabled: boolean) => {
     setHistoryOptIn(enabled);
     try {
       await AsyncStorage.setItem(getHistoryOptInKey(user?.id ?? 'unknown'), enabled ? 'true' : 'false');
-    } catch {}
+    } catch (err) {
+      console.warn('[useProfileStats] setHistoryOptInPref error:', err);
+    }
   }, [user]);
 
   // ─── Taste tags from genres ───────────────────────────────────────────────────

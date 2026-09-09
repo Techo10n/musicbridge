@@ -30,6 +30,8 @@ interface SearchResult {
   title: string;
   artist: string;
   coverUrl: string;
+  // YouTube only: true when the result came from an "Artist - Topic" channel.
+  ytTopicVerified?: boolean;
   // Raw result for resolving across services
   raw: SpotifyTrack | AppleMusicTrack | YouTubeTrack;
 }
@@ -89,11 +91,13 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
           const tracks = await YouTubeMusic.searchTracks(user.id, query.trim());
           mapped = tracks.map((t) => {
             const info = extractYouTubeTrackInfo(t.snippet.channelTitle, t.snippet.title);
+            const channel = t.snippet.channelTitle?.toLowerCase() ?? '';
             return {
               id: t.id.videoId,
               title: cleanTitle(info.title),
               artist: info.artist,
               coverUrl: t.snippet.thumbnails.medium.url,
+              ytTopicVerified: channel.endsWith(' - topic') || channel === 'topic',
               raw: t,
             };
           });
@@ -136,7 +140,11 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
       // Other services will be lazily resolved by the recipient using their own tokens.
       const spotifyId = primaryService === 'spotify' ? result.id : null;
       const appleMusicId = primaryService === 'apple_music' ? result.id : null;
-      const youtubeMusicId = primaryService === 'youtube_music' ? result.id : null;
+      // Same rule as the library share paths: only store a YouTube id that is a
+      // canonical Topic-channel song. searchTracks() sorts Topic results first
+      // but still returns non-Topic videos, so the flag has to be checked.
+      const youtubeMusicId =
+        primaryService === 'youtube_music' && result.ytTopicVerified ? result.id : null;
 
       const { data: insertedItem, error } = await withTimeout(
         Promise.resolve(
