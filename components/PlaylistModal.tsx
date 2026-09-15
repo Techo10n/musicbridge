@@ -19,6 +19,9 @@ import { colors } from '../lib/theme';
 
 type ConversionState = 'idle' | 'waiting' | 'processing' | 'done' | 'failed';
 
+/** Stable empty reference so an unloaded item does not churn referential equality. */
+const EMPTY_TRACKS: Track[] = [];
+
 interface PlaylistModalProps {
   item: SharedItem | null;
   visible: boolean;
@@ -52,8 +55,12 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const [matchedTracks, setMatchedTracks] = useState<number | null>(null);
   const [unmatchedTracks, setUnmatchedTracks] = useState<{ title: string; artist: string }[]>([]);
   // `tracks` is excluded from the inbox query (it is a large jsonb payload), so
-  // the detail view fetches it for the single item it is showing.
-  const [tracks, setTracks] = useState<Track[]>([]);
+  // the detail view fetches it for the single item it is showing. The loaded
+  // payload is stored *with* the id it belongs to, and staleness is derived
+  // rather than cleared by an effect: that avoids a setState-in-effect reset
+  // and, more importantly, makes it impossible to show one item's tracks under
+  // another item while a fetch is in flight.
+  const [loadedTracks, setLoadedTracks] = useState<{ itemId: string; tracks: Track[] } | null>(null);
 
   // Hold a ref to the realtime channel so we can unsubscribe on cleanup or close
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -69,6 +76,10 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     };
   }, []);
   const primaryService = user?.primary_service ?? null;
+  const itemId = item?.id;
+  const itemType = item?.type;
+  // Only treat the loaded payload as this item's when the ids agree.
+  const tracks = loadedTracks && loadedTracks.itemId === itemId ? loadedTracks.tracks : EMPTY_TRACKS;
   const totalTracks = item?.tracks_count ?? tracks.length;
   const alreadyInLibrary = item?.conversion_status === 'done';
   const appleMusicHasDirectPlaylistUrl = primaryService === 'apple_music' && !!createdPlaylistUrl;
@@ -108,13 +119,8 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   // realtime update and hands down a fresh object each time, which would
   // re-run this effect, cancel the in-flight request, and restart it — leaving
   // the list permanently empty if the churn outpaces the fetch.
-  const itemId = item?.id;
-  const itemType = item?.type;
   useEffect(() => {
-    if (!visible || !itemId || itemType !== 'playlist') {
-      setTracks([]);
-      return;
-    }
+    if (!visible || !itemId || itemType !== 'playlist') return;
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase
@@ -127,7 +133,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
         console.error(`[PlaylistModal] track fetch failed for ${itemId}: ${error.message}`);
         return;
       }
-      setTracks((data?.tracks as Track[] | null) ?? []);
+      setLoadedTracks({ itemId, tracks: (data?.tracks as Track[] | null) ?? [] });
     })();
     return () => { cancelled = true; };
   }, [visible, itemId, itemType]);
