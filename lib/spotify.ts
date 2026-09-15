@@ -66,6 +66,11 @@ export async function connectSpotify(userId: string): Promise<boolean> {
       path: 'callback',
     });
 
+    // Spotify matches this byte-for-byte against the dashboard entry, and
+    // `makeRedirectUri` can differ between a dev client and a release build.
+    // Log it so a mismatch is diagnosable without guessing.
+    if (__DEV__) console.log('[Spotify] redirectUri:', redirectUri);
+
     // AuthRequest handles PKCE code_verifier/code_challenge generation
     const request = new AuthSession.AuthRequest({
       clientId: CLIENT_ID,

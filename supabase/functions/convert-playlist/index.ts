@@ -242,6 +242,39 @@ function pickBest(
   return best && best.score >= minScore ? best.id : null;
 }
 
+/**
+ * Classify a failed search response.
+ *
+ * Search failures used to be swallowed into "no results", which meant an expired
+ * token or a revoked scope surfaced to the user as "No tracks could be matched
+ * on the destination service" — pointing at the matching logic instead of at
+ * auth. Auth and quota failures affect every track, so they throw and abort the
+ * run; genuinely transient per-request failures are logged and treated as a miss.
+ */
+async function throwIfSearchUnauthorized(service: string, res: Response): Promise<void> {
+  if (res.ok) return;
+
+  let body = '';
+  try {
+    body = await res.clone().text();
+  } catch {
+    // Body already consumed or unreadable — status alone is enough to classify.
+  }
+
+  if (res.status === 401) throw new Error(`${service}_auth_failed`);
+  if (res.status === 403) {
+    // YouTube reports quota exhaustion as 403, not 429.
+    if (/quotaExceeded|dailyLimitExceeded/i.test(body)) {
+      throw new Error(`${service}_quota_exceeded`);
+    }
+    throw new Error(`${service}_permission_denied`);
+  }
+
+  console.error(
+    `[convert-playlist] ${service} search failed: ${res.status} ${body.slice(0, 200)}`,
+  );
+}
+
 async function searchSpotify(token: string, title: string, artist: string): Promise<string | null> {
   const t = cleanTitle(title);
   // Use only the primary artist (strip feat. / comma-separated collaborators)
@@ -265,6 +298,7 @@ async function searchSpotify(token: string, title: string, artist: string): Prom
         retries++;
         continue;
       }
+      await throwIfSearchUnauthorized('spotify', res);
       if (!res.ok) return [];
       const data = await res.json();
       return data.tracks?.items ?? [];
@@ -300,6 +334,7 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
     `https://www.googleapis.com/youtube/v3/search?q=${q}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
+  await throwIfSearchUnauthorized('youtube', res);
   if (!res.ok) return null;
 
   const data = await res.json();
@@ -347,6 +382,7 @@ async function searchAppleMusic(
       },
     },
   );
+  await throwIfSearchUnauthorized('apple_music', res);
   if (!res.ok) return null;
 
   const data = await res.json() as {
@@ -737,7 +773,14 @@ serve(async (req) => {
       .from('shared_items')
       .update({ conversion_status: 'failed' })
       .eq('id', sharedItemId);
-    const status = msg === 'spotify_rate_limit_exceeded' ? 429 : 500;
+    // Auth/scope failures are the user's to fix (reconnect); quota is transient.
+    // Anything else is a genuine server fault.
+    const status = msg === 'spotify_rate_limit_exceeded' || msg.endsWith('_quota_exceeded')
+      ? 429
+      : msg.endsWith('_auth_failed') || msg.endsWith('_permission_denied')
+        ? 401
+        : 500;
+    console.error(`[convert-playlist] conversion aborted: ${msg}`);
     return json({ error: msg }, status);
   }
 

@@ -251,6 +251,11 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     if (failureReason === 'spotify_token_refresh_failed') return 'Spotify session expired. Reconnect in Profile.';
     if (failureReason === 'not_connected') return `Not connected to ${serviceName(primaryService)}. Go to Profile.`;
     if (failureReason === 'spotify_permission_denied') return 'Missing Spotify permission. Disconnect and reconnect Spotify.';
+    // Auth/scope/quota failures during track search. These abort the whole run,
+    // so they must not be reported as "no tracks matched" — see gotchas.md.
+    if (failureReason?.endsWith('_auth_failed')) return `${serviceName(primaryService)} session expired. Reconnect in Profile.`;
+    if (failureReason?.endsWith('_permission_denied')) return `Missing ${serviceName(primaryService)} permission. Disconnect and reconnect in Profile.`;
+    if (failureReason?.endsWith('_quota_exceeded')) return `${serviceName(primaryService)}'s daily quota is exhausted. Try again tomorrow.`;
     if (failureReason === 'tracks_not_added') return `Playlist created but no tracks added. Try reconnecting ${serviceName(primaryService)}.`;
     if (failureReason === 'playlist_creation_failed') return `Playlist couldn't be created on ${serviceName(primaryService)}.`;
     if (failureReason) return `Conversion failed: ${failureReason}`;
