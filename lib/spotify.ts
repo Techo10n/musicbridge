@@ -53,6 +53,27 @@ async function clearSpotifyReconnectRequired(): Promise<void> {
   await AsyncStorage.removeItem(SPOTIFY_RECONNECT_REQUIRED_KEY);
 }
 
+/**
+ * Log a failed Spotify response.
+ *
+ * These call sites all degrade to an empty result on failure, which is fine for
+ * rendering but hides *why*. A 401 (dead token), 403 (the app owner's Premium
+ * lapsed, which disables the Web API for apps in Development Mode) and a 404
+ * (wrong path) are indistinguishable from "this playlist is genuinely empty"
+ * unless the status is surfaced. Logging only — control flow is unchanged.
+ */
+async function logSpotifyError(label: string, res: Response): Promise<void> {
+  if (res.ok) return;
+
+  let body = '';
+  try {
+    body = await res.clone().text();
+  } catch {
+    // Unreadable body; the status alone is still worth reporting.
+  }
+  console.error(`[Spotify ${label}] HTTP ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
+}
+
 // ─── OAuth ────────────────────────────────────────────────────────────────────
 
 /**
@@ -168,7 +189,12 @@ async function fetchOrRefreshSpotifyToken(userId: string): Promise<string | null
     .eq('id', userId)
     .single();
 
-  if (error || !data?.spotify_access_token) return null;
+  if (error || !data?.spotify_access_token) {
+    console.error(
+      `[Spotify token] no usable access token for ${userId}: ${error ? `query error ${error.message}` : 'spotify_access_token is empty (account not connected)'}`,
+    );
+    return null;
+  }
 
   // Return existing token if it won't expire within the next 60 seconds
   if (data.spotify_token_expiry) {
@@ -180,7 +206,10 @@ async function fetchOrRefreshSpotifyToken(userId: string): Promise<string | null
   }
 
   // Attempt to refresh
-  if (!data.spotify_refresh_token) return null;
+  if (!data.spotify_refresh_token) {
+    console.error('[Spotify token] access token expired and no refresh token is stored — reconnect required.');
+    return null;
+  }
 
   try {
     const body = new URLSearchParams({
@@ -454,6 +483,7 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
   while (url) {
     try {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      await logSpotifyError('getUserPlaylists', res);
       if (!res.ok) break;
       const data = await res.json() as {
         next: string | null;
@@ -488,7 +518,10 @@ export async function getUserPlaylists(userId: string): Promise<LibraryPlaylist[
  */
 export async function getPlaylistTracks(userId: string, playlistId: string, maxTracks?: number): Promise<LibraryTrack[]> {
   const accessToken = await getSpotifyAccessToken(userId);
-  if (!accessToken) return [];
+  if (!accessToken) {
+    console.error('[Spotify getPlaylistTracks] aborted — no access token. Returning an empty list.');
+    return [];
+  }
 
   const tracks: LibraryTrack[] = [];
   let url: string | null =
@@ -497,11 +530,20 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
   while (url) {
     try {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      await logSpotifyError('getPlaylistTracks', res);
       if (!res.ok) break;
       const data = await res.json() as {
         next: string | null;
         items: { track: SpotifyTrack | null }[];
       };
+      // Diagnostic: a 200 response whose entries do not expose `.track` would
+      // silently yield an empty playlist. Report the actual shape instead.
+      if (data.items?.length && !data.items.some((i) => i?.track)) {
+        console.error(
+          `[Spotify getPlaylistTracks] ${data.items.length} items returned but none had .track — keys: ${Object.keys(data.items[0] ?? {}).join(', ')}`,
+        );
+      }
+
       for (const item of data.items) {
         if (!item.track) continue;
         tracks.push({
@@ -515,7 +557,8 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
       }
       if (maxTracks !== undefined && tracks.length >= maxTracks) break;
       url = data.next;
-    } catch {
+    } catch (err) {
+      console.error('[Spotify getPlaylistTracks] threw mid-pagination:', err);
       break;
     }
   }
@@ -542,6 +585,7 @@ export async function getSavedTracksCount(userId: string): Promise<number> {
         retries++;
         continue;
       }
+      await logSpotifyError('getPlaylistTrackCount', res);
       if (!res.ok) return 0;
       const data = await res.json() as { total: number };
       return data.total ?? 0;
@@ -577,6 +621,7 @@ export async function streamSavedTracks(
       continue;
     }
 
+    await logSpotifyError('getSavedTracks', res);
     if (!res.ok) break;
 
     let data: { next: string | null; items: { track: SpotifyTrack }[] };
@@ -614,6 +659,7 @@ export async function getFollowedArtists(userId: string): Promise<LibraryArtist[
     const res = await fetch('https://api.spotify.com/v1/me/following?type=artist&limit=50', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    await logSpotifyError('getFollowedArtists', res);
     if (!res.ok) return [];
     const data = await res.json() as {
       artists: {
@@ -650,6 +696,7 @@ export async function getTopTracks(
       `https://api.spotify.com/v1/me/top/tracks?limit=${limit}&time_range=${timeRange}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
+    await logSpotifyError('getTopTracks', res);
     if (!res.ok) return [];
     const data = await res.json() as { items: SpotifyTrack[] };
     return data.items.map((t) => ({
@@ -682,6 +729,7 @@ export async function getTopArtists(
       `https://api.spotify.com/v1/me/top/artists?limit=${limit}&time_range=${timeRange}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
+    await logSpotifyError('getTopArtists', res);
     if (!res.ok) return [];
     const data = await res.json() as { items: SpotifyArtist[] };
     return data.items.map((a) => ({
@@ -709,6 +757,7 @@ export async function getRecentlyPlayed(userId: string, limit = 20): Promise<Rec
       `https://api.spotify.com/v1/me/player/recently-played?limit=${limit}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
+    await logSpotifyError('getRecentTracks', res);
     if (!res.ok) return [];
     const data = await res.json() as {
       items: { track: SpotifyTrack; played_at: string }[];

@@ -144,6 +144,19 @@ export default function LibraryScreen() {
         Alert.alert('Sent!', `Shared "${pendingSongShare.title}" with ${friend.display_name}.`);
       } else if (pendingPlaylistShare) {
         const tracks = await getPlaylistTracks(pendingPlaylistShare.id);
+        // The track loaders degrade to an empty list on any failure — a dead
+        // token, a 403, a timeout. Sharing anyway writes a playlist whose
+        // `tracks` payload is permanently empty, and the recipient can never
+        // recover it because the share stores the tracks, not a live reference.
+        // Refuse instead: a failed share the sender can retry beats a silently
+        // broken one they never learn about.
+        if (tracks.length === 0) {
+          Alert.alert(
+            "Couldn't read that playlist",
+            `No tracks came back for "${pendingPlaylistShare.name}". Check that your music service is still connected in Profile, then try again.`,
+          );
+          return;
+        }
         const { data: insertedItem, error: dbError } = await supabase.from('shared_items').insert({
           sender_id: user.id,
           recipient_id: friend.id,

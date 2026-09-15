@@ -91,8 +91,15 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   }, [item, primaryService]);
 
   // Load the track payload for this item only while the modal is open.
+  //
+  // Keyed on primitives, never on `item` itself: the inbox refetches on every
+  // realtime update and hands down a fresh object each time, which would
+  // re-run this effect, cancel the in-flight request, and restart it — leaving
+  // the list permanently empty if the churn outpaces the fetch.
+  const itemId = item?.id;
+  const itemType = item?.type;
   useEffect(() => {
-    if (!visible || !item || item.type !== 'playlist') {
+    if (!visible || !itemId || itemType !== 'playlist') {
       setTracks([]);
       return;
     }
@@ -101,17 +108,17 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       const { data, error } = await supabase
         .from('shared_items')
         .select('tracks')
-        .eq('id', item.id)
+        .eq('id', itemId)
         .single();
       if (cancelled) return;
       if (error) {
-        console.error('[PlaylistModal] track fetch error:', error.message);
+        console.error(`[PlaylistModal] track fetch failed for ${itemId}: ${error.message}`);
         return;
       }
       setTracks((data?.tracks as Track[] | null) ?? []);
     })();
     return () => { cancelled = true; };
-  }, [visible, item]);
+  }, [visible, itemId, itemType]);
 
   if (!item) return null;
 
