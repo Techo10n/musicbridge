@@ -71,12 +71,14 @@ export interface SharedItem {
   apple_music_playlist_id: string | null;
   apple_music_playlist_url?: string | null;
   youtube_music_playlist_id: string | null;
-  // Playlist track list
-  tracks: Track[] | null;
+  // Playlist track list. Omitted by list queries — selecting it pulled every
+  // track blob in the inbox — so it is only present once a detail view loads it.
+  // Use `tracks_count` for counts; it is a generated column and always present.
+  tracks?: Track[] | null;
+  tracks_count: number | null;
   message: string | null;
   opened: boolean;
   conversion_status: 'idle' | 'processing' | 'done' | 'failed';
-  tracks_processed: number;
   created_at: string;
   // Joined sender profile
   sender?: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'>;

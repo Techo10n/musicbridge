@@ -17,7 +17,14 @@
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+/**
+ * The client this function actually builds. `ReturnType<typeof createClient>`
+ * resolves the *unparameterised* overload, whose generics do not match a client
+ * created with arguments — so every helper taking one failed to typecheck.
+ */
+type DbClient = SupabaseClient<any, 'public', any>;
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -112,7 +119,7 @@ function cleanTitle(title: string): string {
 // ─── Token management ─────────────────────────────────────────────────────────
 
 async function refreshSpotifyToken(
-  supabase: ReturnType<typeof createClient>,
+  supabase: DbClient,
   userId: string,
   refreshToken: string,
 ): Promise<string | null> {
@@ -142,7 +149,7 @@ async function refreshSpotifyToken(
 }
 
 async function refreshYouTubeToken(
-  supabase: ReturnType<typeof createClient>,
+  supabase: DbClient,
   userId: string,
   refreshToken: string,
 ): Promise<string | null> {
@@ -167,7 +174,7 @@ async function refreshYouTubeToken(
 }
 
 async function getSpotifyToken(
-  supabase: ReturnType<typeof createClient>,
+  supabase: DbClient,
   userId: string,
   user: Record<string, string | null>,
 ): Promise<string | null> {
@@ -181,7 +188,7 @@ async function getSpotifyToken(
 }
 
 async function getYouTubeToken(
-  supabase: ReturnType<typeof createClient>,
+  supabase: DbClient,
   userId: string,
   user: Record<string, string | null>,
 ): Promise<string | null> {
@@ -273,6 +280,38 @@ async function throwIfSearchUnauthorized(service: string, res: Response): Promis
   console.error(
     `[convert-playlist] ${service} search failed: ${res.status} ${body.slice(0, 200)}`,
   );
+}
+
+/**
+ * Write conversion progress to the narrow `conversion_progress` table.
+ *
+ * This deliberately does NOT touch `shared_items`: that row carries the whole
+ * `tracks` jsonb payload, so updating it per track rewrote and re-broadcast the
+ * entire payload N times per conversion (see migration 011). Progress writes are
+ * additionally throttled — the counter only needs to look smooth, and a 500-track
+ * playlist does not need 500 round trips.
+ */
+const PROGRESS_WRITE_INTERVAL_MS = 500;
+
+async function writeProgress(
+  supabase: DbClient,
+  sharedItemId: string,
+  status: string,
+  tracksProcessed: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from('conversion_progress')
+    .upsert(
+      {
+        shared_item_id: sharedItemId,
+        status,
+        tracks_processed: tracksProcessed,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'shared_item_id' },
+    );
+  // Progress is cosmetic — never fail a conversion because the counter did not persist.
+  if (error) console.error(`[convert-playlist] progress write failed: ${error.message}`);
 }
 
 async function searchSpotify(token: string, title: string, artist: string): Promise<string | null> {
@@ -701,6 +740,7 @@ serve(async (req) => {
   // Apple developer token missing is a server-side misconfiguration — not a client-fixable issue
   if (primaryService === 'apple_music' && !appleDeveloperToken) {
     console.error('[convert-playlist] Apple developer token unavailable — APPLE_TEAM_ID / APPLE_KEY_ID / APPLE_PRIVATE_KEY not set');
+    await writeProgress(supabase, sharedItemId, 'failed', 0);
     await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     return json({ error: 'server_misconfigured' }, 500);
   }
@@ -713,6 +753,7 @@ serve(async (req) => {
         : !!recipient.apple_music_user_token;
     const errMsg = hasToken ? `${primaryService}_token_unavailable` : 'not_connected';
     console.error(`[convert-playlist] No access token for ${primaryService}. hasToken=${hasToken}, errMsg=${errMsg}`);
+    await writeProgress(supabase, sharedItemId, 'failed', 0);
     await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     return json({ error: errMsg }, 400);
   }
@@ -721,10 +762,13 @@ serve(async (req) => {
     storefront = await getAppleMusicStorefront(appleDeveloperToken as string, accessToken);
   }
 
-  // Mark as processing so the client's realtime subscription fires immediately
+  // Mark as processing so the client's realtime subscription fires immediately.
+  // Status also lands on shared_items so the inbox list can show library state,
+  // but that is at most twice per conversion rather than once per track.
+  await writeProgress(supabase, sharedItemId, 'processing', 0);
   await supabase
     .from('shared_items')
-    .update({ conversion_status: 'processing', tracks_processed: 0 })
+    .update({ conversion_status: 'processing' })
     .eq('id', sharedItemId);
 
   // ── Resolve track IDs ──────────────────────────────────────────────────────
@@ -738,6 +782,7 @@ serve(async (req) => {
   }>;
 
   const resolvedIds: string[] = [];
+  let lastProgressWrite = 0;
 
   try {
     for (let i = 0; i < tracks.length; i++) {
@@ -761,11 +806,13 @@ serve(async (req) => {
 
       if (id) resolvedIds.push(id);
 
-      // Update progress after every track so the client sees a smooth counter
-      await supabase
-        .from('shared_items')
-        .update({ tracks_processed: i + 1 })
-        .eq('id', sharedItemId);
+      // Keep the counter smooth without a write per track. Always flush the
+      // final track so the client never sticks below the total.
+      const now = Date.now();
+      if (i === tracks.length - 1 || now - lastProgressWrite >= PROGRESS_WRITE_INTERVAL_MS) {
+        lastProgressWrite = now;
+        await writeProgress(supabase, sharedItemId, 'processing', i + 1);
+      }
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'unknown';
@@ -773,6 +820,7 @@ serve(async (req) => {
       .from('shared_items')
       .update({ conversion_status: 'failed' })
       .eq('id', sharedItemId);
+    await writeProgress(supabase, sharedItemId, 'failed', 0);
     // Auth/scope failures are the user's to fix (reconnect); quota is transient.
     // Anything else is a genuine server fault.
     const status = msg === 'spotify_rate_limit_exceeded' || msg.endsWith('_quota_exceeded')
@@ -789,6 +837,7 @@ serve(async (req) => {
       .from('shared_items')
       .update({ conversion_status: 'failed' })
       .eq('id', sharedItemId);
+    await writeProgress(supabase, sharedItemId, 'failed', 0);
     return json({ error: 'No tracks could be matched on the destination service' }, 422);
   }
 
@@ -830,6 +879,7 @@ serve(async (req) => {
 
   if (!playlistId) {
     console.error(`[convert-playlist] Playlist creation returned null for service=${primaryService}`);
+    await writeProgress(supabase, sharedItemId, 'failed', 0);
     await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     return json({ error: 'playlist_creation_failed' }, 500);
   }
@@ -842,6 +892,7 @@ serve(async (req) => {
     if (primaryService === 'spotify') await deleteSpotifyPlaylist(accessToken, playlistId);
     else if (primaryService === 'youtube_music') await deleteYouTubePlaylist(accessToken, playlistId);
 
+    await writeProgress(supabase, sharedItemId, 'failed', 0);
     await supabase.from('shared_items').update({ conversion_status: 'failed' }).eq('id', sharedItemId);
     // 403 means the token is missing playlist-modify-private scope — give a specific error.
     const errorCode = addError?.startsWith('403') ? 'spotify_permission_denied' : 'tracks_not_added';
@@ -859,6 +910,7 @@ serve(async (req) => {
   }
 
   await supabase.from('shared_items').update(playlistUpdate).eq('id', sharedItemId);
+  await writeProgress(supabase, sharedItemId, 'done', tracks.length);
 
   return json({ playlistId, playlistUrl, matchedTracks: tracksAdded, totalTracks: tracks.length });
 });

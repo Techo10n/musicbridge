@@ -21,7 +21,8 @@ function timeAgo(dateString: string): string {
 
 export function PlaylistCard({ item, onPress }: PlaylistCardProps) {
   const isUnread = !item.opened;
-  const trackCount = item.tracks?.length ?? 0;
+  // From the generated tracks_count column — the list query does not fetch `tracks`.
+  const trackCount = item.tracks_count ?? 0;
 
   return (
     <TouchableOpacity

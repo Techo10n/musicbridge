@@ -14,9 +14,14 @@ export function useSharedItems() {
     if (!session?.user.id) return;
 
     try {
+      // Explicitly exclude `tracks`: the list only needs a count, and selecting
+      // the jsonb pulled every track blob in the inbox on every refetch.
+      // PlaylistModal loads the full array for the one item it opens.
+      // Keep the select string a single literal — supabase-js derives the row
+      // type from it, and concatenation collapses that to GenericStringError.
       const { data, error } = await supabase
         .from('shared_items')
-        .select('*')
+        .select('id, sender_id, recipient_id, type, title, artist, cover_image_url, spotify_id, apple_music_id, youtube_music_id, spotify_playlist_id, apple_music_playlist_id, apple_music_playlist_url, youtube_music_playlist_id, tracks_count, message, opened, conversion_status, created_at')
         .eq('recipient_id', session.user.id)
         .order('created_at', { ascending: false });
 

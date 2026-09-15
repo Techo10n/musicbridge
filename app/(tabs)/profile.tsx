@@ -82,9 +82,11 @@ export default function Profile() {
     setLoadingPublic(true);
     void (async () => {
       try {
+        // Same rule as the inbox query: never pull `tracks` for a list view.
+        // Must stay one string literal for supabase-js row typing.
         const { data } = await supabase
           .from('shared_items')
-          .select('*')
+          .select('id, sender_id, recipient_id, type, title, artist, cover_image_url, spotify_id, apple_music_id, youtube_music_id, spotify_playlist_id, apple_music_playlist_id, apple_music_playlist_url, youtube_music_playlist_id, tracks_count, message, opened, conversion_status, created_at')
           .eq('sender_id', user.id)
           .order('created_at', { ascending: false })
           .limit(20);

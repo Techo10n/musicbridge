@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { SharedItem } from '../types';
+import { SharedItem, Track } from '../types';
 import { serviceName } from './ServiceBadge';
 import { useAuth } from '../hooks/useAuth';
 import * as AppleMusic from '../lib/appleMusic';
@@ -39,6 +39,9 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const [failureReason, setFailureReason] = useState<string | null>(null);
   const [createdPlaylistId, setCreatedPlaylistId] = useState<string | null>(null);
   const [createdPlaylistUrl, setCreatedPlaylistUrl] = useState<string | null>(null);
+  // `tracks` is excluded from the inbox query (it is a large jsonb payload), so
+  // the detail view fetches it for the single item it is showing.
+  const [tracks, setTracks] = useState<Track[]>([]);
 
   // Hold a ref to the realtime channel so we can unsubscribe on cleanup or close
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -54,7 +57,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     };
   }, []);
   const primaryService = user?.primary_service ?? null;
-  const totalTracks = item?.tracks?.length ?? 0;
+  const totalTracks = item?.tracks_count ?? tracks.length;
   const alreadyInLibrary = item?.conversion_status === 'done';
   const appleMusicHasDirectPlaylistUrl = primaryService === 'apple_music' && !!createdPlaylistUrl;
 
@@ -65,7 +68,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
     if (item.conversion_status === 'done' && !isFreshConversion) {
       setConversionState('idle');
-      setTracksProcessed(item.tracks_processed ?? item.tracks?.length ?? 0);
+      setTracksProcessed(item.tracks_count ?? 0);
       setFailureReason(null);
       setCreatedPlaylistId(
         primaryService === 'spotify'
@@ -80,12 +83,35 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
     if (!isFreshConversion && item.conversion_status !== 'done') {
       setConversionState('idle');
-      setTracksProcessed(item.tracks_processed ?? 0);
+      setTracksProcessed(0);
       setFailureReason(null);
       setCreatedPlaylistId(null);
       setCreatedPlaylistUrl(null);
     }
   }, [item, primaryService]);
+
+  // Load the track payload for this item only while the modal is open.
+  useEffect(() => {
+    if (!visible || !item || item.type !== 'playlist') {
+      setTracks([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('shared_items')
+        .select('tracks')
+        .eq('id', item.id)
+        .single();
+      if (cancelled) return;
+      if (error) {
+        console.error('[PlaylistModal] track fetch error:', error.message);
+        return;
+      }
+      setTracks((data?.tracks as Track[] | null) ?? []);
+    })();
+    return () => { cancelled = true; };
+  }, [visible, item]);
 
   if (!item) return null;
 
@@ -146,16 +172,17 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   };
 
   const handleAddToService = async () => {
-    if (!user || !primaryService || !item.tracks?.length) return;
+    if (!user || !primaryService || !totalTracks) return;
 
     convertingItemIdRef.current = item.id;
     setConversionState('waiting');
     setTracksProcessed(0);
     setFailureReason(null);
 
-    // Subscribe to realtime updates on this specific shared_item row.
-    // The edge function writes progress (tracks_processed) and status
-    // (conversion_status) back to this row as it works.
+    // Subscribe to the narrow conversion_progress row rather than the shared_item
+    // itself — the latter carries the whole tracks jsonb, so broadcasting it on
+    // every progress tick was the bulk of the load (see migration 011).
+    // INSERT as well as UPDATE: the first write for an item is an upsert-insert.
     let succeededViaRealtime = false;
 
     const channel = supabase
@@ -163,18 +190,18 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
-          table: 'shared_items',
-          filter: `id=eq.${item.id}`,
+          table: 'conversion_progress',
+          filter: `shared_item_id=eq.${item.id}`,
         },
         (payload) => {
-          const row = payload.new as { conversion_status: string; tracks_processed: number };
+          const row = payload.new as { status: string; tracks_processed: number };
           setTracksProcessed(row.tracks_processed ?? 0);
 
-          if (row.conversion_status === 'processing') {
+          if (row.status === 'processing') {
             setConversionState('processing');
-          } else if (row.conversion_status === 'done') {
+          } else if (row.status === 'done') {
             succeededViaRealtime = true;
             setConversionState('done');
             supabase.removeChannel(channel);
@@ -344,7 +371,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
         {/* ── Track resolution list (during conversion) or plain track list ── */}
         <FlatList
-          data={item.tracks ?? []}
+          data={tracks}
           keyExtractor={(_, i) => String(i)}
           style={{ flex: 1 }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
