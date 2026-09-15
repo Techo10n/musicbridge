@@ -28,6 +28,10 @@ interface PlaylistModalProps {
 interface ConvertPlaylistResult {
   playlistId?: string;
   playlistUrl?: string | null;
+  /** How many tracks actually resolved on the destination service. */
+  matchedTracks?: number;
+  /** How many were attempted. */
+  totalTracks?: number;
   error?: string;
 }
 
@@ -39,6 +43,11 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const [failureReason, setFailureReason] = useState<string | null>(null);
   const [createdPlaylistId, setCreatedPlaylistId] = useState<string | null>(null);
   const [createdPlaylistUrl, setCreatedPlaylistUrl] = useState<string | null>(null);
+  // Tracks that actually resolved. This is NOT the progress counter: progress
+  // counts tracks *examined*, and a track that found no match on the
+  // destination service still advances it. Reporting progress as "matched"
+  // claimed 16/16 for a playlist that ended up with 10 songs.
+  const [matchedTracks, setMatchedTracks] = useState<number | null>(null);
   // `tracks` is excluded from the inbox query (it is a large jsonb payload), so
   // the detail view fetches it for the single item it is showing.
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -233,6 +242,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     if (fnData?.playlistId) {
       setCreatedPlaylistId(fnData.playlistId);
       setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
+      if (typeof fnData.matchedTracks === 'number') setMatchedTracks(fnData.matchedTracks);
     }
 
     // If the realtime event already marked it done, we're finished.
@@ -267,6 +277,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     } else if (fnData?.playlistId) {
       setCreatedPlaylistId(fnData.playlistId);
       setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
+      if (typeof fnData.matchedTracks === 'number') setMatchedTracks(fnData.matchedTracks);
       setConversionState('done');
     } else {
       convertingItemIdRef.current = null;
@@ -384,12 +395,15 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           ListEmptyComponent={<Text style={styles.emptyText}>No tracks in this playlist</Text>}
           renderItem={({ item: track, index }) => {
-            const status: 'matched' | 'active' | 'pending' | 'queued' =
+            // Only claim a per-track match when every track resolved; otherwise
+            // the service told us a total, not which tracks it was.
+            const allResolved = matchedTracks === null || matchedTracks >= totalTracks;
+            const status: 'matched' | 'checked' | 'active' | 'pending' | 'queued' =
               isConverting
-                ? index < tracksProcessed ? 'matched'
+                ? index < tracksProcessed ? 'checked'
                 : index === tracksProcessed ? 'active'
                 : 'queued'
-              : conversionState === 'done' ? 'matched' : 'pending';
+              : conversionState === 'done' && allResolved ? 'matched' : 'pending';
             return (
               <View style={styles.trackRow}>
                 <Text style={styles.trackNum}>{String(index + 1).padStart(2, '0')}</Text>
@@ -421,7 +435,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
               <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.primaryInk} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.doneTitle}>Already in your library</Text>
-                <Text style={styles.doneSub}>{serviceName(primaryService)} · {tracksProcessed} tracks</Text>
+                <Text style={styles.doneSub}>{serviceName(primaryService)} · {matchedTracks ?? tracksProcessed} tracks</Text>
               </View>
               {createdPlaylistId && (
                 <TouchableOpacity style={styles.openSvcBtn} onPress={openCreatedPlaylist} activeOpacity={0.85}>
@@ -444,7 +458,9 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
               <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.primaryInk} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.doneTitle}>Added to {serviceName(primaryService)}!</Text>
-                <Text style={styles.doneSub}>{tracksProcessed} of {totalTracks} tracks matched</Text>
+                <Text style={styles.doneSub}>
+                  {matchedTracks ?? tracksProcessed} of {totalTracks} tracks matched
+                </Text>
               </View>
               {createdPlaylistId && (
                 <TouchableOpacity style={styles.openSvcBtn} onPress={openCreatedPlaylist} activeOpacity={0.85}>
@@ -472,7 +488,13 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 }
 
 // ─── Track status badge ───────────────────────────────────────────────────────
-function TrackStatusBadge({ status }: { status: 'matched' | 'active' | 'pending' | 'queued' }) {
+function TrackStatusBadge({ status }: { status: 'matched' | 'checked' | 'active' | 'pending' | 'queued' }) {
+  // "Checked" means searched, outcome not yet known. The conversion reports how
+  // many tracks it has examined, not which ones resolved, so claiming "Matched"
+  // per track while it runs asserts something we cannot know yet.
+  if (status === 'checked') {
+    return <Text style={tsBadge.queued}>Checked</Text>;
+  }
   if (status === 'matched') {
     return (
       <View style={tsBadge.matched}>
