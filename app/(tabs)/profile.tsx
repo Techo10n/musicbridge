@@ -532,7 +532,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center',
   },
   initials: { fontSize: 28, fontWeight: '700', color: colors.fg },
-  avatarOverlay: { ...StyleSheet.absoluteFillObject, borderRadius: 48, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
+  avatarOverlay: { ...StyleSheet.absoluteFill, borderRadius: 48, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
   avatarEditBadge: {
     position: 'absolute', right: 2, bottom: 2,
     width: 22, height: 22, borderRadius: 11,

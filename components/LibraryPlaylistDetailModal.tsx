@@ -560,7 +560,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   pickerOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.65)',
     justifyContent: 'flex-end',
   },

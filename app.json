@@ -10,14 +10,9 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
-      "buildNumber": "12",
+      "buildNumber": "14",
       "bundleIdentifier": "com.techolon.musicbridge",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -61,6 +56,17 @@
           "icon": "./assets/android-icon-monochrome.png",
           "color": "#ffffff",
           "sounds": []
+        }
+      ],
+      "expo-status-bar",
+      "expo-image",
+      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
         }
       ]
     ],

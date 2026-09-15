@@ -403,7 +403,7 @@ export default function Settings() {
       {/* ── Edit Profile modal ── */}
       {editVisible && (
         <View style={styles.editOverlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={() => setEditVisible(false)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setEditVisible(false)} />
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.editSheetWrap}
@@ -509,7 +509,7 @@ const styles = StyleSheet.create({
   settingValue: { fontSize: 13, color: colors.fg3, maxWidth: 140 },
 
   // Edit modal
-  editOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 100, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
+  editOverlay: { ...StyleSheet.absoluteFill, zIndex: 100, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
   editSheetWrap: { justifyContent: 'flex-end' },
   editSheet: {
     backgroundColor: colors.bgElev,

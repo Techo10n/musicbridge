@@ -336,7 +336,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.6)',
   },
   sheet: {
