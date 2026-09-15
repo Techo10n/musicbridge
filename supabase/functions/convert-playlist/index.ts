@@ -360,45 +360,97 @@ async function searchSpotify(token: string, title: string, artist: string): Prom
   return pickBest(titleItems, title, artist, 0.55);
 }
 
+/** Strip the " - Topic" suffix to get the channel's artist name. */
+function topicChannelArtist(channelTitle: string): string {
+  return channelTitle.replace(/\s*-\s*Topic$/i, '').trim();
+}
+
+/** Is this result on an "Artist - Topic" channel? */
+function isTopicChannel(channelTitle: string | undefined): boolean {
+  const ch = channelTitle?.toLowerCase() ?? '';
+  return ch.endsWith(' - topic') || ch === 'topic';
+}
+
+interface YouTubeSearchItem {
+  id: { videoId: string };
+  snippet: { title: string; channelTitle: string };
+}
+
+/**
+ * Resolve a track to a YouTube Music "Song".
+ *
+ * The Topic-channel rule is deliberate and stays: only "Artist - Topic" uploads
+ * render as Songs, and anything else appears in the library as a widescreen
+ * video — see decisions.md "Never add non-Topic videos to YouTube Music". The
+ * way to match more tracks without lowering that bar is to look harder for a
+ * Topic result, not to accept non-Topic ones.
+ *
+ * Two levers, in order of cost:
+ *  - `maxResults` is free. A YouTube search costs 100 quota units whether it
+ *    returns 5 results or 50, and the previous limit of 10 meant a Topic upload
+ *    ranked 11th simply did not exist. This is the single biggest win.
+ *  - A second query only when the first finds no Topic candidate at all, so the
+ *    common case still costs one search. Quota matters here (see decisions.md
+ *    "Bail on rate limits instead of waiting").
+ *
+ * Scoring now corroborates the artist against the Topic channel name, which is
+ * exactly "<artist> - Topic". That makes the wider search *safer* than the old
+ * narrow one: previously a candidate was picked on title words alone.
+ */
 async function searchYouTube(token: string, title: string, artist: string): Promise<string | null> {
   const t = cleanTitle(title);
-  const a = cleanArtistName(artist);
-  const primaryArtist = a.split(',')[0].trim();
-  const q = encodeURIComponent(`${t} ${primaryArtist}`);
-
-  // videoCategoryId=10 (Music) is enough; topicId uses deprecated Freebase IDs
-  // that return 403s under load — same fix already applied to the client's
-  // lib/youtubeMusic.ts searchTrack.
-  const res = await fetch(
-    `https://www.googleapis.com/youtube/v3/search?q=${q}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10`,
-    { headers: { Authorization: `Bearer ${token}` } },
+  // Match searchSpotify's splitting: collaborators make a query too specific.
+  const primaryArtist = cleanArtistName(
+    artist.split(/[,&]|\bfeat\b|\bft\b/i)[0].trim(),
   );
-  await throwIfSearchUnauthorized('youtube', res);
-  if (!res.ok) return null;
 
-  const data = await res.json();
-  const items: Array<{ id: { videoId: string }; snippet: { title: string; channelTitle: string } }> =
-    data.items ?? [];
+  const runQuery = async (query: string): Promise<YouTubeSearchItem[]> => {
+    const q = encodeURIComponent(query);
+    // videoCategoryId=10 (Music); topicId uses deprecated Freebase IDs that
+    // return 403s under load.
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?q=${q}&type=video&part=snippet,id&maxResults=50&videoCategoryId=10`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    await throwIfSearchUnauthorized('youtube', res);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.items ?? []) as YouTubeSearchItem[];
+  };
 
-  // Only "Artist - Topic" channels render as Songs in YouTube Music — see
-  // decisions.md "Never add non-Topic videos to YouTube Music". Anything else
-  // (VEVO, user uploads, lyric videos) shows up in the library as a
-  // wrong-looking video, so a missing song beats a wrong one: no items[0]
-  // fallback, mirroring the client's strict searchTrack behavior.
-  const topicItems = items.filter((i) => {
-    const ch = i.snippet.channelTitle?.toLowerCase() ?? '';
-    return ch.endsWith(' - topic') || ch === 'topic';
-  });
-  if (topicItems.length === 0) return null;
+  /**
+   * Best Topic candidate, or null. Title words must overlap at all — a
+   * zero-title-score match is rejected outright even from a Topic channel (see
+   * decisions.md "Reject zero-title-score matches"). Beyond that, rank by title
+   * match plus artist agreement with the channel name.
+   */
+  const pickTopic = (items: YouTubeSearchItem[]): string | null => {
+    const scored = items
+      .filter((i) => i?.id?.videoId && isTopicChannel(i.snippet?.channelTitle))
+      .map((i) => {
+        const titleScore = wordCoverage(t, i.snippet.title);
+        const artistScore = primaryArtist
+          ? wordCoverage(primaryArtist, topicChannelArtist(i.snippet.channelTitle))
+          : 0;
+        return { id: i.id.videoId, titleScore, artistScore };
+      })
+      .filter((c) => c.titleScore > 0)
+      // Weight the title but let a confirmed artist break ties between
+      // covers, live versions and the canonical upload.
+      .sort((a, b) => (b.titleScore * 2 + b.artistScore) - (a.titleScore * 2 + a.artistScore));
 
-  const best = topicItems.reduce((bestSoFar, candidate) =>
-    wordCoverage(t, candidate.snippet.title) > wordCoverage(t, bestSoFar.snippet.title)
-      ? candidate
-      : bestSoFar,
-  );
-  // Reject a zero-title-score match even from a Topic channel — same rule as
-  // the client (see decisions.md "Reject zero-title-score matches").
-  return wordCoverage(t, best.snippet.title) > 0 ? best.id.videoId : null;
+    return scored[0]?.id ?? null;
+  };
+
+  const direct = pickTopic(await runQuery(`${t} ${primaryArtist}`));
+  if (direct) return direct;
+
+  // Nothing usable. Retry on the title alone: when an artist name is spelled
+  // differently on the Topic channel than in the source playlist, including it
+  // suppresses the very result we want. The artist still has to corroborate
+  // through the channel name in pickTopic, so this widens recall without
+  // loosening the quality bar.
+  return pickTopic(await runQuery(t));
 }
 
 async function searchAppleMusic(
@@ -782,6 +834,9 @@ serve(async (req) => {
   }>;
 
   const resolvedIds: string[] = [];
+  // Tracks the destination service had nothing for. Reported back so the user
+  // sees *which* songs are missing rather than only how many.
+  const unmatched: { title: string; artist: string }[] = [];
   let lastProgressWrite = 0;
 
   try {
@@ -805,6 +860,7 @@ serve(async (req) => {
       }
 
       if (id) resolvedIds.push(id);
+      else unmatched.push({ title: track.title, artist: track.artist });
 
       // Keep the counter smooth without a write per track. Always flush the
       // final track so the client never sticks below the total.
@@ -912,5 +968,11 @@ serve(async (req) => {
   await supabase.from('shared_items').update(playlistUpdate).eq('id', sharedItemId);
   await writeProgress(supabase, sharedItemId, 'done', tracks.length);
 
-  return json({ playlistId, playlistUrl, matchedTracks: tracksAdded, totalTracks: tracks.length });
+  return json({
+    playlistId,
+    playlistUrl,
+    matchedTracks: tracksAdded,
+    totalTracks: tracks.length,
+    unmatchedTracks: unmatched,
+  });
 });

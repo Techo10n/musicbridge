@@ -32,6 +32,8 @@ interface ConvertPlaylistResult {
   matchedTracks?: number;
   /** How many were attempted. */
   totalTracks?: number;
+  /** The tracks with no match on the destination service. */
+  unmatchedTracks?: { title: string; artist: string }[];
   error?: string;
 }
 
@@ -48,6 +50,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   // destination service still advances it. Reporting progress as "matched"
   // claimed 16/16 for a playlist that ended up with 10 songs.
   const [matchedTracks, setMatchedTracks] = useState<number | null>(null);
+  const [unmatchedTracks, setUnmatchedTracks] = useState<{ title: string; artist: string }[]>([]);
   // `tracks` is excluded from the inbox query (it is a large jsonb payload), so
   // the detail view fetches it for the single item it is showing.
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -243,6 +246,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       setCreatedPlaylistId(fnData.playlistId);
       setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
       if (typeof fnData.matchedTracks === 'number') setMatchedTracks(fnData.matchedTracks);
+      if (fnData.unmatchedTracks) setUnmatchedTracks(fnData.unmatchedTracks);
     }
 
     // If the realtime event already marked it done, we're finished.
@@ -278,6 +282,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       setCreatedPlaylistId(fnData.playlistId);
       setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
       if (typeof fnData.matchedTracks === 'number') setMatchedTracks(fnData.matchedTracks);
+      if (fnData.unmatchedTracks) setUnmatchedTracks(fnData.unmatchedTracks);
       setConversionState('done');
     } else {
       convertingItemIdRef.current = null;
@@ -461,6 +466,18 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
                 <Text style={styles.doneSub}>
                   {matchedTracks ?? tracksProcessed} of {totalTracks} tracks matched
                 </Text>
+                {unmatchedTracks.length > 0 && (
+                  <View style={styles.missedBox}>
+                    <Text style={styles.missedTitle}>
+                      Couldn&apos;t find {unmatchedTracks.length} on {serviceName(primaryService)}
+                    </Text>
+                    {unmatchedTracks.map((t, i) => (
+                      <Text key={`${t.title}-${i}`} style={styles.missedRow} numberOfLines={1}>
+                        {t.title}{t.artist ? ` · ${t.artist}` : ''}
+                      </Text>
+                    ))}
+                  </View>
+                )}
               </View>
               {createdPlaylistId && (
                 <TouchableOpacity style={styles.openSvcBtn} onPress={openCreatedPlaylist} activeOpacity={0.85}>
@@ -617,6 +634,12 @@ const styles = StyleSheet.create({
   doneCheck: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   doneTitle: { fontSize: 15, fontWeight: '700', color: colors.fg, marginBottom: 2 },
   doneSub: { fontSize: 12, color: colors.fg3 },
+  missedBox: {
+    marginTop: 10, alignSelf: 'stretch', gap: 2,
+    backgroundColor: colors.bgCard, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10,
+  },
+  missedTitle: { fontSize: 11, fontWeight: '600', color: colors.fg2, marginBottom: 2 },
+  missedRow: { fontSize: 11, color: colors.fg3 },
   openSvcBtn: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 14 },
   openSvcBtnText: { color: colors.primaryInk, fontSize: 13, fontWeight: '700' },
 
