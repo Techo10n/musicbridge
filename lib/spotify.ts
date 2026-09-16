@@ -590,6 +590,10 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
           title: track.name,
           artist: (track.artists ?? []).map((a) => a.name).join(', '),
           coverUrl: track.album?.images?.[0]?.url ?? '',
+          // Free here — the playlist response already carries the full track
+          // object. Capturing it at share time is the only chance: the
+          // recipient holds no Spotify token to look it up later.
+          isrc: track.external_ids?.isrc ?? null,
           service: 'spotify',
         });
         if (maxTracks !== undefined && tracks.length >= maxTracks) break;

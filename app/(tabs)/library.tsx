@@ -37,6 +37,11 @@ function toTrackPayload(t: LibraryTrack): Track {
   return {
     title: t.title,
     artist: t.artist,
+    // Carried across the share because only the sender can obtain it — the
+    // recipient holds a token for their own service only. Lets a Spotify <->
+    // Apple Music conversion resolve by exact recording instead of guessing
+    // from title and artist.
+    isrc: t.isrc ?? null,
     spotify_id: t.service === 'spotify' ? t.id : null,
     apple_music_id: t.service === 'apple_music' ? t.id : null,
     // Only a video confirmed to come from an "Artist - Topic" channel is a

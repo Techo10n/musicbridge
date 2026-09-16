@@ -324,6 +324,66 @@ async function writeProgress(
   if (error) console.error(`[convert-playlist] progress write failed: ${error.message}`);
 }
 
+/**
+ * Exact-match a recording by ISRC.
+ *
+ * An ISRC identifies one specific recording, so this is identity rather than
+ * similarity: no title normalisation, no artist heuristics, no chance of a
+ * remix, a cover, or an impostor. Spotify and Apple Music both expose ISRCs and
+ * both allow searching by one, which makes conversion between those two exact.
+ *
+ * YouTube has no equivalent — the Data API exposes no ISRC — which is why the
+ * YouTube path still relies on scored search.
+ *
+ * Returns null when the ISRC is absent from the destination catalogue, and the
+ * caller falls back to searching.
+ */
+async function lookupByIsrc(
+  service: string,
+  isrc: string,
+  token: string,
+  appleDeveloperToken: string | null,
+  storefront: string,
+): Promise<string | null> {
+  try {
+    if (service === 'spotify') {
+      const res = await fetch(
+        `https://api.spotify.com/v1/search?q=${encodeURIComponent(`isrc:${isrc}`)}&type=track&limit=1`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      await throwIfSearchUnauthorized('spotify', res);
+      if (!res.ok) return null;
+      const data = await res.json() as { tracks?: { items?: { id: string }[] } };
+      return data.tracks?.items?.[0]?.id ?? null;
+    }
+
+    if (service === 'apple_music' && appleDeveloperToken) {
+      const res = await fetch(
+        `https://api.music.apple.com/v1/catalog/${storefront}/songs?filter[isrc]=${encodeURIComponent(isrc)}&limit=1`,
+        {
+          headers: {
+            Authorization: `Bearer ${appleDeveloperToken}`,
+            'Music-User-Token': token,
+          },
+        },
+      );
+      await throwIfSearchUnauthorized('apple_music', res);
+      if (!res.ok) return null;
+      const data = await res.json() as { data?: { id: string }[] };
+      return data.data?.[0]?.id ?? null;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    // Quota and auth failures must still propagate; a missing ISRC must not.
+    if (msg.endsWith('_quota_exceeded') || msg.endsWith('_auth_failed') ||
+        msg.endsWith('_permission_denied') || msg === 'spotify_rate_limit_exceeded') {
+      throw err;
+    }
+    console.error(`[convert-playlist] ISRC lookup failed for ${isrc} on ${service}:`, err);
+  }
+  return null;
+}
+
 async function searchSpotify(token: string, title: string, artist: string): Promise<string | null> {
   const t = cleanTitle(title);
   // Use only the primary artist (strip feat. / comma-separated collaborators)
@@ -940,6 +1000,7 @@ serve(async (req) => {
     spotify_id: string | null;
     apple_music_id: string | null;
     youtube_music_id: string | null;
+    isrc?: string | null;
   }>;
 
   const resolvedIds: string[] = [];
@@ -1013,21 +1074,36 @@ serve(async (req) => {
     let id: string | null = null;
 
     try {
-      if (cached) {
-        id = cached;
-      } else if (primaryService === 'spotify') {
-        id = track.spotify_id ?? await searchSpotify(accessToken, track.title, track.artist);
-      } else if (primaryService === 'youtube_music') {
-        id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
-      } else if (primaryService === 'apple_music' && appleDeveloperToken) {
-        id = track.apple_music_id
-          ?? await searchAppleMusic(
+      // Cheapest first, and each step is exact until the last one.
+      //   1. cache        — already resolved by someone, free
+      //   2. carried id   — the share already names this track on the
+      //                     destination service, free
+      //   3. ISRC         — one request, identifies the exact recording
+      //   4. search       — a guess, and the only step that can be wrong
+      id = cached
+        ?? (primaryService === 'spotify' ? track.spotify_id
+          : primaryService === 'youtube_music' ? track.youtube_music_id
+          : track.apple_music_id)
+        ?? null;
+
+      if (!id && track.isrc && (primaryService === 'spotify' || primaryService === 'apple_music')) {
+        id = await lookupByIsrc(primaryService, track.isrc, accessToken, appleDeveloperToken, storefront);
+      }
+
+      if (!id) {
+        if (primaryService === 'spotify') {
+          id = await searchSpotify(accessToken, track.title, track.artist);
+        } else if (primaryService === 'youtube_music') {
+          id = await searchYouTube(accessToken, track.title, track.artist);
+        } else if (primaryService === 'apple_music' && appleDeveloperToken) {
+          id = await searchAppleMusic(
             appleDeveloperToken,
             accessToken,
             storefront,
             track.title,
             track.artist,
           );
+        }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';

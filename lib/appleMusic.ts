@@ -504,7 +504,11 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
 
   try {
     const res = await fetch(
-      `${APPLE_MUSIC_API}/me/library/playlists/${playlistId}/tracks?limit=${Math.min(maxTracks ?? 100, 100)}`,
+      // `include=catalog` attaches the catalog equivalent of each library song,
+      // which is the only place Apple exposes an ISRC. Costs nothing extra —
+      // it is the same request — and an ISRC turns an Apple -> Spotify
+      // conversion into an exact lookup instead of a fuzzy search.
+      `${APPLE_MUSIC_API}/me/library/playlists/${playlistId}/tracks?limit=${Math.min(maxTracks ?? 100, 100)}&include=catalog`,
       { headers },
     );
     if (!res.ok) return [];
@@ -516,6 +520,7 @@ export async function getPlaylistTracks(userId: string, playlistId: string, maxT
       coverUrl: t.attributes.artwork
         ? resolveArtworkUrl(t.attributes.artwork.url, 150)
         : '',
+      isrc: t.relationships?.catalog?.data?.[0]?.attributes?.isrc ?? t.attributes.isrc ?? null,
       service: 'apple_music' as MusicService,
     }));
   } catch {

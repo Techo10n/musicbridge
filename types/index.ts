@@ -9,6 +9,17 @@ export interface Track {
   spotify_id: string | null;
   apple_music_id: string | null;
   youtube_music_id: string | null;
+  /**
+   * International Standard Recording Code — a globally unique id for this exact
+   * recording. Spotify and Apple Music both expose it and both allow looking a
+   * track up by it, so when it is present a conversion between those two is an
+   * exact identity lookup rather than a fuzzy title/artist search.
+   *
+   * Captured at share time, because the recipient only holds a token for their
+   * own service and cannot query the sender's to obtain it. Optional: older
+   * shares predate this field, and YouTube exposes no ISRC at all.
+   */
+  isrc?: string | null;
 }
 
 // ─── Favorite song stored on profile ─────────────────────────────────────────
@@ -100,6 +111,8 @@ export interface LibraryTrack {
   artist: string;
   coverUrl: string;
   service: MusicService;
+  /** ISRC when the source service reports one. See Track.isrc. */
+  isrc?: string | null;
   // YouTube Music only: whether `id` was confirmed to come from an
   // "Artist - Topic" channel — the only channel type YouTube Music renders
   // as a Song. Undefined for other services. A `false`/undefined value means
@@ -163,6 +176,8 @@ export interface SpotifyTrack {
   };
   uri: string;
   popularity?: number;
+  /** Present on full track objects (playlist items, search results). */
+  external_ids?: { isrc?: string };
 }
 
 export interface SpotifyArtist {
@@ -199,6 +214,16 @@ export interface AppleMusicTrack {
       height: number;
     };
     url: string;
+    /** Present on catalog resources; library resources do not carry it. */
+    isrc?: string;
+  };
+  /**
+   * Populated when a library resource is requested with `include=catalog`.
+   * Library songs expose no ISRC of their own, so the catalog equivalent is
+   * the only way to obtain one for an Apple Music -> Spotify conversion.
+   */
+  relationships?: {
+    catalog?: { data?: { attributes?: { isrc?: string } }[] };
   };
 }
 
