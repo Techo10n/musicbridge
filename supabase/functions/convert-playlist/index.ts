@@ -1124,6 +1124,15 @@ serve(async (req) => {
       .update({ conversion_status: 'failed' })
       .eq('id', sharedItemId);
     await writeProgress(supabase, sharedItemId, 'failed', 0);
+    // Distinguish "searched and found nothing" from "never got to search".
+    // When the daily quota is already spent the very first track trips it and
+    // every later one is skipped, which lands here with zero matches — and
+    // reporting that as "no tracks could be matched" is the same misleading
+    // message this function used to give for auth failures. It is retryable
+    // tomorrow, which is the one thing the user needs to know.
+    if (quotaExhausted) {
+      return json({ error: `${primaryService}_quota_exceeded`, quotaExhausted: true }, 429);
+    }
     return json({ error: 'No tracks could be matched on the destination service' }, 422);
   }
 
