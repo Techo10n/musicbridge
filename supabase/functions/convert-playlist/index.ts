@@ -400,6 +400,44 @@ function titleSimilarity(source: string, candidate: string): { recall: number; p
   return { recall: shared / a.size, precision: shared / b.size };
 }
 
+/**
+ * View counts for up to 50 video ids, in one call.
+ *
+ * `videos.list` costs 1 quota unit against `search.list`'s 100, so this is
+ * effectively free next to the search that produced the ids.
+ *
+ * Why it is needed: gates can tell a remix from an original, but they cannot
+ * tell the real upload from an AI-generated impostor carrying the same title on
+ * a same-named Topic channel, or from an obscure single edit. Those score
+ * identically on every textual signal. Popularity is what separates them, and
+ * it is the same thing that puts the canonical version at the top when you
+ * search in the YouTube Music app.
+ */
+async function fetchViewCounts(token: string, ids: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (ids.length === 0) return counts;
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${ids.slice(0, 50).join(',')}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) {
+      console.error(`[convert-playlist] videos.list failed: ${res.status}`);
+      return counts;
+    }
+    const data = await res.json() as {
+      items?: { id: string; statistics?: { viewCount?: string } }[];
+    };
+    for (const item of data.items ?? []) {
+      counts.set(item.id, Number(item.statistics?.viewCount ?? 0));
+    }
+  } catch (err) {
+    // Ranking degrades to textual scoring; never fail a conversion over this.
+    console.error('[convert-playlist] videos.list threw:', err);
+  }
+  return counts;
+}
+
 /** Strip the " - Topic" suffix to get the channel's artist name. */
 function topicChannelArtist(channelTitle: string): string {
   return channelTitle.replace(/\s*-\s*Topic$/i, '').trim();
@@ -474,8 +512,8 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
 
   const sourceIsVersioned = VERSION_MARKERS.test(t);
 
-  const pickTopic = (items: YouTubeSearchItem[]): string | null => {
-    const scored = items
+  const pickTopic = async (items: YouTubeSearchItem[]): Promise<string | null> => {
+    const eligible = items
       .filter((i) => i?.id?.videoId && isTopicChannel(i.snippet?.channelTitle))
       .map((i) => {
         const { recall, precision } = titleSimilarity(t, i.snippet.title);
@@ -493,15 +531,27 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
         c.recall >= MIN_TITLE_RECALL &&
         c.precision >= MIN_TITLE_PRECISION &&
         c.artistScore >= MIN_ARTIST_SCORE
-      )
-      // Among survivors prefer the plainest title (highest precision — fewest
-      // unexplained extra words), then the strongest artist agreement.
-      .sort((a, b) => (b.precision - a.precision) || (b.artistScore - a.artistScore));
+      );
 
-    return scored[0]?.id ?? null;
+    if (eligible.length === 0) return null;
+    if (eligible.length === 1) return eligible[0].id;
+
+    // Several candidates clear every textual gate — which is the normal case,
+    // and precisely where title scoring runs out of information. An AI-generated
+    // impostor and an obscure single edit both score 1.0 on title and artist,
+    // identically to the real upload. Popularity is the tiebreaker that matches
+    // what a person would pick: the canonical recording is the one with orders
+    // of magnitude more plays.
+    const views = await fetchViewCounts(token, eligible.map((c) => c.id));
+    return eligible
+      .sort((a, b) =>
+        ((views.get(b.id) ?? 0) - (views.get(a.id) ?? 0)) ||
+        (b.precision - a.precision) ||
+        (b.artistScore - a.artistScore)
+      )[0].id;
   };
 
-  const direct = pickTopic(await runQuery(`${t} ${primaryArtist}`));
+  const direct = await pickTopic(await runQuery(`${t} ${primaryArtist}`));
   if (direct) return direct;
 
   // Nothing usable. Retry on the title alone: when an artist name is spelled
@@ -509,7 +559,7 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
   // suppresses the very result we want. The artist still has to corroborate
   // through the channel name in pickTopic, so this widens recall without
   // loosening the quality bar.
-  return pickTopic(await runQuery(t));
+  return await pickTopic(await runQuery(t));
 }
 
 async function searchAppleMusic(
