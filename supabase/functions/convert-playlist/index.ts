@@ -223,6 +223,16 @@ function normForMatch(s: string): string {
     .trim();
 }
 
+/**
+ * Cache key for a resolved track. Uses the same normalizer as matching so that
+ * trivial differences (case, punctuation, a trailing "feat. X") map to one
+ * entry rather than repeatedly missing the cache and re-spending quota.
+ */
+function trackMatchKey(title: string, artist: string): string {
+  return `${normForMatch(cleanTitle(title))}|${normForMatch(cleanArtistName(artist))}`;
+}
+
+
 // Fraction of needle's significant words found in haystack (0–1)
 function wordCoverage(needle: string, haystack: string): number {
   const words = normForMatch(needle).split(' ').filter(w => w.length > 1);
@@ -843,6 +853,35 @@ serve(async (req) => {
   let quotaExhausted = false;
   let lastProgressWrite = 0;
 
+  // Load every cached resolution for this playlist in one query. A search costs
+  // 100 quota units on YouTube; a cache hit costs nothing, and songs recur
+  // heavily across playlists and users, so this is the main lever on how many
+  // tracks can be converted per day. Never let a cache failure break a
+  // conversion — it is an optimisation, not a source of truth.
+  const matchKeys = tracks.map((t) => trackMatchKey(t.title, t.artist));
+  const cachedIds = new Map<string, string>();
+  try {
+    // `in(...)` is serialised into the request URL, so a long playlist would
+    // overflow it. Chunk the keys rather than cap the playlist length.
+    const uniqueKeys = Array.from(new Set(matchKeys));
+    const CACHE_LOOKUP_CHUNK = 50;
+    for (let c = 0; c < uniqueKeys.length; c += CACHE_LOOKUP_CHUNK) {
+      const chunk = uniqueKeys.slice(c, c + CACHE_LOOKUP_CHUNK);
+      const { data: cacheRows, error: cacheErr } = await supabase
+        .from('track_matches')
+        .select('match_key, external_id')
+        .eq('service', primaryService)
+        .in('match_key', chunk);
+      if (cacheErr) throw cacheErr;
+      for (const row of cacheRows ?? []) {
+        cachedIds.set(row.match_key as string, row.external_id as string);
+      }
+    }
+  } catch (err) {
+    console.error('[convert-playlist] track_matches lookup failed (continuing without cache):', err);
+  }
+  const newlyResolved = new Map<string, string>();
+
   try {
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i];
@@ -856,8 +895,14 @@ serve(async (req) => {
         continue;
       }
 
+      // Ids carried on the share, then the shared cache, then a paid search.
+      const matchKey = matchKeys[i];
+      const cached = cachedIds.get(matchKey);
+
       try {
-        if (primaryService === 'spotify') {
+        if (cached) {
+          id = cached;
+        } else if (primaryService === 'spotify') {
           id = track.spotify_id ?? await searchSpotify(accessToken, track.title, track.artist);
         } else if (primaryService === 'youtube_music') {
           id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
@@ -885,8 +930,16 @@ serve(async (req) => {
         throw err;
       }
 
-      if (id) resolvedIds.push(id);
-      else unmatched.push({ title: track.title, artist: track.artist });
+      if (id) {
+        resolvedIds.push(id);
+        // Only cache what a search produced. Ids that arrived on the share are
+        // already trusted, and re-writing them adds nothing.
+        if (!cached) newlyResolved.set(matchKey, id);
+      } else {
+        // Misses are deliberately not cached: a song missing today may be
+        // uploaded tomorrow, and caching that would make it permanent.
+        unmatched.push({ title: track.title, artist: track.artist });
+      }
 
       // Keep the counter smooth without a write per track. Always flush the
       // final track so the client never sticks below the total.
@@ -894,6 +947,23 @@ serve(async (req) => {
       if (i === tracks.length - 1 || now - lastProgressWrite >= PROGRESS_WRITE_INTERVAL_MS) {
         lastProgressWrite = now;
         await writeProgress(supabase, sharedItemId, 'processing', i + 1);
+      }
+    }
+    // Contribute this run's resolutions so no one pays for them again. One
+    // batched upsert, after the loop, so it costs a single round trip.
+    if (newlyResolved.size > 0) {
+      const { error: cacheWriteErr } = await supabase
+        .from('track_matches')
+        .upsert(
+          Array.from(newlyResolved, ([match_key, external_id]) => ({
+            service: primaryService,
+            match_key,
+            external_id,
+          })),
+          { onConflict: 'service,match_key' },
+        );
+      if (cacheWriteErr) {
+        console.error(`[convert-playlist] track_matches write failed: ${cacheWriteErr.message}`);
       }
     }
   } catch (err: unknown) {
