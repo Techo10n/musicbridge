@@ -882,73 +882,108 @@ serve(async (req) => {
   }
   const newlyResolved = new Map<string, string>();
 
-  try {
-    for (let i = 0; i < tracks.length; i++) {
-      const track = tracks[i];
-      let id: string | null = null;
+  // Resolve with bounded concurrency.
+  //
+  // This loop used to be strictly sequential: one network round trip per track,
+  // and up to two once the YouTube matcher gained a fallback query. At 134
+  // tracks that ran past the Edge Function worker limit and the whole
+  // conversion died with WORKER_RESOURCE_LIMIT — no playlist, nothing saved.
+  //
+  // The work is IO-bound, so running a handful in flight collapses wall time by
+  // roughly the concurrency factor. Kept deliberately modest: Spotify rate
+  // limits on burst (searchSpotify backs off on 429), and a higher number buys
+  // little once the cache is warm.
+  const RESOLVE_CONCURRENCY = 6;
 
-      // Once quota is gone every further search is a guaranteed failure, so
-      // stop paying for them — but keep walking the list so the remaining
-      // tracks are reported as unmatched rather than silently dropped.
-      if (quotaExhausted) {
-        unmatched.push({ title: track.title, artist: track.artist });
-        continue;
+  // Results are placed by index, never appended, so playlist order survives
+  // out-of-order completion.
+  const resolvedByIndex: (string | null)[] = new Array(tracks.length).fill(null);
+  let completed = 0;
+  let cursor = 0;
+
+  const resolveOne = async (i: number): Promise<void> => {
+    const track = tracks[i];
+
+    // Once quota is gone every further search is a guaranteed failure, so stop
+    // paying for them. The slot stays null and is reported as unmatched below.
+    if (quotaExhausted) return;
+
+    // Ids carried on the share, then the shared cache, then a paid search.
+    const matchKey = matchKeys[i];
+    const cached = cachedIds.get(matchKey);
+    let id: string | null = null;
+
+    try {
+      if (cached) {
+        id = cached;
+      } else if (primaryService === 'spotify') {
+        id = track.spotify_id ?? await searchSpotify(accessToken, track.title, track.artist);
+      } else if (primaryService === 'youtube_music') {
+        id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
+      } else if (primaryService === 'apple_music' && appleDeveloperToken) {
+        id = track.apple_music_id
+          ?? await searchAppleMusic(
+            appleDeveloperToken,
+            accessToken,
+            storefront,
+            track.title,
+            track.artist,
+          );
       }
-
-      // Ids carried on the share, then the shared cache, then a paid search.
-      const matchKey = matchKeys[i];
-      const cached = cachedIds.get(matchKey);
-
-      try {
-        if (cached) {
-          id = cached;
-        } else if (primaryService === 'spotify') {
-          id = track.spotify_id ?? await searchSpotify(accessToken, track.title, track.artist);
-        } else if (primaryService === 'youtube_music') {
-          id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
-        } else if (primaryService === 'apple_music' && appleDeveloperToken) {
-          id = track.apple_music_id
-            ?? await searchAppleMusic(
-              appleDeveloperToken,
-              accessToken,
-              storefront,
-              track.title,
-              track.artist,
-            );
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : '';
-        // Quota exhaustion is not a reason to throw away the tracks already
-        // matched. Finish the run with what we have and say why the rest are
-        // missing; auth and scope errors still abort, since nothing would work.
-        if (msg.endsWith('_quota_exceeded') || msg === 'spotify_rate_limit_exceeded') {
-          console.error(`[convert-playlist] ${msg} after ${i} tracks — creating the playlist with ${resolvedIds.length} matched so far.`);
-          quotaExhausted = true;
-          unmatched.push({ title: track.title, artist: track.artist });
-          continue;
-        }
-        throw err;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      // Quota exhaustion is not a reason to throw away the tracks already
+      // matched. Finish the run with what we have and say why the rest are
+      // missing; auth and scope errors still abort, since nothing would work.
+      if (msg.endsWith('_quota_exceeded') || msg === 'spotify_rate_limit_exceeded') {
+        console.error(`[convert-playlist] ${msg} at track ${i} — finishing with what is already matched.`);
+        quotaExhausted = true;
+        return;
       }
+      throw err;
+    }
 
-      if (id) {
-        resolvedIds.push(id);
-        // Only cache what a search produced. Ids that arrived on the share are
-        // already trusted, and re-writing them adds nothing.
-        if (!cached) newlyResolved.set(matchKey, id);
-      } else {
-        // Misses are deliberately not cached: a song missing today may be
-        // uploaded tomorrow, and caching that would make it permanent.
-        unmatched.push({ title: track.title, artist: track.artist });
-      }
+    if (id) {
+      resolvedByIndex[i] = id;
+      // Only cache what a search produced. Ids that arrived on the share are
+      // already trusted, and re-writing them adds nothing.
+      if (!cached) newlyResolved.set(matchKey, id);
+    }
+    // A miss leaves the slot null. Misses are deliberately not cached: a song
+    // missing today may be uploaded tomorrow.
+  };
+
+  const runWorker = async (): Promise<void> => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= tracks.length) return;
+      await resolveOne(i);
+      completed++;
 
       // Keep the counter smooth without a write per track. Always flush the
-      // final track so the client never sticks below the total.
+      // last completion so the client never sticks below the total.
       const now = Date.now();
-      if (i === tracks.length - 1 || now - lastProgressWrite >= PROGRESS_WRITE_INTERVAL_MS) {
+      if (completed === tracks.length || now - lastProgressWrite >= PROGRESS_WRITE_INTERVAL_MS) {
         lastProgressWrite = now;
-        await writeProgress(supabase, sharedItemId, 'processing', i + 1);
+        await writeProgress(supabase, sharedItemId, 'processing', completed);
       }
     }
+  };
+
+  try {
+    // A throw from any worker rejects here and aborts the conversion, which is
+    // what we want for auth and scope failures.
+    await Promise.all(
+      Array.from({ length: Math.min(RESOLVE_CONCURRENCY, tracks.length) }, runWorker),
+    );
+
+    // Collapse to ordered results only once everything has settled.
+    for (let i = 0; i < tracks.length; i++) {
+      const id = resolvedByIndex[i];
+      if (id) resolvedIds.push(id);
+      else unmatched.push({ title: tracks[i].title, artist: tracks[i].artist });
+    }
+
     // Contribute this run's resolutions so no one pays for them again. One
     // batched upsert, after the loop, so it costs a single round trip.
     if (newlyResolved.size > 0) {
