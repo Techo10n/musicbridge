@@ -837,6 +837,10 @@ serve(async (req) => {
   // Tracks the destination service had nothing for. Reported back so the user
   // sees *which* songs are missing rather than only how many.
   const unmatched: { title: string; artist: string }[] = [];
+  // Set when the destination service's daily search quota runs out mid-run.
+  // A YouTube search costs 100 units against a default 10,000/day, so ~100
+  // tracks is the ceiling: a long playlist WILL exhaust it partway.
+  let quotaExhausted = false;
   let lastProgressWrite = 0;
 
   try {
@@ -844,19 +848,41 @@ serve(async (req) => {
       const track = tracks[i];
       let id: string | null = null;
 
-      if (primaryService === 'spotify') {
-        id = track.spotify_id ?? await searchSpotify(accessToken, track.title, track.artist);
-      } else if (primaryService === 'youtube_music') {
-        id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
-      } else if (primaryService === 'apple_music' && appleDeveloperToken) {
-        id = track.apple_music_id
-          ?? await searchAppleMusic(
-            appleDeveloperToken,
-            accessToken,
-            storefront,
-            track.title,
-            track.artist,
-          );
+      // Once quota is gone every further search is a guaranteed failure, so
+      // stop paying for them — but keep walking the list so the remaining
+      // tracks are reported as unmatched rather than silently dropped.
+      if (quotaExhausted) {
+        unmatched.push({ title: track.title, artist: track.artist });
+        continue;
+      }
+
+      try {
+        if (primaryService === 'spotify') {
+          id = track.spotify_id ?? await searchSpotify(accessToken, track.title, track.artist);
+        } else if (primaryService === 'youtube_music') {
+          id = track.youtube_music_id ?? await searchYouTube(accessToken, track.title, track.artist);
+        } else if (primaryService === 'apple_music' && appleDeveloperToken) {
+          id = track.apple_music_id
+            ?? await searchAppleMusic(
+              appleDeveloperToken,
+              accessToken,
+              storefront,
+              track.title,
+              track.artist,
+            );
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '';
+        // Quota exhaustion is not a reason to throw away the tracks already
+        // matched. Finish the run with what we have and say why the rest are
+        // missing; auth and scope errors still abort, since nothing would work.
+        if (msg.endsWith('_quota_exceeded') || msg === 'spotify_rate_limit_exceeded') {
+          console.error(`[convert-playlist] ${msg} after ${i} tracks — creating the playlist with ${resolvedIds.length} matched so far.`);
+          quotaExhausted = true;
+          unmatched.push({ title: track.title, artist: track.artist });
+          continue;
+        }
+        throw err;
       }
 
       if (id) resolvedIds.push(id);
@@ -974,5 +1000,6 @@ serve(async (req) => {
     matchedTracks: tracksAdded,
     totalTracks: tracks.length,
     unmatchedTracks: unmatched,
+    quotaExhausted,
   });
 });

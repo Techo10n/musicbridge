@@ -37,6 +37,8 @@ interface ConvertPlaylistResult {
   totalTracks?: number;
   /** The tracks with no match on the destination service. */
   unmatchedTracks?: { title: string; artist: string }[];
+  /** True when the run stopped searching because the daily quota ran out. */
+  quotaExhausted?: boolean;
   error?: string;
 }
 
@@ -54,6 +56,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   // claimed 16/16 for a playlist that ended up with 10 songs.
   const [matchedTracks, setMatchedTracks] = useState<number | null>(null);
   const [unmatchedTracks, setUnmatchedTracks] = useState<{ title: string; artist: string }[]>([]);
+  const [quotaExhausted, setQuotaExhausted] = useState(false);
   // `tracks` is excluded from the inbox query (it is a large jsonb payload), so
   // the detail view fetches it for the single item it is showing. The loaded
   // payload is stored *with* the id it belongs to, and staleness is derived
@@ -253,6 +256,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
       if (typeof fnData.matchedTracks === 'number') setMatchedTracks(fnData.matchedTracks);
       if (fnData.unmatchedTracks) setUnmatchedTracks(fnData.unmatchedTracks);
+      setQuotaExhausted(!!fnData.quotaExhausted);
     }
 
     // If the realtime event already marked it done, we're finished.
@@ -289,6 +293,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
       setCreatedPlaylistUrl(fnData.playlistUrl ?? null);
       if (typeof fnData.matchedTracks === 'number') setMatchedTracks(fnData.matchedTracks);
       if (fnData.unmatchedTracks) setUnmatchedTracks(fnData.unmatchedTracks);
+      setQuotaExhausted(!!fnData.quotaExhausted);
       setConversionState('done');
     } else {
       convertingItemIdRef.current = null;
@@ -475,7 +480,9 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
                 {unmatchedTracks.length > 0 && (
                   <View style={styles.missedBox}>
                     <Text style={styles.missedTitle}>
-                      Couldn&apos;t find {unmatchedTracks.length} on {serviceName(primaryService)}
+                      {quotaExhausted
+                        ? `${serviceName(primaryService)}'s daily search limit ran out — ${unmatchedTracks.length} left to add. Try again tomorrow.`
+                        : `Couldn't find ${unmatchedTracks.length} on ${serviceName(primaryService)}`}
                     </Text>
                     {unmatchedTracks.map((t, i) => (
                       <Text key={`${t.title}-${i}`} style={styles.missedRow} numberOfLines={1}>
