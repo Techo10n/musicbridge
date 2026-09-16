@@ -57,6 +57,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const [matchedTracks, setMatchedTracks] = useState<number | null>(null);
   const [unmatchedTracks, setUnmatchedTracks] = useState<{ title: string; artist: string }[]>([]);
   const [quotaExhausted, setQuotaExhausted] = useState(false);
+  const [showAllMissed, setShowAllMissed] = useState(false);
   // `tracks` is excluded from the inbox query (it is a large jsonb payload), so
   // the detail view fetches it for the single item it is showing. The loaded
   // payload is stored *with* the id it belongs to, and staleness is derived
@@ -410,6 +411,53 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
           style={{ flex: 1 }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           ListEmptyComponent={<Text style={styles.emptyText}>No tracks in this playlist</Text>}
+          ListFooterComponent={
+            conversionState === 'done' && unmatchedTracks.length > 0 && primaryService ? (
+              <View style={styles.missedSection}>
+                <View style={styles.missedHeader}>
+                  <Ionicons
+                    name={quotaExhausted ? 'time-outline' : 'alert-circle-outline'}
+                    size={15}
+                    color={colors.fg3}
+                  />
+                  <Text style={styles.missedHeaderText}>
+                    {quotaExhausted
+                      ? `Daily search limit reached — ${unmatchedTracks.length} left`
+                      : `${unmatchedTracks.length} ${unmatchedTracks.length === 1 ? 'song' : 'songs'} couldn't be added`}
+                  </Text>
+                </View>
+                <Text style={styles.missedHint}>
+                  {quotaExhausted
+                    ? `${serviceName(primaryService)} caps how many songs can be looked up per day. Open this again tomorrow to add the rest.`
+                    : `No confident match on ${serviceName(primaryService)}. A close-but-wrong song is worse than a missing one, so these were skipped.`}
+                </Text>
+                {(showAllMissed ? unmatchedTracks : unmatchedTracks.slice(0, 4)).map((t, i) => (
+                  <View key={`${t.title}-${i}`} style={styles.missedRow}>
+                    <Text style={styles.missedRowTitle} numberOfLines={1}>{t.title}</Text>
+                    {!!t.artist && (
+                      <Text style={styles.missedRowArtist} numberOfLines={1}>{t.artist}</Text>
+                    )}
+                  </View>
+                ))}
+                {unmatchedTracks.length > 4 && (
+                  <TouchableOpacity
+                    onPress={() => setShowAllMissed((v) => !v)}
+                    style={styles.missedToggle}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.missedToggleText}>
+                      {showAllMissed ? 'Show less' : `Show all ${unmatchedTracks.length}`}
+                    </Text>
+                    <Ionicons
+                      name={showAllMissed ? 'chevron-up' : 'chevron-down'}
+                      size={14}
+                      color={colors.primary}
+                    />
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : null
+          }
           renderItem={({ item: track, index }) => {
             // Only claim a per-track match when every track resolved; otherwise
             // the service told us a total, not which tracks it was.
@@ -477,20 +525,6 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
                 <Text style={styles.doneSub}>
                   {matchedTracks ?? tracksProcessed} of {totalTracks} tracks matched
                 </Text>
-                {unmatchedTracks.length > 0 && (
-                  <View style={styles.missedBox}>
-                    <Text style={styles.missedTitle}>
-                      {quotaExhausted
-                        ? `${serviceName(primaryService)}'s daily search limit ran out — ${unmatchedTracks.length} left to add. Try again tomorrow.`
-                        : `Couldn't find ${unmatchedTracks.length} on ${serviceName(primaryService)}`}
-                    </Text>
-                    {unmatchedTracks.map((t, i) => (
-                      <Text key={`${t.title}-${i}`} style={styles.missedRow} numberOfLines={1}>
-                        {t.title}{t.artist ? ` · ${t.artist}` : ''}
-                      </Text>
-                    ))}
-                  </View>
-                )}
               </View>
               {createdPlaylistId && (
                 <TouchableOpacity style={styles.openSvcBtn} onPress={openCreatedPlaylist} activeOpacity={0.85}>
@@ -647,12 +681,28 @@ const styles = StyleSheet.create({
   doneCheck: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   doneTitle: { fontSize: 15, fontWeight: '700', color: colors.fg, marginBottom: 2 },
   doneSub: { fontSize: 12, color: colors.fg3 },
-  missedBox: {
-    marginTop: 10, alignSelf: 'stretch', gap: 2,
-    backgroundColor: colors.bgCard, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10,
+  // Skipped tracks live under the track list, not in the fixed footer: there can
+  // be dozens, and the footer has to stay one compact row next to "Open".
+  missedSection: {
+    marginTop: 8, marginHorizontal: 16, marginBottom: 20,
+    backgroundColor: colors.bgCard, borderRadius: 12,
+    borderWidth: 1, borderColor: colors.line,
+    paddingVertical: 12, paddingHorizontal: 14,
   },
-  missedTitle: { fontSize: 11, fontWeight: '600', color: colors.fg2, marginBottom: 2 },
-  missedRow: { fontSize: 11, color: colors.fg3 },
+  missedHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  missedHeaderText: { fontSize: 13, fontWeight: '700', color: colors.fg2, flex: 1 },
+  missedHint: { fontSize: 11, lineHeight: 15, color: colors.fg3, marginTop: 4, marginBottom: 10 },
+  missedRow: {
+    paddingVertical: 6,
+    borderTopWidth: 1, borderTopColor: colors.line,
+  },
+  missedRowTitle: { fontSize: 13, color: colors.fg2 },
+  missedRowArtist: { fontSize: 11, color: colors.fg4, marginTop: 1 },
+  missedToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+    paddingTop: 10,
+  },
+  missedToggleText: { fontSize: 12, fontWeight: '600', color: colors.primary },
   openSvcBtn: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 14 },
   openSvcBtnText: { color: colors.primaryInk, fontSize: 13, fontWeight: '700' },
 

@@ -370,6 +370,36 @@ async function searchSpotify(token: string, title: string, artist: string): Prom
   return pickBest(titleItems, title, artist, 0.55);
 }
 
+/**
+ * Version markers that make a result a *different recording* of the same song.
+ * A remix, cover or live take is not the track the sender shared, so one of
+ * these in the candidate that is absent from the source is disqualifying.
+ */
+const VERSION_MARKERS =
+  /\b(remix|remixed|cover|covered|live|acoustic|instrumental|karaoke|nightcore|sped|slowed|reverb|tribute|mashup|bootleg|rework|demo|session|8d|reimagined|rerecorded|taylors version)\b/i;
+
+function matchTokens(s: string): string[] {
+  return normForMatch(s).split(' ').filter((w) => w.length > 1);
+}
+
+/**
+ * Compare two titles in both directions.
+ *
+ * `recall` is how much of the source title the candidate covers, `precision`
+ * how much of the candidate is accounted for by the source. Only measuring
+ * recall — which is what wordCoverage does — scores "About You (Sped Up Remix)"
+ * identically to "About You", because extra words cost nothing. Precision is
+ * what separates the canonical upload from every embellished variant of it.
+ */
+function titleSimilarity(source: string, candidate: string): { recall: number; precision: number } {
+  const a = new Set(matchTokens(source));
+  const b = new Set(matchTokens(candidate));
+  if (a.size === 0 || b.size === 0) return { recall: 0, precision: 0 };
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  return { recall: shared / a.size, precision: shared / b.size };
+}
+
 /** Strip the " - Topic" suffix to get the channel's artist name. */
 function topicChannelArtist(channelTitle: string): string {
   return channelTitle.replace(/\s*-\s*Topic$/i, '').trim();
@@ -434,20 +464,39 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
    * decisions.md "Reject zero-title-score matches"). Beyond that, rank by title
    * match plus artist agreement with the channel name.
    */
+  // A remix, cover, or same-name song by another artist is a *wrong* result,
+  // not a near miss — the sender's track is silently replaced and nobody can
+  // tell. The governing rule is the same one behind the Topic-channel filter:
+  // a missing song beats a wrong one. So these are hard gates, not weights.
+  const MIN_TITLE_RECALL = 0.8;    // nearly all of the source title must appear
+  const MIN_TITLE_PRECISION = 0.5; // and the candidate must not be mostly extra words
+  const MIN_ARTIST_SCORE = 0.5;    // the Topic channel must name the right artist
+
+  const sourceIsVersioned = VERSION_MARKERS.test(t);
+
   const pickTopic = (items: YouTubeSearchItem[]): string | null => {
     const scored = items
       .filter((i) => i?.id?.videoId && isTopicChannel(i.snippet?.channelTitle))
       .map((i) => {
-        const titleScore = wordCoverage(t, i.snippet.title);
+        const { recall, precision } = titleSimilarity(t, i.snippet.title);
+        // A Topic channel is named exactly "<artist> - Topic", so it is a
+        // reliable statement of who actually performs this recording.
         const artistScore = primaryArtist
           ? wordCoverage(primaryArtist, topicChannelArtist(i.snippet.channelTitle))
           : 0;
-        return { id: i.id.videoId, titleScore, artistScore };
+        // Reject a remix/live/cover unless the sender asked for one.
+        const addsVersion = !sourceIsVersioned && VERSION_MARKERS.test(i.snippet.title);
+        return { id: i.id.videoId, recall, precision, artistScore, addsVersion };
       })
-      .filter((c) => c.titleScore > 0)
-      // Weight the title but let a confirmed artist break ties between
-      // covers, live versions and the canonical upload.
-      .sort((a, b) => (b.titleScore * 2 + b.artistScore) - (a.titleScore * 2 + a.artistScore));
+      .filter((c) =>
+        !c.addsVersion &&
+        c.recall >= MIN_TITLE_RECALL &&
+        c.precision >= MIN_TITLE_PRECISION &&
+        c.artistScore >= MIN_ARTIST_SCORE
+      )
+      // Among survivors prefer the plainest title (highest precision — fewest
+      // unexplained extra words), then the strongest artist agreement.
+      .sort((a, b) => (b.precision - a.precision) || (b.artistScore - a.artistScore));
 
     return scored[0]?.id ?? null;
   };
