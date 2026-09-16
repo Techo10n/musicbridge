@@ -322,7 +322,8 @@ function parseArtistFromDescription(
  * Uses word boundaries so "live" doesn't match "alive" or "live and let die".
  */
 function isBadVariant(resultTitle: string, searchTitle: string): boolean {
-  const VARIANTS = /\b(remix|live|acoustic|cover|karaoke|instrumental|extended|vip|demo|reprise|interlude|medley|mashup|tribute)\b/i;
+  // Kept in step with VERSION_MARKERS in supabase/functions/convert-playlist.
+  const VARIANTS = /\b(remix|remixed|live|acoustic|cover|covered|karaoke|instrumental|extended|vip|demo|reprise|interlude|medley|mashup|tribute|nightcore|sped|slowed|reverb|bootleg|rework|8d|reimagined|rerecorded)\b/i;
   return VARIANTS.test(resultTitle) && !VARIANTS.test(searchTitle);
 }
 
@@ -368,12 +369,48 @@ function artistTokenScore(resultArtist: string, searchArtist: string): number {
  * Returns undefined when no clean Topic result exists — callers must not fall
  * back to variant results; they should try the next phase instead.
  */
-function pickBestCleanTopicResult(
+/**
+ * View counts for up to 50 video ids, in one call.
+ *
+ * `videos.list` costs 1 quota unit against `search.list`'s 100, so this is
+ * nearly free beside the search that produced the ids.
+ *
+ * Needed because textual scoring cannot separate the real upload from an
+ * AI-generated impostor carrying the same title on a same-named Topic channel:
+ * both score an exact title match and an exact artist match. Plays are what
+ * distinguish them, and what puts the canonical recording first in a YouTube
+ * Music search.
+ */
+async function fetchViewCounts(accessToken: string, ids: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (ids.length === 0) return counts;
+  try {
+    const res = await fetch(
+      `${YOUTUBE_API}/videos?part=statistics&id=${ids.slice(0, 50).join(',')}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) {
+      console.warn(`[YTM] videos.list failed: HTTP ${res.status}`);
+      return counts;
+    }
+    const data = await res.json() as { items?: { id: string; statistics?: { viewCount?: string } }[] };
+    for (const item of data.items ?? []) {
+      counts.set(item.id, Number(item.statistics?.viewCount ?? 0));
+    }
+  } catch (err) {
+    // Ranking degrades to textual scoring; never fail an open over this.
+    console.warn('[YTM] videos.list threw:', err);
+  }
+  return counts;
+}
+
+async function pickBestCleanTopicResult(
   items: YouTubeTrack[],
   searchTitle: string,
   searchArtist: string,
   isTopicChannel: (i: YouTubeTrack) => boolean,
-): YouTubeTrack | undefined {
+  accessToken: string,
+): Promise<YouTubeTrack | undefined> {
   const clean = items
     .filter(isTopicChannel)
     .filter((i) => !isBadVariant(i.snippet?.title ?? '', searchTitle))
@@ -382,20 +419,21 @@ function pickBestCleanTopicResult(
 
   if (clean.length === 0) return undefined;
 
-  return clean.slice(1).reduce<YouTubeTrack>(
-    (best, item) =>
-      (
-        titleScore(item.snippet?.title ?? '', searchTitle) * 10
-        + artistTokenScore(item.snippet?.channelTitle ?? '', searchArtist)
-      ) >
-      (
-        titleScore(best.snippet?.title ?? '', searchTitle) * 10
-        + artistTokenScore(best.snippet?.channelTitle ?? '', searchArtist)
-      )
-        ? item
-        : best,
-    clean[0],
-  );
+  const scoreOf = (i: YouTubeTrack) =>
+    titleScore(i.snippet?.title ?? '', searchTitle) * 10
+    + artistTokenScore(i.snippet?.channelTitle ?? '', searchArtist);
+
+  const topScore = Math.max(...clean.map(scoreOf));
+  const tied = clean.filter((i) => scoreOf(i) === topScore);
+  if (tied.length === 1) return tied[0];
+
+  // Several candidates are textually indistinguishable — the usual case for a
+  // popular song, and exactly where an impostor or an obscure alternate upload
+  // wins by being first in the response. Prefer the most-played.
+  const views = await fetchViewCounts(accessToken, tied.map((i) => i.id.videoId).filter(Boolean));
+  return tied.reduce((best, item) =>
+    (views.get(item.id.videoId) ?? 0) > (views.get(best.id.videoId) ?? 0) ? item : best
+  , tied[0]);
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
@@ -511,7 +549,7 @@ export async function searchTrack(
       ...i,
       snippet: { ...i.snippet, channelTitle: `${primaryArtist} - Topic` },
     }));
-    const best = pickBestCleanTopicResult(tagged, cleanedTitle, primaryArtist, () => true);
+    const best = await pickBestCleanTopicResult(tagged, cleanedTitle, primaryArtist, () => true, accessToken);
     if (best) {
       console.log(`[YTM] Topic channel hit — "${best.snippet?.title}" (${best.id.videoId})`);
       return best.id.videoId;
@@ -523,7 +561,7 @@ export async function searchTrack(
 
   // ── Broad fallback ────────────────────────────────────────────────────────────
   const broadResults = await searchVideos(`${cleanedTitle} ${primaryArtist}`, 'fallback');
-  const fallbackBest = pickBestCleanTopicResult(broadResults, cleanedTitle, primaryArtist, isTopicChannel);
+  const fallbackBest = await pickBestCleanTopicResult(broadResults, cleanedTitle, primaryArtist, isTopicChannel, accessToken);
   if (fallbackBest) {
     console.log(`[YTM] Broad fallback hit — "${fallbackBest.snippet?.title}" (${fallbackBest.id.videoId})`);
     return fallbackBest.id.videoId;
