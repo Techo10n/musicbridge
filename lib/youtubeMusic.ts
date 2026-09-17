@@ -2,7 +2,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import { supabase } from './supabase';
 import { YouTubeTrack, LibraryPlaylist, LibraryTrack, MusicService } from '../types';
-import { cleanArtistName, cleanTitle } from './utils';
+import { cleanTitle } from './utils';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -92,7 +92,6 @@ export async function disconnectYouTubeMusic(userId: string): Promise<void> {
 // ─── Token management ─────────────────────────────────────────────────────────
 
 let _tokenCache: { userId: string; token: string; expiresAt: number } | null = null;
-const _topicChannelCache = new Map<string, string>(); // primaryArtist → channelId
 
 // In-flight refresh promises, keyed by userId — see the matching comment in
 // lib/spotify.ts. Concurrent expired-token calls should share one refresh
@@ -178,21 +177,11 @@ async function fetchOrRefreshYouTubeToken(userId: string): Promise<string | null
 
 // ─── Track-matching helpers ───────────────────────────────────────────────────
 
-/** Lowercase, strip punctuation, collapse whitespace. */
-function norm(s: string): string {
-  return s
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 /**
  * Strips " - Topic" and "VEVO" suffixes from a YouTube channel title so it
  * can be used as a fallback artist name.
  */
-export function cleanChannelToArtist(channelTitle: string): string {
+function cleanChannelToArtist(channelTitle: string): string {
   return channelTitle
     .replace(/ - Topic$/i, '')
     .replace(/VEVO$/i, '')
@@ -212,7 +201,7 @@ const TITLE_SUFFIX_RE = /\s*[\[(](official(?:\s*(music\s*)?video|\s*audio)?|lyri
  *
  * Returns null when the title does not contain a spaced dash separator.
  */
-export function parseYouTubeVideoTitle(rawTitle: string): { artist: string; title: string } | null {
+function parseYouTubeVideoTitle(rawTitle: string): { artist: string; title: string } | null {
   // Require spaces around the dash so hyphens inside artist/song names
   // (e.g. "Wu-Tang Clan", "C.R.E.A.M.") are not mistaken for the separator.
   const match = rawTitle.match(/^(.+?)\s+[-–—]\s+(.+)$/);
@@ -316,262 +305,7 @@ function parseArtistFromDescription(
   return null;
 }
 
-/**
- * Returns true when the result title contains a variant qualifier (remix, live,
- * acoustic, etc.) that is NOT present in the original search title.
- * Uses word boundaries so "live" doesn't match "alive" or "live and let die".
- */
-function isBadVariant(resultTitle: string, searchTitle: string): boolean {
-  // Kept in step with VERSION_MARKERS in supabase/functions/convert-playlist.
-  const VARIANTS = /\b(remix|remixed|live|acoustic|cover|covered|karaoke|instrumental|extended|vip|demo|reprise|interlude|medley|mashup|tribute|nightcore|sped|slowed|reverb|bootleg|rework|8d|reimagined|rerecorded)\b/i;
-  return VARIANTS.test(resultTitle) && !VARIANTS.test(searchTitle);
-}
-
-/**
- * Scores how closely a result title matches the search title (0–4).
- * 4 = exact match after normalisation
- * 3 = one is a prefix of the other
- * 2 = one contains the other
- * 1 = ≥70% word overlap
- * 0 = poor match
- */
-function titleScore(resultTitle: string, searchTitle: string): number {
-  const r = norm(resultTitle);
-  const s = norm(searchTitle);
-  if (!r || !s) return 0;
-  if (r === s) return 4;
-  if (r.startsWith(s) || s.startsWith(r)) return 3;
-  if (r.includes(s) || s.includes(r)) return 2;
-  const rWords = new Set(r.split(' '));
-  const sWords = s.split(' ').filter(Boolean);
-  if (sWords.length > 0 && sWords.filter((w) => rWords.has(w)).length / sWords.length >= 0.7) return 1;
-  return 0;
-}
-
-function artistTokenScore(resultArtist: string, searchArtist: string): number {
-  const r = norm(cleanArtistName(resultArtist));
-  const s = norm(cleanArtistName(searchArtist));
-  if (!r || !s) return 0;
-  if (r === s) return 4;
-  if (r.includes(s) || s.includes(r)) return 3;
-
-  const rWords = new Set(r.split(' ').filter(Boolean));
-  const sWords = s.split(' ').filter(Boolean);
-  const overlap = sWords.filter((w) => rWords.has(w)).length;
-  if (sWords.length > 0 && overlap / sWords.length >= 0.7) return 2;
-  if (overlap >= 1) return 1;
-  return 0;
-}
-
-/**
- * From a list of candidates, picks the highest-scoring Topic-channel video
- * whose title is NOT a bad variant (remix, live, etc.).
- * Returns undefined when no clean Topic result exists — callers must not fall
- * back to variant results; they should try the next phase instead.
- */
-/**
- * View counts for up to 50 video ids, in one call.
- *
- * `videos.list` costs 1 quota unit against `search.list`'s 100, so this is
- * nearly free beside the search that produced the ids.
- *
- * Needed because textual scoring cannot separate the real upload from an
- * AI-generated impostor carrying the same title on a same-named Topic channel:
- * both score an exact title match and an exact artist match. Plays are what
- * distinguish them, and what puts the canonical recording first in a YouTube
- * Music search.
- */
-async function fetchViewCounts(accessToken: string, ids: string[]): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  if (ids.length === 0) return counts;
-  try {
-    const res = await fetch(
-      `${YOUTUBE_API}/videos?part=statistics&id=${ids.slice(0, 50).join(',')}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
-    );
-    if (!res.ok) {
-      console.warn(`[YTM] videos.list failed: HTTP ${res.status}`);
-      return counts;
-    }
-    const data = await res.json() as { items?: { id: string; statistics?: { viewCount?: string } }[] };
-    for (const item of data.items ?? []) {
-      counts.set(item.id, Number(item.statistics?.viewCount ?? 0));
-    }
-  } catch (err) {
-    // Ranking degrades to textual scoring; never fail an open over this.
-    console.warn('[YTM] videos.list threw:', err);
-  }
-  return counts;
-}
-
-async function pickBestCleanTopicResult(
-  items: YouTubeTrack[],
-  searchTitle: string,
-  searchArtist: string,
-  isTopicChannel: (i: YouTubeTrack) => boolean,
-  accessToken: string,
-): Promise<YouTubeTrack | undefined> {
-  const clean = items
-    .filter(isTopicChannel)
-    .filter((i) => !isBadVariant(i.snippet?.title ?? '', searchTitle))
-    .filter((i) => titleScore(i.snippet?.title ?? '', searchTitle) > 0)
-    .filter((i) => artistTokenScore(i.snippet?.channelTitle ?? '', searchArtist) >= 2);
-
-  if (clean.length === 0) return undefined;
-
-  const scoreOf = (i: YouTubeTrack) =>
-    titleScore(i.snippet?.title ?? '', searchTitle) * 10
-    + artistTokenScore(i.snippet?.channelTitle ?? '', searchArtist);
-
-  const topScore = Math.max(...clean.map(scoreOf));
-  const tied = clean.filter((i) => scoreOf(i) === topScore);
-  if (tied.length === 1) return tied[0];
-
-  // Several candidates are textually indistinguishable — the usual case for a
-  // popular song, and exactly where an impostor or an obscure alternate upload
-  // wins by being first in the response. Prefer the most-played.
-  const views = await fetchViewCounts(accessToken, tied.map((i) => i.id.videoId).filter(Boolean));
-  return tied.reduce((best, item) =>
-    (views.get(item.id.videoId) ?? 0) > (views.get(best.id.videoId) ?? 0) ? item : best
-  , tied[0]);
-}
-
 // ─── Search ───────────────────────────────────────────────────────────────────
-
-/**
- * Searches for a track by title + artist.
- *
- * Only returns a video from an "Artist - Topic" auto-generated channel — the
- * only video type YouTube Music renders as a Song (square album art, no video
- * player). Never falls back to generic videos.
- *
- * Phase 1: three parallel queries (base / official-audio / topic keyword).
- *   → picks the highest-scoring Topic-channel result, filtering out remixes/
- *     live versions that weren't in the original title.
- * Phase 2: direct Topic-channel lookup → in-channel title search with the
- *   same scoring + variant filtering applied to in-channel results.
- * Throws `youtube_music_topic_not_found` if neither phase finds a Topic video.
- */
-export async function searchTrack(
-  userId: string,
-  title: string,
-  artist: string,
-): Promise<string> {
-  const accessToken = await getYouTubeAccessToken(userId);
-  if (!accessToken) throw new Error('[YTM] No access token — user not connected to YouTube Music');
-
-  // For multi-artist strings like "K-391, Alan Walker, Tungevaag, Mangoo"
-  // use only the first artist for channel lookups and the tighter base query.
-  const cleanedTitle = cleanTitle(title);
-  const cleanedArtist = cleanArtistName(artist);
-  const primaryArtist = cleanedArtist.split(',')[0].trim();
-
-  const isTopicChannel = (item: YouTubeTrack): boolean => {
-    const ch = item.snippet?.channelTitle?.toLowerCase() ?? '';
-    return ch.endsWith(' - topic') || ch === 'topic';
-  };
-
-  // videoCategoryId=10 (Music) is enough; topicId uses deprecated Freebase IDs
-  // that started returning 403s under load — removed.
-  const searchVideos = async (query: string, label: string): Promise<YouTubeTrack[]> => {
-    try {
-      const res = await fetch(
-        `${YOUTUBE_API}/search?q=${encodeURIComponent(query)}&type=video&part=snippet,id&maxResults=10&videoCategoryId=10`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      if (!res.ok) {
-        if (res.status === 403) {
-          try {
-            const body = await res.json() as { error?: { errors?: { reason: string }[] } };
-            if (body?.error?.errors?.[0]?.reason === 'quotaExceeded') {
-              throw new Error('youtube_quota_exceeded');
-            }
-          } catch (parseErr) {
-            if ((parseErr as Error).message === 'youtube_quota_exceeded') throw parseErr;
-          }
-        }
-        console.warn(`[YTM] Video search "${label}" failed: HTTP ${res.status}`);
-        return [];
-      }
-      const data = await res.json() as { items?: YouTubeTrack[] };
-      return data.items ?? [];
-    } catch (e) {
-      if ((e as Error).message === 'youtube_quota_exceeded') throw e;
-      console.warn(`[YTM] Video search "${label}" threw:`, e);
-      return [];
-    }
-  };
-
-  // Searches for the artist's Topic channel by name, with session-level cache.
-  // Uses primaryArtist so multi-artist strings don't break the lookup.
-  const findTopicChannelId = async (): Promise<string | null> => {
-    const cacheKey = primaryArtist.toLowerCase();
-    if (_topicChannelCache.has(cacheKey)) return _topicChannelCache.get(cacheKey)!;
-    try {
-      const res = await fetch(
-        `${YOUTUBE_API}/search?q=${encodeURIComponent(`${primaryArtist} - Topic`)}&type=channel&part=snippet&maxResults=10`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      if (!res.ok) return null;
-      const data = await res.json() as {
-        items?: { id: { channelId: string }; snippet: { title: string } }[];
-      };
-      const match = (data.items ?? []).find((ch) =>
-        ch.snippet.title.toLowerCase().endsWith(' - topic'),
-      );
-      const channelId = match?.id.channelId ?? null;
-      if (channelId) _topicChannelCache.set(cacheKey, channelId);
-      return channelId;
-    } catch {
-      return null;
-    }
-  };
-
-  const searchWithinChannel = async (channelId: string): Promise<YouTubeTrack[]> => {
-    try {
-      const res = await fetch(
-        `${YOUTUBE_API}/search?q=${encodeURIComponent(cleanedTitle)}&type=video&part=snippet,id&maxResults=10&channelId=${channelId}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      if (!res.ok) return [];
-      const data = await res.json() as { items?: YouTubeTrack[] };
-      return data.items ?? [];
-    } catch {
-      return [];
-    }
-  };
-
-  // ── Topic channel lookup (direct) ────────────────────────────────────────────
-  const channelId = await findTopicChannelId();
-  if (channelId) {
-    const items = await searchWithinChannel(channelId);
-    const tagged = items.map((i) => ({
-      ...i,
-      snippet: { ...i.snippet, channelTitle: `${primaryArtist} - Topic` },
-    }));
-    const best = await pickBestCleanTopicResult(tagged, cleanedTitle, primaryArtist, () => true, accessToken);
-    if (best) {
-      console.log(`[YTM] Topic channel hit — "${best.snippet?.title}" (${best.id.videoId})`);
-      return best.id.videoId;
-    }
-    console.warn(`[YTM] Topic channel found but no clean match for "${cleanedTitle}" — trying broad fallback`);
-  } else {
-    console.warn(`[YTM] No Topic channel found for "${primaryArtist}" — trying broad fallback`);
-  }
-
-  // ── Broad fallback ────────────────────────────────────────────────────────────
-  const broadResults = await searchVideos(`${cleanedTitle} ${primaryArtist}`, 'fallback');
-  const fallbackBest = await pickBestCleanTopicResult(broadResults, cleanedTitle, primaryArtist, isTopicChannel, accessToken);
-  if (fallbackBest) {
-    console.log(`[YTM] Broad fallback hit — "${fallbackBest.snippet?.title}" (${fallbackBest.id.videoId})`);
-    return fallbackBest.id.videoId;
-  }
-
-  console.error(`[YTM] No clean Topic-channel video found for "${title}" by "${artist}".`);
-  throw new Error(
-    `youtube_music_topic_not_found: "${title}" by "${artist}" — no canonical YouTube Music Song found.`,
-  );
-}
 
 /**
  * Searches for tracks with a free-form query.

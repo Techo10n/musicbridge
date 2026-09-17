@@ -15,6 +15,8 @@ import { SharedItem, Track } from '../types';
 import { serviceName } from './ServiceBadge';
 import { useAuth } from '../hooks/useAuth';
 import * as AppleMusic from '../lib/appleMusic';
+import * as Spotify from '../lib/spotify';
+import * as YouTubeMusic from '../lib/youtubeMusic';
 import { colors } from '../lib/theme';
 
 type ConversionState = 'idle' | 'waiting' | 'processing' | 'done' | 'failed';
@@ -179,12 +181,15 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const openCreatedPlaylist = async () => {
     if (!createdPlaylistId || !primaryService) return;
     if (primaryService === 'apple_music' && !user?.id) return;
+    // Use each service's link builder rather than reconstructing URLs here —
+    // they also try the app's own scheme first, which opens the app instead of
+    // a browser. None of these start playback; they open the playlist's page.
     const urls =
       primaryService === 'spotify'
-        ? [`spotify:playlist:${createdPlaylistId}`, `https://open.spotify.com/playlist/${createdPlaylistId}`]
+        ? Spotify.getSpotifyPlaylistDeepLink(createdPlaylistId)
         : primaryService === 'apple_music'
           ? await AppleMusic.resolveAppleMusicPlaylistLinks(user?.id ?? '', createdPlaylistId, createdPlaylistUrl)
-          : [`https://music.youtube.com/playlist?list=${createdPlaylistId}`];
+          : YouTubeMusic.getYouTubeMusicPlaylistDeepLink(createdPlaylistId);
     console.log('[PlaylistModal] opening created playlist', {
       primaryService,
       createdPlaylistId,

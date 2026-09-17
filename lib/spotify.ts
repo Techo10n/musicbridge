@@ -373,7 +373,7 @@ export async function searchTracks(userId: string, query: string): Promise<Spoti
 /**
  * Gets the Spotify user ID for the given MusicBridge user.
  */
-export async function getSpotifyUserId(userId: string): Promise<string | null> {
+async function getSpotifyUserId(userId: string): Promise<string | null> {
   const accessToken = await getSpotifyAccessToken(userId);
   if (!accessToken) {
     console.error('[Spotify getSpotifyUserId] no access token — returning empty. Spotify may need reconnecting.');

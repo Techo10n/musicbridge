@@ -409,7 +409,7 @@ export async function createPlaylist(
  * Returns deep links that open the track in the Apple Music app for the
  * current user's storefront when possible.
  */
-export async function getAppleMusicDeepLink(userId: string, trackId: string): Promise<string[]> {
+async function getAppleMusicDeepLink(userId: string, trackId: string): Promise<string[]> {
   const canonicalUrl = await getCanonicalTrackUrl(userId, trackId);
   if (canonicalUrl) return buildDeepLinksFromWebUrl(canonicalUrl);
 
