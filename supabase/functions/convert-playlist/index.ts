@@ -834,11 +834,31 @@ async function createAppleMusicPlaylist(
   }
 
   const payload = await createRes.json() as {
-    data?: Array<{ id: string; attributes?: { url?: string } }>;
+    data?: Array<{
+      id: string;
+      attributes?: {
+        url?: string;
+        // `globalId` is the *catalog* id for this playlist when one exists.
+        // Catalog playlists are web-addressable; library ids are not — see
+        // integrations/apple-music.md "Library playlist IDs are not deep links".
+        // So this is an identifier Apple handed us, not a URL we invented.
+        playParams?: { globalId?: string };
+      };
+    }>;
   };
   const playlist = payload.data?.[0];
   if (!playlist?.id) return null;
   let canonicalUrl = playlist.attributes?.url ?? null;
+
+  // A private library playlist usually has no globalId, so this often stays
+  // null and the existing chain runs as before. Costs nothing to check.
+  const globalId = playlist.attributes?.playParams?.globalId;
+  if (!canonicalUrl && globalId) {
+    // No storefront segment: Apple redirects a storefront-less catalog URL to
+    // the viewer's own store, which is what we want anyway.
+    canonicalUrl = `https://music.apple.com/playlist/${globalId}`;
+    console.log(`[convert-playlist] Apple playlist URL resolved from playParams.globalId: ${canonicalUrl}`);
+  }
 
   for (let attempt = 0; !canonicalUrl && attempt < APPLE_MUSIC_PLAYLIST_URL_RETRY_ATTEMPTS; attempt += 1) {
     const catalogRes = await fetch(
