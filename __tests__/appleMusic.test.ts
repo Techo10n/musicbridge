@@ -19,8 +19,21 @@ jest.mock('../modules/apple-music', () => ({
 }));
 
 describe('getAppleMusicPlaylistDeepLink', () => {
-  it('falls back to the generic library instead of guessing unavailable playlist URLs', () => {
+  it('never builds a link from the raw library id', () => {
+    // The invariant, not the exact list: a library id is not deep-linkable and
+    // `library/playlist/{id}` resolves to "item not available". Static library
+    // routes are fine; anything containing the id is not.
+    const id = 'p.test playlist';
+    for (const url of getAppleMusicPlaylistDeepLink(id)) {
+      expect(url).not.toContain(id);
+      expect(url).not.toMatch(/library\/playlist\//);
+    }
+  });
+
+  it('falls back to library routes when Apple exposes no canonical URL', () => {
     expect(getAppleMusicPlaylistDeepLink('p.test playlist')).toEqual([
+      'music://music.apple.com/library/playlists',
+      'https://music.apple.com/library/playlists',
       'music://music.apple.com/library',
       'https://music.apple.com/library',
     ]);

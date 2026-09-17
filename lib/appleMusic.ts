@@ -450,7 +450,17 @@ export function getAppleMusicPlaylistDeepLink(
 ): string[] {
   if (canonicalUrl) return buildDeepLinksFromWebUrl(canonicalUrl);
 
+  // No canonical URL. Do NOT construct `library/playlist/{id}` — a library id is
+  // not deep-linkable and that link resolves to "item not available"; see
+  // integrations/apple-music.md.
+  //
+  // `library/playlists` is a different thing: a static route, not an id-based
+  // one, so it is not a guess. It lands on the list of the user's playlists
+  // with the new one visible, which beats the bare library root by a tap. If it
+  // does not resolve, the entries below it still do.
   return [
+    'music://music.apple.com/library/playlists',
+    'https://music.apple.com/library/playlists',
     'music://music.apple.com/library',
     'https://music.apple.com/library',
   ];
