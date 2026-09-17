@@ -179,6 +179,27 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const openCreatedPlaylist = async () => {
     if (!createdPlaylistId || !primaryService) return;
     if (primaryService === 'apple_music' && !user?.id) return;
+
+    // Apple Music: prefer starting playback natively. A playlist this app
+    // creates is a *library* playlist, and iOS exposes no way to navigate the
+    // Music app to one — library ids are not deep-linkable, and a private
+    // playlist gets no catalog URL (see integrations/apple-music.md). Queueing
+    // it on the system player is the closest available: Music opens showing it
+    // as Now Playing, which links through to the playlist. Falls through to the
+    // URL chain when the playlist has not synced to the device library yet.
+    if (primaryService === 'apple_music') {
+      const started = await AppleMusic.playAppleMusicLibraryPlaylist(createdPlaylistId);
+      if (started) {
+        for (const url of ['music://', 'https://music.apple.com']) {
+          try {
+            if (await Linking.canOpenURL(url)) { await Linking.openURL(url); break; }
+          } catch { continue; }
+        }
+        return;
+      }
+      console.warn('[PlaylistModal] Apple playlist not in device library yet — falling back to URL links');
+    }
+
     const urls =
       primaryService === 'spotify'
         ? [`spotify:playlist:${createdPlaylistId}`, `https://open.spotify.com/playlist/${createdPlaylistId}`]
