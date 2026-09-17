@@ -3,7 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getAppleMusicDiagnostics,
   getAppleMusicModuleVersion,
-  playAppleMusicLibraryPlaylist,
   requestMusicAuthorization,
   requestMusicStorefrontCountryCode,
   requestMusicUserToken,
@@ -30,9 +29,6 @@ import { cleanArtistName, cleanTitle } from './utils';
  * `apple-music-auth` Supabase Edge Function so the Apple private key never
  * ships in the client.
  */
-
-// Callers go through this facade rather than reaching into the native module.
-export { playAppleMusicLibraryPlaylist };
 
 const APPLE_MUSIC_API = 'https://api.music.apple.com/v1';
 const DEVELOPER_TOKEN_CACHE_BUFFER_MS = 60_000;

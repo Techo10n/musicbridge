@@ -51,7 +51,9 @@ async function openTrackInService(userId: string | undefined, track: LibraryTrac
   else if (track.service === 'apple_music' && userId) {
     urls = await AppleMusic.resolveAppleMusicTrackLinks(userId, track.title, track.artist, track.id);
   }
-  else if (track.service === 'youtube_music') urls = YouTubeMusic.getYouTubeMusicDeepLink(track.id);
+  // Search rather than play — opening a track must not interrupt whatever the
+  // user is currently listening to.
+  else if (track.service === 'youtube_music') urls = YouTubeMusic.getYouTubeMusicSearchLink(track.title, track.artist);
   for (const url of urls) {
     try {
       const supported = await Linking.canOpenURL(url);

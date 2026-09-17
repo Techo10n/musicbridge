@@ -18,7 +18,6 @@ import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { withTimeout } from '../../lib/utils';
-import { supabase } from '../../lib/supabase';
 
 type HomeTab = 'inbox' | 'following' | 'mixes';
 const REACTIONS_ROW = ['🔥', '❤️', '🤯', '😮'];
@@ -187,20 +186,12 @@ export default function Home() {
           break;
         }
         case 'youtube_music': {
-          let ymid: string | null = item.youtube_music_id ?? null;
-          if (!ymid && item.title && item.artist) {
-            ymid = await withTimeout(YouTubeMusic.searchTrack(user!.id, item.title, item.artist), 10_000);
-          }
-          if (ymid) {
-            links = YouTubeMusic.getYouTubeMusicDeepLink(ymid);
-            // Cache the resolved id on the share so future opens skip the
-            // search. Fire-and-forget is fine — the link above already has
-            // what it needs — but don't let a write failure vanish silently.
-            void supabase.from('shared_items').update({ youtube_music_id: ymid }).eq('id', item.id)
-              .then(({ error }) => {
-                if (error) console.error('[home] failed to cache resolved youtube_music_id:', error);
-              });
-          }
+          // Hand off as a search, not a playback link: opening a shared song
+          // must not interrupt whatever is already playing, and YouTube Music's
+          // watch?v= link starts immediately. This also removes the only reason
+          // this path resolved a video id at all — that cost a 100-unit search
+          // against a ~100-search daily quota, spent purely to build a URL.
+          links = YouTubeMusic.getYouTubeMusicSearchLink(item.title, item.artist);
           break;
         }
       }

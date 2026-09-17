@@ -660,21 +660,25 @@ export async function createPlaylist(
 
 // ─── Deep links ───────────────────────────────────────────────────────────────
 
-export function getYouTubeMusicDeepLink(videoId: string): string[] {
-  // RDAMVM{videoId} is YouTube Music's internal "music mix" playlist prefix.
-  // Passing it as the `list` param signals YTM at load time that this is a
-  // music context, which causes the player to resolve to song mode immediately
-  // (square album art, clean title) instead of loading raw video metadata first
-  // and resolving asynchronously. Without this, users see the video thumbnail
-  // and raw title until they navigate away and back.
-  const mixList = `RDAMVM${videoId}`;
+/**
+ * Open YouTube Music on a search for this song, rather than playing it.
+ *
+ * Opening a shared song must never interrupt what the listener is already
+ * playing — see decisions.md "Opening a shared song never starts playback".
+ * Spotify and Apple Music deep links land on a song *page*; YouTube Music's
+ * `watch?v=` link starts playback immediately, which is the one case that
+ * violated the rule.
+ *
+ * Searching "<title> <artist>" is the same approach Shazam uses to hand a track
+ * off to YouTube Music. It also removes the only reason this path needed a
+ * resolved video id, which means opening a shared song no longer spends a
+ * 100-unit search against a ~100-search daily quota.
+ */
+export function getYouTubeMusicSearchLink(title: string, artist: string | null): string[] {
+  const q = encodeURIComponent([title, artist].filter(Boolean).join(' ').trim());
   return [
-    // Primary: YouTube Music custom scheme with music-mix context
-    `youtubemusic://watch?v=${videoId}&list=${mixList}`,
-    // Fallback: universal web URL (YTM app handles music.youtube.com links on device)
-    `https://music.youtube.com/watch?v=${videoId}&list=${mixList}`,
-    // Last resort: vanilla YouTube scheme (no music-mix context, but opens something)
-    `vnd.youtube://${videoId}`,
+    `youtubemusic://search?q=${q}`,
+    `https://music.youtube.com/search?q=${q}`,
   ];
 }
 
