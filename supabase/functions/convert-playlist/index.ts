@@ -535,19 +535,97 @@ interface YouTubeSearchItem {
  * exactly "<artist> - Topic". That makes the wider search *safer* than the old
  * narrow one: previously a candidate was picked on title words alone.
  */
-async function searchYouTube(token: string, title: string, artist: string): Promise<string | null> {
+/**
+ * Resolve an artist's "<artist> - Topic" channel id, caching the result.
+ *
+ * Costs a search (100 units) on a miss, which is why callers only reach for
+ * this after a broad search has already failed. The cache is shared across
+ * users and runs — a channel id is a stable public fact about an artist — so
+ * the cost is paid once per artist for the whole app, not once per track.
+ */
+async function findArtistTopicChannel(
+  supabase: DbClient,
+  token: string,
+  artist: string,
+  seen: Map<string, string | null>,
+): Promise<string | null> {
+  const key = normForMatch(cleanArtistName(artist));
+  if (!key) return null;
+  if (seen.has(key)) return seen.get(key) ?? null;
+
+  try {
+    const { data } = await supabase
+      .from('artist_channels')
+      .select('channel_id')
+      .eq('service', 'youtube_music')
+      .eq('artist_key', key)
+      .maybeSingle();
+    if (data?.channel_id) {
+      seen.set(key, data.channel_id as string);
+      return data.channel_id as string;
+    }
+  } catch (err) {
+    console.error('[convert-playlist] artist_channels lookup failed:', err);
+  }
+
+  let channelId: string | null = null;
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?q=${encodeURIComponent(`${artist} - Topic`)}&type=channel&part=snippet&maxResults=10`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    await throwIfSearchUnauthorized('youtube', res);
+    if (res.ok) {
+      const data = await res.json() as {
+        items?: { id?: { channelId?: string }; snippet?: { title?: string } }[];
+      };
+      // Only an actual Topic channel will do — a regular artist channel hosts
+      // videos, which is the thing the Topic rule exists to exclude.
+      const match = (data.items ?? []).find((c) =>
+        isTopicChannel(c.snippet?.title) &&
+        wordCoverage(cleanArtistName(artist), topicChannelArtist(c.snippet?.title ?? '')) >= 0.5
+      );
+      channelId = match?.id?.channelId ?? null;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.endsWith('_quota_exceeded') || msg.endsWith('_auth_failed') || msg.endsWith('_permission_denied')) throw err;
+    console.error('[convert-playlist] artist channel search failed:', err);
+  }
+
+  seen.set(key, channelId);
+  if (channelId) {
+    const { error } = await supabase
+      .from('artist_channels')
+      .upsert({ service: 'youtube_music', artist_key: key, channel_id: channelId }, { onConflict: 'service,artist_key' });
+    if (error) console.error(`[convert-playlist] artist_channels write failed: ${error.message}`);
+  }
+  return channelId;
+}
+
+async function searchYouTube(
+  token: string,
+  title: string,
+  artist: string,
+  supabase: DbClient,
+  channelCache: Map<string, string | null>,
+): Promise<string | null> {
   const t = cleanTitle(title);
   // Match searchSpotify's splitting: collaborators make a query too specific.
   const primaryArtist = cleanArtistName(
     artist.split(/[,&]|\bfeat\b|\bft\b/i)[0].trim(),
   );
 
-  const runQuery = async (query: string): Promise<YouTubeSearchItem[]> => {
+  const runQuery = async (query: string, channelId?: string): Promise<YouTubeSearchItem[]> => {
     const q = encodeURIComponent(query);
     // videoCategoryId=10 (Music); topicId uses deprecated Freebase IDs that
-    // return 403s under load.
+    // return 403s under load. A channelId scopes the search to one channel, and
+    // is mutually exclusive with the category filter.
+    const scope = channelId
+      ? `&channelId=${encodeURIComponent(channelId)}`
+      : '&videoCategoryId=10';
     const res = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?q=${q}&type=video&part=snippet,id&maxResults=50&videoCategoryId=10`,
+      `https://www.googleapis.com/youtube/v3/search?q=${q}&type=video&part=snippet,id&maxResults=50${scope}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
     await throwIfSearchUnauthorized('youtube', res);
@@ -611,14 +689,36 @@ async function searchYouTube(token: string, title: string, artist: string): Prom
       )[0].id;
   };
 
+  // 1. Broad search. Resolves the large majority of tracks for one search, and
+  //    nothing below runs when it succeeds.
   const direct = await pickTopic(await runQuery(`${t} ${primaryArtist}`));
   if (direct) return direct;
 
-  // Nothing usable. Retry on the title alone: when an artist name is spelled
-  // differently on the Topic channel than in the source playlist, including it
-  // suppresses the very result we want. The artist still has to corroborate
-  // through the channel name in pickTopic, so this widens recall without
-  // loosening the quality bar.
+  // 2. Escalate: find the artist's Topic channel and search inside it.
+  //
+  //    Scoping to the channel guarantees the artist structurally instead of
+  //    scoring it, so an impostor or a same-name song by someone else cannot
+  //    appear at all. It also rescues the common case where the artist is
+  //    spelled differently on their channel than in the source playlist, which
+  //    makes including the artist in a broad query actively suppress the right
+  //    result.
+  //
+  //    Deliberately conditional. Doing this for every track would cost an extra
+  //    search each and roughly double a conversion, which is unaffordable at
+  //    ~100 searches/day — and would be worst on exactly the diverse playlists
+  //    this app exists for. The channel id is cached across users and runs, so
+  //    repeat artists escalate for the price of one in-channel search.
+  const channelId = await findArtistTopicChannel(supabase, token, primaryArtist, channelCache);
+  if (channelId) {
+    // Every result is already on the right Topic channel, so the artist gate in
+    // pickTopic is satisfied by construction; the title gates still apply.
+    const scoped = await pickTopic(await runQuery(t, channelId));
+    if (scoped) return scoped;
+  }
+
+  // 3. Last resort: title-only broad search. The artist still has to corroborate
+  //    through the channel name in pickTopic, so this widens recall without
+  //    loosening the quality bar.
   return await pickTopic(await runQuery(t));
 }
 
@@ -1061,6 +1161,9 @@ serve(async (req) => {
     console.error('[convert-playlist] track_matches lookup failed (continuing without cache):', err);
   }
   const newlyResolved = new Map<string, string>();
+  // Artist -> Topic channel id, for the run. Backed by artist_channels, so this
+  // only avoids re-reading the table within a single conversion.
+  const artistChannelCache = new Map<string, string | null>();
 
   // Resolve with bounded concurrency.
   //
@@ -1114,7 +1217,7 @@ serve(async (req) => {
         if (primaryService === 'spotify') {
           id = await searchSpotify(accessToken, track.title, track.artist);
         } else if (primaryService === 'youtube_music') {
-          id = await searchYouTube(accessToken, track.title, track.artist);
+          id = await searchYouTube(accessToken, track.title, track.artist, supabase, artistChannelCache);
         } else if (primaryService === 'apple_music' && appleDeveloperToken) {
           id = await searchAppleMusic(
             appleDeveloperToken,
