@@ -10,13 +10,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
-import { AppBar, Avatar } from '../../components/ui';
+import { AppBar, Avatar, SegmentedTabs, Txt, useToast } from '../../components/ui';
 import { MusicServiceButton } from '../../components/MusicServiceButton';
 import { MusicService } from '../../types';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
-import { colors } from '../../lib/theme';
+import { APPEARANCE_OPTIONS, makeStyles, serviceColor, useAppearance, useTheme } from '../../lib/theme';
+import { serviceLabel } from '../../lib/services';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 type SettingsPrefs = {
@@ -41,16 +42,6 @@ const defaultPrefs: SettingsPrefs = {
 
 const settingsKey = (userId: string) => `musicbridge_settings_${userId}`;
 const SERVICES: MusicService[] = ['spotify', 'apple_music', 'youtube_music'];
-const SERVICE_LABELS: Record<MusicService, string> = {
-  spotify: 'Spotify',
-  apple_music: 'Apple Music',
-  youtube_music: 'YouTube Music',
-};
-const SERVICE_COLORS: Record<MusicService, string> = {
-  spotify: '#1DB954',
-  apple_music: '#fc3c44',
-  youtube_music: '#FF0000',
-};
 
 function Row({
   icon, label, value, onPress, danger, toggle, toggleVal, onToggle, noChevron,
@@ -59,24 +50,27 @@ function Row({
   danger?: boolean; toggle?: boolean; toggleVal?: boolean; onToggle?: (v: boolean) => void;
   noChevron?: boolean;
 }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const C = onPress ? TouchableOpacity : View;
   const pressProps = onPress ? { onPress, activeOpacity: 0.8 } : {};
   return (
     <C style={styles.settingRow} {...pressProps}>
       <View style={styles.settingIconBox}>
-        <Ionicons name={icon} size={18} color={danger ? colors.coral : colors.primary} />
+        <Ionicons name={icon} size={18} color={danger ? colors.danger : colors.accent} />
       </View>
       <Text style={[styles.settingLabel, danger && styles.settingLabelDanger]}>{label}</Text>
       <View style={styles.settingRight}>
         {value ? <Text style={styles.settingValue} numberOfLines={1}>{value}</Text> : null}
-        {toggle ? <Switch value={toggleVal} onValueChange={onToggle} trackColor={{ false: colors.line2, true: colors.primary }} thumbColor="#fff" /> : null}
-        {!toggle && !noChevron && <Ionicons name="chevron-forward" size={16} color={colors.fg3} />}
+        {toggle ? <Switch value={toggleVal} onValueChange={onToggle} trackColor={{ false: colors.lineStrong, true: colors.accent }} thumbColor={colors.brandInk} /> : null}
+        {!toggle && !noChevron && <Ionicons name="chevron-forward" size={16} color={colors.text3} />}
       </View>
     </C>
   );
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -86,6 +80,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function Settings() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
+  const { appearance, setAppearance } = useAppearance();
   const { user, session, signOut, refreshUser, setPrimaryService } = useAuth();
   const router = useRouter();
   const params = useLocalSearchParams<{ edit?: string }>();
@@ -135,7 +133,7 @@ export default function Settings() {
       await AsyncStorage.setItem(settingsKey(user.id), JSON.stringify(nextPrefs));
     } catch (err) {
       console.error('[Settings] save preferences failed:', err);
-      Alert.alert('Settings not saved', 'Could not save this preference.');
+      toast.show({ kind: 'error', message: 'Could not save that preference' });
     }
   };
 
@@ -151,11 +149,19 @@ export default function Settings() {
     setEditVisible(true);
   };
 
+  // Deep link `?edit=1` opens the edit sheet. The state writes happen in a
+  // microtask so this never cascades a render from inside the effect body.
   useEffect(() => {
-    if (params.edit === '1' && !editVisible) {
-      openEdit();
-    }
-  }, [editVisible, params.edit]);
+    if (params.edit !== '1' || editVisible) return;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      setDraftName(user?.display_name ?? '');
+      setDraftBio(user?.bio ?? '');
+      setEditVisible(true);
+    });
+    return () => { cancelled = true; };
+  }, [editVisible, params.edit, user?.display_name, user?.bio]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -184,9 +190,9 @@ export default function Settings() {
       if (error) throw error;
       await refreshUser();
       setEditVisible(false);
-      Alert.alert('Saved', 'Profile updated.');
+      toast.show({ kind: 'success', message: 'Profile updated' });
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not save changes.');
+      toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not save changes' });
     }
     finally { setSaving(false); }
   };
@@ -217,9 +223,10 @@ export default function Settings() {
         case 'youtube_music': ok = await YouTubeMusic.connectYouTubeMusic(user.id); break;
       }
       await refreshUser();
-      Alert.alert(ok ? 'Connected' : 'Connection failed', ok ? `${SERVICE_LABELS[svc]} connected.` : `Could not connect ${SERVICE_LABELS[svc]}.`);
+      if (ok) toast.show({ kind: 'success', message: `${serviceLabel(svc)} connected` });
+      else toast.show({ kind: 'error', message: `Could not connect ${serviceLabel(svc)}` });
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not connect service.');
+      toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not connect that service' });
     } finally {
       setLoadingService(null);
     }
@@ -228,7 +235,7 @@ export default function Settings() {
   const handleDisconnect = (svc: MusicService) => {
     const userId = user?.id;
     if (!userId || loadingService) return;
-    Alert.alert(`Disconnect ${SERVICE_LABELS[svc]}?`, 'You can reconnect anytime.', [
+    Alert.alert(`Disconnect ${serviceLabel(svc)}?`, 'You can reconnect anytime.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Disconnect',
@@ -243,7 +250,7 @@ export default function Settings() {
             }
             await refreshUser();
           } catch {
-            Alert.alert('Error', `Could not disconnect ${SERVICE_LABELS[svc]}.`);
+            toast.show({ kind: 'error', message: `Could not disconnect ${serviceLabel(svc)}` });
           } finally {
             setLoadingService(null);
           }
@@ -257,7 +264,7 @@ export default function Settings() {
     try {
       await setPrimaryService(svc);
     } catch {
-      Alert.alert('Error', 'Could not update your primary service.');
+      toast.show({ kind: 'error', message: 'Could not update your primary service' });
     }
   };
 
@@ -271,16 +278,16 @@ export default function Settings() {
   const handleChangePassword = async () => {
     const email = session?.user.email;
     if (!email) {
-      Alert.alert('Password reset unavailable', 'No email address is available for this account.');
+      toast.show({ kind: 'error', message: 'No email address on this account' });
       return;
     }
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email);
       if (error) throw error;
-      Alert.alert('Password reset sent', `Check ${email} for a reset link.`);
+      toast.show({ kind: 'success', message: `Reset link sent to ${email}` });
     } catch {
-      Alert.alert('Error', 'Could not send a password reset email.');
+      toast.show({ kind: 'error', message: 'Could not send a reset email' });
     }
   };
 
@@ -291,7 +298,7 @@ export default function Settings() {
       const upload = await pickAndUploadAvatar(user.id);
       if (upload) await refreshUser();
     } catch {
-      Alert.alert('Error', 'Could not update photo.');
+      toast.show({ kind: 'error', message: 'Could not update your photo' });
     } finally {
       setChangingPhoto(false);
     }
@@ -310,7 +317,7 @@ export default function Settings() {
       <AppBar
         left={
           <TouchableOpacity onPress={() => router.back()} style={{ padding: 4 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="chevron-back" size={22} color={colors.fg2} />
+            <Ionicons name="chevron-back" size={22} color={colors.text2} />
           </TouchableOpacity>
         }
         title="Settings"
@@ -320,16 +327,31 @@ export default function Settings() {
 
         {/* ── Profile card ── */}
         <TouchableOpacity style={styles.profileCard} onPress={openEdit} activeOpacity={0.85}>
-          <Avatar name={user.display_name} avatarUrl={user.avatar_url} size={60} ring="primary" />
+          <Avatar name={user.display_name} avatarUrl={user.avatar_url} size={60} ring="accent" />
           <View style={{ flex: 1 }}>
             <Text style={styles.profileName}>{user.display_name}</Text>
             <Text style={styles.profileUsername}>@{user.username}</Text>
             {user.bio ? <Text style={styles.profileBio} numberOfLines={1}>{user.bio}</Text> : null}
           </View>
           <View style={styles.editBadge}>
-            <Ionicons name="pencil" size={14} color={colors.primaryInk} />
+            <Ionicons name="pencil" size={14} color={colors.accentInk} />
           </View>
         </TouchableOpacity>
+
+        {/* ── Appearance ── */}
+        <Section title="Appearance">
+          <View style={styles.appearanceBlock}>
+            <Txt variant="callout" color="text3" style={styles.appearanceHint}>
+              System follows your device&apos;s light or dark setting.
+            </Txt>
+            <SegmentedTabs
+              tabs={APPEARANCE_OPTIONS}
+              value={appearance}
+              onChange={setAppearance}
+              variant="pill"
+            />
+          </View>
+        </Section>
 
         {/* ── Account ── */}
         <Section title="Account">
@@ -360,8 +382,8 @@ export default function Settings() {
               />
               {isConnected(svc) && primarySvc !== svc && (
                 <TouchableOpacity style={styles.setPrimaryRow} onPress={() => handleSetPrimary(svc)} activeOpacity={0.8}>
-                  <View style={[styles.serviceDot, { backgroundColor: SERVICE_COLORS[svc] }]} />
-                  <Text style={styles.setPrimaryText}>Set {SERVICE_LABELS[svc]} as primary</Text>
+                  <View style={[styles.serviceDot, { backgroundColor: serviceColor(colors, svc) }]} />
+                  <Text style={styles.setPrimaryText}>Set {serviceLabel(svc)} as primary</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -422,7 +444,7 @@ export default function Settings() {
                 value={draftName}
                 onChangeText={setDraftName}
                 placeholder="Display name"
-                placeholderTextColor={colors.fg4}
+                placeholderTextColor={colors.text4}
                 autoCapitalize="words"
                 maxLength={50}
                 returnKeyType="done"
@@ -435,14 +457,14 @@ export default function Settings() {
                 value={draftBio}
                 onChangeText={setDraftBio}
                 placeholder="Write a bio…"
-                placeholderTextColor={colors.fg4}
+                placeholderTextColor={colors.text4}
                 multiline
                 maxLength={160}
                 textAlignVertical="top"
               />
 
               <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
-                {saving ? <ActivityIndicator color={colors.primaryInk} size="small" /> : <Text style={styles.saveBtnText}>Save Changes</Text>}
+                {saving ? <ActivityIndicator color={colors.accentInk} size="small" /> : <Text style={styles.saveBtnText}>Save Changes</Text>}
               </TouchableOpacity>
             </ScrollView>
           </KeyboardAvoidingView>
@@ -452,35 +474,37 @@ export default function Settings() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
 
   profileCard: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
     marginHorizontal: 16, marginBottom: 24, marginTop: 8,
-    backgroundColor: colors.bgCard, borderRadius: 16,
+    backgroundColor: colors.surface, borderRadius: 16,
     padding: 16, borderWidth: 1, borderColor: colors.line,
   },
-  profileName: { fontSize: 17, fontWeight: '700', color: colors.fg, marginBottom: 2 },
-  profileUsername: { fontSize: 13, color: colors.fg3 },
-  profileBio: { fontSize: 12, color: colors.fg2, marginTop: 3 },
+  profileName: { fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 2 },
+  profileUsername: { fontSize: 13, color: colors.text3 },
+  profileBio: { fontSize: 12, color: colors.text2, marginTop: 3 },
   editBadge: {
     width: 30, height: 30, borderRadius: 15,
-    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
   },
 
   section: { marginBottom: 24 },
   sectionTitle: {
-    fontSize: 11, fontWeight: '700', color: colors.fg3,
+    fontSize: 11, fontWeight: '700', color: colors.text3,
     textTransform: 'uppercase', letterSpacing: 0.8,
     paddingHorizontal: 20, marginBottom: 8,
   },
   sectionCard: {
-    marginHorizontal: 16, backgroundColor: colors.bgCard,
+    marginHorizontal: 16, backgroundColor: colors.surface,
     borderRadius: 14, borderWidth: 1, borderColor: colors.line, overflow: 'hidden',
   },
+  appearanceBlock: { paddingVertical: 14, gap: 12 },
+  appearanceHint: { paddingHorizontal: 16 },
   serviceSectionIntro: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 6 },
-  serviceSectionText: { color: colors.fg3, fontSize: 13, lineHeight: 18 },
+  serviceSectionText: { color: colors.text3, fontSize: 13, lineHeight: 18 },
   serviceSettingBlock: { paddingHorizontal: 12, paddingVertical: 6 },
   setPrimaryRow: {
     flexDirection: 'row',
@@ -492,7 +516,7 @@ const styles = StyleSheet.create({
     marginTop: -6,
   },
   serviceDot: { width: 8, height: 8, borderRadius: 4 },
-  setPrimaryText: { color: colors.fg3, fontSize: 12, fontWeight: '600' },
+  setPrimaryText: { color: colors.text3, fontSize: 12, fontWeight: '600' },
 
   settingRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -503,13 +527,13 @@ const styles = StyleSheet.create({
     width: 32, height: 32, borderRadius: 8,
     backgroundColor: colors.bgElev, alignItems: 'center', justifyContent: 'center',
   },
-  settingLabel: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.fg },
-  settingLabelDanger: { color: colors.coral },
+  settingLabel: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.text },
+  settingLabelDanger: { color: colors.danger },
   settingRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  settingValue: { fontSize: 13, color: colors.fg3, maxWidth: 140 },
+  settingValue: { fontSize: 13, color: colors.text3, maxWidth: 140 },
 
   // Edit modal
-  editOverlay: { ...StyleSheet.absoluteFill, zIndex: 100, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
+  editOverlay: { ...StyleSheet.absoluteFill, zIndex: 100, justifyContent: 'flex-end', backgroundColor: colors.overlay },
   editSheetWrap: { justifyContent: 'flex-end' },
   editSheet: {
     backgroundColor: colors.bgElev,
@@ -519,18 +543,18 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     maxHeight: '82%',
   },
-  editSheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: colors.line2, alignSelf: 'center', marginBottom: 20 },
-  editSheetTitle: { fontSize: 20, fontWeight: '700', color: colors.fg, marginBottom: 20 },
-  editLabel: { fontSize: 12, fontWeight: '600', color: colors.fg3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, marginTop: 12 },
+  editSheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: colors.lineStrong, alignSelf: 'center', marginBottom: 20 },
+  editSheetTitle: { fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 20 },
+  editLabel: { fontSize: 12, fontWeight: '600', color: colors.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, marginTop: 12 },
   editInput: {
-    backgroundColor: colors.bgCard, borderRadius: 12,
-    padding: 13, color: colors.fg, fontSize: 15,
+    backgroundColor: colors.surface, borderRadius: 12,
+    padding: 13, color: colors.text, fontSize: 15,
     borderWidth: 1, borderColor: colors.line,
   },
   editInputMulti: { minHeight: 80, textAlignVertical: 'top' },
   saveBtn: {
-    backgroundColor: colors.primary, borderRadius: 999,
+    backgroundColor: colors.accent, borderRadius: 999,
     paddingVertical: 15, alignItems: 'center', marginTop: 24,
   },
-  saveBtnText: { color: colors.primaryInk, fontSize: 16, fontWeight: '700' },
-});
+  saveBtnText: { color: colors.accentInk, fontSize: 16, fontWeight: '700' },
+}));

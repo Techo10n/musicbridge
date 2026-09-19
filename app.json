@@ -9,7 +9,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
       "buildNumber": "14",
@@ -31,7 +31,7 @@
       "package": "com.techolon.musicbridge",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FAF7F1",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -60,13 +60,15 @@
       ],
       "expo-status-bar",
       "expo-image",
-      "expo-splash-screen",
       [
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#FAF7F1",
+          "dark": {
+            "backgroundColor": "#15130F"
+          }
         }
       ]
     ],

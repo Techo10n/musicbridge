@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
-import {
-  Alert, FlatList, Linking, Modal,
-  StyleSheet, Text, TextInput, TouchableOpacity, View,
+import { FlatList, Linking, Modal,
+  Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -11,13 +10,14 @@ import { useFollows } from '../../hooks/useFollows';
 import { useSharedItems } from '../../hooks/useSharedItems';
 import { useReactions } from '../../hooks/useReactions';
 import { PlaylistModal } from '../../components/PlaylistModal';
-import { AppBar, Avatar, CoverArt, IconBtn, serviceLabelShort, ServiceDot } from '../../components/ui';
+import { AppBar, Avatar, CoverArt, IconBtn, ServiceDot, useToast } from '../../components/ui';
+import { serviceLabel, serviceLabelShort } from '../../lib/services';
 import { SharedItem, MusicService } from '../../types';
-import { colors } from '../../lib/theme';
+import { makeStyles, useTheme } from '../../lib/theme';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
-import { withTimeout } from '../../lib/utils';
+import { timeAgo, withTimeout } from '../../lib/utils';
 
 type HomeTab = 'inbox' | 'following' | 'mixes';
 const REACTIONS_ROW = ['🔥', '❤️', '🤯', '😮'];
@@ -40,6 +40,8 @@ function FeedRow({
   onReact: (emoji: string) => void;
   viewerService: MusicService | null;
 }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const [showReactions, setShowReactions] = useState(false);
   const isUnread = !item.opened;
   const shareType = item.type === 'playlist' ? 'sent a playlist' : 'sent a song';
@@ -62,7 +64,7 @@ function FeedRow({
         <View style={styles.headerAction}>
           <Text style={styles.shareTypeText} numberOfLines={1}>{shareType} · {timeAgo(item.created_at)}</Text>
           {isUnread && <View style={styles.unreadDot} />}
-          {isResolving ? <Ionicons name="sync" size={17} color={colors.fg3} /> : null}
+          {isResolving ? <Ionicons name="sync" size={17} color={colors.text3} /> : null}
         </View>
       </View>
 
@@ -96,7 +98,7 @@ function FeedRow({
           </View>
         </View>
 
-        <Ionicons name="play-circle" size={38} color={colors.primary} style={{ opacity: isResolving ? 0.4 : 1 }} />
+        <Ionicons name="play-circle" size={38} color={colors.accent} style={{ opacity: isResolving ? 0.4 : 1 }} />
       </TouchableOpacity>
 
       {item.message ? (
@@ -120,7 +122,7 @@ function FeedRow({
           {totalReactions === 0 ? <Text style={styles.noReactionsText}>No reactions yet</Text> : null}
         </View>
         <TouchableOpacity style={styles.addReactionBtn} onPress={() => setShowReactions(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name={showReactions ? 'close' : 'happy-outline'} size={16} color={colors.fg3} />
+          <Ionicons name={showReactions ? 'close' : 'happy-outline'} size={16} color={colors.text3} />
         </TouchableOpacity>
       </View>
 
@@ -137,18 +139,11 @@ function FeedRow({
   );
 }
 
-function timeAgo(iso: string): string {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return 'now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
-
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
 export default function Home() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
   const { user } = useAuth();
   const router = useRouter();
   const { items, loading, refreshing, refresh, markAsOpened, unreadCount } = useSharedItems();
@@ -167,7 +162,7 @@ export default function Home() {
     if (item.type === 'playlist') { setPlaylistModalItem(item); return; }
 
     const primaryService = user?.primary_service as MusicService | null;
-    if (!primaryService) { Alert.alert('No service', 'Set a primary streaming service in your profile.'); return; }
+    if (!primaryService) { toast.show({ kind: 'error', message: 'Set a primary streaming service in Settings first' }); return; }
 
     setResolvingId(item.id);
     try {
@@ -196,10 +191,10 @@ export default function Home() {
         }
       }
       for (const l of links) { try { await Linking.openURL(l); return; } catch { continue; } }
-      Alert.alert('App not found', `Make sure ${primaryService.replace('_', ' ')} is installed.`);
+      toast.show({ kind: 'error', message: `Make sure ${serviceLabel(primaryService)} is installed` });
     } catch (err: any) {
       const msg = err?.message === 'timeout' ? 'Timed out.' : err?.message === 'youtube_quota_exceeded' ? 'YouTube quota reached.' : 'Could not open song.';
-      Alert.alert('Error', msg);
+      toast.show({ kind: 'error', message: msg });
     } finally { setResolvingId(null); }
   };
 
@@ -232,9 +227,9 @@ export default function Home() {
         logo
         right={
           <>
-            <IconBtn name="search-outline" onPress={() => setSearchVisible(true)} />
-            <IconBtn name="notifications-outline" badge={unreadCount > 0} onPress={() => router.push('/(tabs)/notifications' as any)} />
-            <IconBtn name="paper-plane-outline" onPress={() => router.push('/(tabs)/friends' as any)} />
+            <IconBtn name="search-outline" label="Search" onPress={() => setSearchVisible(true)} />
+            <IconBtn name="notifications-outline" label="Activity" badge={unreadCount > 0} onPress={() => router.push('/(tabs)/notifications' as any)} />
+            <IconBtn name="paper-plane-outline" label="Send a song" onPress={() => router.push('/(tabs)/friends' as any)} />
           </>
         }
       />
@@ -264,7 +259,7 @@ export default function Home() {
         ListEmptyComponent={
           loading ? null : (
             <View style={styles.empty}>
-              <Ionicons name="musical-notes-outline" size={44} color={colors.fg4} />
+              <Ionicons name="musical-notes-outline" size={44} color={colors.text4} />
               <Text style={styles.emptyTitle}>No songs yet</Text>
               <Text style={styles.emptySubtitle}>
                 {tab === 'following'
@@ -300,15 +295,15 @@ export default function Home() {
           <View style={styles.searchModalHeader}>
             <Text style={styles.searchModalTitle}>Search Feed</Text>
             <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); }}>
-              <Ionicons name="close" size={22} color={colors.fg3} />
+              <Ionicons name="close" size={22} color={colors.text3} />
             </TouchableOpacity>
           </View>
           <View style={styles.searchModalInputRow}>
-            <Ionicons name="search-outline" size={16} color={colors.fg3} />
+            <Ionicons name="search-outline" size={16} color={colors.text3} />
             <TextInput
               style={styles.searchModalInput}
               placeholder="Search titles, artists, or people…"
-              placeholderTextColor={colors.fg4}
+              placeholderTextColor={colors.text4}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoCapitalize="none"
@@ -348,29 +343,29 @@ export default function Home() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
 
   // Tabs
   tabs: { flexDirection: 'row', paddingHorizontal: 20, gap: 22, paddingBottom: 0 },
   tabItem: { paddingBottom: 8, position: 'relative' },
-  tabText: { fontSize: 15, fontWeight: '500', color: colors.fg3 },
-  tabTextActive: { color: colors.fg, fontWeight: '700' },
+  tabText: { fontSize: 15, fontWeight: '500', color: colors.text3 },
+  tabTextActive: { color: colors.text, fontWeight: '700' },
   tabUnderline: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    height: 2, borderRadius: 1, backgroundColor: colors.primary,
+    height: 2, borderRadius: 1, backgroundColor: colors.accent,
   },
 
   divider: { height: 1, backgroundColor: colors.line },
 
   // Feed
-  feedRowSender: { color: colors.fg, fontWeight: '600' },
-  feedRowMeta: { color: colors.fg3 },
+  feedRowSender: { color: colors.text, fontWeight: '600' },
+  feedRowMeta: { color: colors.text3 },
 
   feedCard: {
     marginHorizontal: 16,
     marginTop: 10,
-    backgroundColor: colors.bgCard,
+    backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.line,
     borderLeftWidth: 1,
     borderRadius: 16,
@@ -378,8 +373,8 @@ const styles = StyleSheet.create({
   },
   feedCardUnread: {
     borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
-    backgroundColor: 'rgba(124,91,244,0.055)',
+    borderLeftColor: colors.accent,
+    backgroundColor: colors.accentSoft,
   },
   feedCardHeader: {
     flexDirection: 'row',
@@ -391,8 +386,8 @@ const styles = StyleSheet.create({
   senderIdentity: { flexDirection: 'row', alignItems: 'center', gap: 9, flex: 1, minWidth: 0 },
   senderTextWrap: { flex: 1, minWidth: 0 },
   headerAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, maxWidth: '48%', paddingRight: 6 },
-  shareTypeText: { color: colors.fg3, fontSize: 12 },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
+  shareTypeText: { color: colors.text3, fontSize: 12 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
   feedMediaRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   svcOverlay: {
     position: 'absolute', right: -3, bottom: -3,
@@ -401,24 +396,24 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: colors.bg,
     alignItems: 'center', justifyContent: 'center',
   },
-  feedCardTitle: { fontSize: 14, fontWeight: '500', color: colors.fg2 },
-  feedCardTitleUnread: { fontWeight: '700', color: colors.fg },
-  feedCardArtist: { fontSize: 12, color: colors.fg3, marginTop: 2 },
+  feedCardTitle: { fontSize: 14, fontWeight: '500', color: colors.text2 },
+  feedCardTitleUnread: { fontWeight: '700', color: colors.text },
+  feedCardArtist: { fontSize: 12, color: colors.text3, marginTop: 2 },
   feedCardMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7, flexWrap: 'wrap' },
   feedChip: {
     paddingHorizontal: 8, paddingVertical: 3,
     borderRadius: 999, backgroundColor: colors.bgElev,
     borderWidth: 1, borderColor: colors.line,
   },
-  feedChipText: { fontSize: 10, color: colors.fg3 },
-  feedCardService: { fontSize: 11, color: colors.fg3, flexShrink: 1 },
+  feedChipText: { fontSize: 10, color: colors.text3 },
+  feedCardService: { fontSize: 11, color: colors.text3, flexShrink: 1 },
   messageBubble: {
     marginTop: 10,
     paddingHorizontal: 12, paddingVertical: 8,
     backgroundColor: colors.bgElev,
     borderRadius: 12,
   },
-  messageBubbleText: { color: colors.fg2, fontSize: 13, lineHeight: 18 },
+  messageBubbleText: { color: colors.text2, fontSize: 13, lineHeight: 18 },
 
   // Reactions
   reactionStrip: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8 },
@@ -426,13 +421,13 @@ const styles = StyleSheet.create({
   reactionPill: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingHorizontal: 8, paddingVertical: 4,
-    backgroundColor: colors.bgCard, borderRadius: 999,
+    backgroundColor: colors.surface, borderRadius: 999,
     borderWidth: 1, borderColor: colors.line,
   },
-  reactionPillActive: { borderColor: colors.primary, backgroundColor: 'rgba(124,91,244,0.12)' },
+  reactionPillActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   reactionEmoji: { fontSize: 14 },
-  reactionCount: { fontSize: 11, color: colors.fg3 },
-  noReactionsText: { color: colors.fg4, fontSize: 12, paddingVertical: 4 },
+  reactionCount: { fontSize: 11, color: colors.text3 },
+  noReactionsText: { color: colors.text4, fontSize: 12, paddingVertical: 4 },
   addReactionBtn: {
     width: 30, height: 30, borderRadius: 15,
     alignItems: 'center', justifyContent: 'center',
@@ -443,34 +438,34 @@ const styles = StyleSheet.create({
   },
   emojiPickerBtn: {
     width: 38, height: 38, borderRadius: 19,
-    backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line,
     alignItems: 'center', justifyContent: 'center',
   },
-  emojiPickerBtnActive: { borderColor: colors.primary, backgroundColor: 'rgba(124,91,244,0.15)' },
+  emojiPickerBtnActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   emojiPickerEmoji: { fontSize: 18 },
 
   // Empty
   empty: { alignItems: 'center', paddingTop: 100, gap: 10, paddingHorizontal: 40 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.fg },
-  emptySubtitle: { fontSize: 14, color: colors.fg3, textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
+  emptySubtitle: { fontSize: 14, color: colors.text3, textAlign: 'center', lineHeight: 20 },
 
   searchModal: { flex: 1, backgroundColor: colors.bg },
   searchModalHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: colors.line,
   },
-  searchModalTitle: { fontSize: 20, fontWeight: '700', color: colors.fg },
+  searchModalTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
   searchModalInputRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    margin: 16, backgroundColor: colors.bgCard, borderRadius: 14,
+    margin: 16, backgroundColor: colors.surface, borderRadius: 14,
     paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: colors.line,
   },
-  searchModalInput: { flex: 1, color: colors.fg, fontSize: 14 },
+  searchModalInput: { flex: 1, color: colors.text, fontSize: 14 },
   searchResultRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line,
   },
-  searchResultTitle: { color: colors.fg, fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  searchResultMeta: { color: colors.fg3, fontSize: 12 },
-  searchEmptyText: { color: colors.fg4, fontSize: 14, textAlign: 'center', marginTop: 48 },
-});
+  searchResultTitle: { color: colors.text, fontSize: 14, fontWeight: '600', marginBottom: 2 },
+  searchResultMeta: { color: colors.text3, fontSize: 12 },
+  searchEmptyText: { color: colors.text4, fontSize: 14, textAlign: 'center', marginTop: 48 },
+}));

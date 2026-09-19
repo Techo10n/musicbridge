@@ -243,29 +243,49 @@ export function useProfileStats() {
   }, [user, historyOptIn]);
 
   useEffect(() => {
-    loadPinned();
-    loadHistoryPref();
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await loadPinned();
+      if (cancelled) return;
+      await loadHistoryPref();
+    })();
+    return () => { cancelled = true; };
   }, [loadPinned, loadHistoryPref]);
 
   useEffect(() => {
-    if (user && !hasFetched.current) {
-      fetchStats();
-    }
+    if (!user || hasFetched.current) return;
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await fetchStats();
+    })();
+    return () => { cancelled = true; };
   }, [user, fetchStats]);
 
-  // Re-fetch recent tracks when opt-in changes (and we've already fetched once)
+  // Re-fetch recent tracks when the opt-in changes, once the first load is done.
+  // Deliberately keyed on `historyOptIn` alone: re-running on every `user`
+  // identity change would re-request history on each profile refresh.
   useEffect(() => {
-    if (hasFetched.current && user) {
-      if (historyOptIn) {
-        if (user.primary_service === 'apple_music' && user.apple_music_user_token) {
-          AppleMusic.getRecentlyPlayed(user.id, 10).then(setRecentTracks).catch(() => {});
-        } else if (user.spotify_access_token) {
-          Spotify.getRecentlyPlayed(user.id, 20).then(setRecentTracks).catch(() => {});
-        }
-      } else {
-        setRecentTracks([]);
+    if (!hasFetched.current || !user) return;
+    let cancelled = false;
+    (async () => {
+      if (!historyOptIn) {
+        if (!cancelled) setRecentTracks([]);
+        return;
       }
-    }
+      try {
+        const recent = user.primary_service === 'apple_music' && user.apple_music_user_token
+          ? await AppleMusic.getRecentlyPlayed(user.id, 10)
+          : user.spotify_access_token
+            ? await Spotify.getRecentlyPlayed(user.id, 20)
+            : null;
+        if (!cancelled && recent) setRecentTracks(recent);
+      } catch (err) {
+        console.warn('[useProfileStats] recent tracks fetch failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyOptIn]);
 

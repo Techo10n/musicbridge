@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, Modal,
+  ActivityIndicator, Image, Modal,
   ScrollView, Share, StyleSheet, Switch, Text, TextInput,
   TouchableOpacity, View,
 } from 'react-native';
@@ -10,45 +10,30 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { useProfileStats } from '../../hooks/useProfileStats';
-import { MusicService, LibraryPlaylist, FavoriteSong } from '../../types';
+import { LibraryPlaylist, FavoriteSong } from '../../types';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { extractYouTubeTrackInfo } from '../../lib/youtubeMusic';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
 import { supabase } from '../../lib/supabase';
-import { AppBar, IconBtn, CoverArt, ServiceDot, SectionTitle } from '../../components/ui';
-import { colors } from '../../lib/theme';
+import { AppBar, IconBtn, CoverArt, EmptyState, ServiceDot, SectionTitle, useToast } from '../../components/ui';
+import { makeStyles, serviceColor, useTheme } from '../../lib/theme';
+import { serviceLabel } from '../../lib/services';
+import { monthWeekLabel, timeAgo } from '../../lib/utils';
 
-const SERVICE_LABELS: Record<MusicService, string> = {
-  spotify: 'Spotify', apple_music: 'Apple Music', youtube_music: 'YouTube Music',
-};
-const SERVICE_COLORS: Record<MusicService, string> = {
-  spotify: '#1DB954', apple_music: '#fc3c44', youtube_music: '#FF0000',
-};
-
-function timeAgo(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return 'Invalid date';
-  const now = Date.now();
-  if (t > now) return 'just now';
-  const s = Math.floor((now - t) / 1000);
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24); if (d < 7) return `${d}d`;
-  return new Date(t).toLocaleDateString();
-}
 
 export default function Profile() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
   const { user, refreshUser } = useAuth();
   const router = useRouter();
-  const { following, followers, getFollowCounts } = useFollows();
+  const { following, followers } = useFollows();
   const stats = useProfileStats();
 
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarPreviewUri, setAvatarPreviewUri] = useState<string | null>(null);
-  const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [sharedCount, setSharedCount] = useState(0);
 
   // Shared songs for "public shares" list (using own sent items as proxy)
@@ -69,7 +54,6 @@ export default function Profile() {
 
   useEffect(() => {
     if (!user) return;
-    getFollowCounts(user.id).then(setFollowCounts).catch(() => {});
     void (async () => {
       try {
         const { count } = await supabase.from('shared_items').select('id', { count: 'exact', head: true }).eq('sender_id', user.id);
@@ -79,8 +63,8 @@ export default function Profile() {
       }
     })();
     // Load public shares
-    setLoadingPublic(true);
     void (async () => {
+      setLoadingPublic(true);
       try {
         // Same rule as the inbox query: never pull `tracks` for a list view.
         // Must stay one string literal for supabase-js row typing.
@@ -107,14 +91,17 @@ export default function Profile() {
         console.error('[profile] public shares fetch error:', err);
       } finally { setLoadingPublic(false); }
     })();
-  }, [user, getFollowCounts]);
+  }, [user]);
 
-  useEffect(() => {
-    setFollowCounts({ followers: followers.length, following: following.length });
-  }, [followers.length, following.length]);
+  // Derived, not stored: `useFollows` already holds both lists, and mirroring
+  // their lengths into state was a second source of truth that could lag.
+  const followCounts = { followers: followers.length, following: following.length };
 
+  // Drop the local preview once the uploaded avatar URL actually lands.
   useEffect(() => {
-    setAvatarPreviewUri(null);
+    let cancelled = false;
+    void Promise.resolve().then(() => { if (!cancelled) setAvatarPreviewUri(null); });
+    return () => { cancelled = true; };
   }, [user?.avatar_url]);
 
   const handleAvatarPress = async () => {
@@ -126,7 +113,7 @@ export default function Profile() {
       setAvatarPreviewUri(upload.localUri);
       await refreshUser();
     }
-    catch { Alert.alert('Error', 'Could not update photo'); }
+    catch { toast.show({ kind: 'error', message: 'Could not update photo' }); }
     finally { setUploadingAvatar(false); }
   };
 
@@ -188,32 +175,33 @@ export default function Profile() {
 
   useEffect(() => {
     if (!favSongModalVisible) return;
-    if (!favSearchQuery.trim()) {
-      setFavSearchResults([]);
-      setSearchingFav(false);
-      return;
-    }
-
+    const isEmpty = !favSearchQuery.trim();
     const timeoutId = setTimeout(() => {
+      if (isEmpty) {
+        setFavSearchResults([]);
+        setSearchingFav(false);
+        return;
+      }
       void handleFavSearch(favSearchQueryRef.current);
-    }, 200);
+    }, isEmpty ? 0 : 200);
 
-    return () => {
-      clearTimeout(timeoutId);
-    };
+    return () => { clearTimeout(timeoutId); };
+  // handleFavSearch reads the live query through a ref, so it is deliberately
+  // not a dependency — including it would restart the debounce on every keystroke.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favSearchQuery, favSongModalVisible]);
 
   const saveFavoriteSong = async (song: FavoriteSong) => {
     if (!user) return;
     setFavSongModalVisible(false); setFavSearchQuery(''); setFavSearchResults([]);
     try { await supabase.from('users').update({ favorite_song: song }).eq('id', user.id); await refreshUser(); }
-    catch { Alert.alert('Error', 'Could not save'); }
+    catch { toast.show({ kind: 'error', message: 'Could not save your favorite song' }); }
   };
 
   const clearFavoriteSong = async () => {
     if (!user) return;
     try { await supabase.from('users').update({ favorite_song: null }).eq('id', user.id); await refreshUser(); }
-    catch { Alert.alert('Error', 'Could not remove'); }
+    catch { toast.show({ kind: 'error', message: 'Could not remove your favorite song' }); }
   };
 
   const openPinnedPicker = async () => {
@@ -237,11 +225,11 @@ export default function Profile() {
         message: `Follow ${user.display_name} on Museaic: museaic://profile/${user.username}`,
       });
     } catch {
-      Alert.alert('Share unavailable', 'Could not open the system share sheet.');
+      toast.show({ kind: 'error', message: 'Could not open the share sheet' });
     }
   };
 
-  if (!user) return <View style={styles.loadingScreen}><ActivityIndicator color={colors.primary} /></View>;
+  if (!user) return <View style={styles.loadingScreen}><ActivityIndicator color={colors.accent} /></View>;
 
   const initials = user.display_name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
   const avatarUri = avatarPreviewUri ?? user.avatar_url;
@@ -254,9 +242,9 @@ export default function Profile() {
         left={<Text style={styles.username}>@{user.username}</Text>}
         right={
           <>
-            <IconBtn name="notifications-outline" onPress={() => router.push('/(tabs)/notifications' as any)} />
-            <IconBtn name="paper-plane-outline" onPress={() => router.push('/(tabs)/friends' as any)} />
-            <IconBtn name="settings-outline" onPress={() => router.push('/(tabs)/settings' as any)} />
+            <IconBtn name="notifications-outline" label="Activity" onPress={() => router.push('/(tabs)/notifications' as any)} />
+            <IconBtn name="paper-plane-outline" label="Send a song" onPress={() => router.push('/(tabs)/friends' as any)} />
+            <IconBtn name="settings-outline" label="Settings" onPress={() => router.push('/(tabs)/settings' as any)} />
           </>
         }
       />
@@ -275,8 +263,8 @@ export default function Profile() {
                 }
               </View>
             </View>
-            {uploadingAvatar && <View style={styles.avatarOverlay}><ActivityIndicator color="#fff" size="small" /></View>}
-            <View style={styles.avatarEditBadge}><Ionicons name="camera" size={12} color="#fff" /></View>
+            {uploadingAvatar && <View style={styles.avatarOverlay}><ActivityIndicator color={colors.brandInk} size="small" /></View>}
+            <View style={styles.avatarEditBadge}><Ionicons name="camera" size={12} color={colors.accentInk} /></View>
           </TouchableOpacity>
 
           {/* Stats row */}
@@ -315,7 +303,7 @@ export default function Profile() {
             <Text style={styles.editBtnText}>Share profile</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/(tabs)/settings' as any)} activeOpacity={0.8}>
-            <Ionicons name="settings-outline" size={16} color={colors.fg2} />
+            <Ionicons name="settings-outline" size={16} color={colors.text2} />
           </TouchableOpacity>
         </View>
 
@@ -328,12 +316,12 @@ export default function Profile() {
               <Text style={styles.favBannerTitle} numberOfLines={1}>{user.favorite_song.title}</Text>
               <Text style={styles.favBannerArtist} numberOfLines={1}>{user.favorite_song.artist}</Text>
             </View>
-            <Ionicons name="play" size={24} color={colors.fg2} />
+            <Ionicons name="play" size={24} color={colors.text2} />
           </TouchableOpacity>
         )}
         {!user.favorite_song && (
           <TouchableOpacity style={[styles.favBanner, styles.favBannerEmpty]} onPress={() => setFavSongModalVisible(true)} activeOpacity={0.8}>
-            <Ionicons name="heart-outline" size={22} color={colors.primary} />
+            <Ionicons name="heart-outline" size={22} color={colors.accent} />
             <Text style={styles.favBannerEmptyText}>Set a favorite song</Text>
           </TouchableOpacity>
         )}
@@ -342,8 +330,8 @@ export default function Profile() {
         {stats.wrappedStats && (
           <View style={styles.wrappedCard}>
             <View style={styles.wrappedCardHeader}>
-              <Text style={styles.wrappedCardTitle}>2026 so far</Text>
-              <Text style={styles.wrappedCardSub}>APR · WK 17</Text>
+              <Text style={styles.wrappedCardTitle}>{new Date().getFullYear()} so far</Text>
+              <Text style={styles.wrappedCardSub}>{monthWeekLabel()}</Text>
             </View>
             <View style={styles.wrappedGrid}>
               {[
@@ -379,26 +367,35 @@ export default function Profile() {
           </>
         )}
         {stats.pinnedPlaylists.length === 0 && (
-          <SectionTitle title="Pinned playlists" right={
-            <TouchableOpacity onPress={openPinnedPicker}><Text style={styles.rightAction}>+ Add</Text></TouchableOpacity>
-          } />
+          <>
+            <SectionTitle title="Pinned playlists" right={
+              <TouchableOpacity onPress={openPinnedPicker}><Text style={styles.rightAction}>+ Add</Text></TouchableOpacity>
+            } />
+            <EmptyState
+              compact
+              icon="bookmark-outline"
+              title="Nothing pinned yet"
+              body="Pin up to three playlists to show at the top of your profile."
+              action={{ label: 'Pin a playlist', icon: 'add', onPress: openPinnedPicker }}
+            />
+          </>
         )}
 
         {/* ── Public shares section ── */}
         <View style={styles.publicSharesHeader}>
           <View style={styles.publicSharesPlayBtn}>
-            <Ionicons name="play" size={16} color={colors.primaryInk} />
+            <Ionicons name="play" size={16} color={colors.accentInk} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.publicSharesTitle}>Public shares</Text>
             <Text style={styles.publicSharesSub}>Songs {user.display_name.split(' ')[0]} has shared · {sharedCount}</Text>
           </View>
-          <Ionicons name="ellipsis-horizontal" size={20} color={colors.fg3} />
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.text3} />
         </View>
 
         <View style={styles.publicSharesList}>
           {loadingPublic
-            ? <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
+            ? <ActivityIndicator color={colors.accent} style={{ marginVertical: 20 }} />
             : visiblePublicShares.map((item, i) => (
               <View key={item.id} style={[styles.shareRow, i < visiblePublicShares.length - 1 && styles.shareRowSep]}>
                 <CoverArt uri={item.cover_image_url} size={48} radius={8} />
@@ -410,7 +407,7 @@ export default function Profile() {
                   </View>
                 </View>
                 <Text style={styles.shareRowTime}>{timeAgo(item.created_at)}</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
+                <Ionicons name="chevron-forward" size={16} color={colors.text3} />
               </View>
             ))
           }
@@ -424,7 +421,7 @@ export default function Profile() {
         {/* ── Listening history toggle ── */}
         {!!user.spotify_access_token && (
           <SectionTitle title="Listening History" right={
-            <Switch value={stats.historyOptIn} onValueChange={stats.setHistoryOptIn} trackColor={{ false: colors.line2, true: colors.primary }} thumbColor="#fff" />
+            <Switch value={stats.historyOptIn} onValueChange={stats.setHistoryOptIn} trackColor={{ false: colors.lineStrong, true: colors.accent }} thumbColor={colors.brandInk} />
           } />
         )}
 
@@ -436,16 +433,16 @@ export default function Profile() {
         <View style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Pin a Playlist</Text>
-            <TouchableOpacity onPress={() => setPinnedPickerVisible(false)}><Ionicons name="close" size={22} color={colors.fg3} /></TouchableOpacity>
+            <TouchableOpacity onPress={() => setPinnedPickerVisible(false)}><Ionicons name="close" size={22} color={colors.text3} /></TouchableOpacity>
           </View>
-          {loadingLibrary ? <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} /> : (
+          {loadingLibrary ? <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} /> : (
             <ScrollView>
               {libraryPlaylists.filter(pl => !stats.pinnedPlaylists.find(p => p.id === pl.id)).map(pl => (
                 <TouchableOpacity key={pl.id} style={styles.modalRow} onPress={() => { stats.pinPlaylist(pl); setPinnedPickerVisible(false); }} activeOpacity={0.8}>
                   <CoverArt uri={pl.coverUrl} size={48} radius={8} />
                   <View style={styles.modalRowInfo}>
                     <Text style={styles.modalRowTitle} numberOfLines={1}>{pl.name}</Text>
-                    <Text style={styles.modalRowMeta}>{pl.trackCount} tracks · <Text style={{ color: SERVICE_COLORS[pl.service] }}>{SERVICE_LABELS[pl.service]}</Text></Text>
+                    <Text style={styles.modalRowMeta}>{pl.trackCount} tracks · <Text style={{ color: serviceColor(colors, pl.service) }}>{serviceLabel(pl.service)}</Text></Text>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -461,15 +458,15 @@ export default function Profile() {
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Favorite Song</Text>
             <TouchableOpacity onPress={() => { setFavSongModalVisible(false); setFavSearchQuery(''); setFavSearchResults([]); }}>
-              <Ionicons name="close" size={22} color={colors.fg3} />
+              <Ionicons name="close" size={22} color={colors.text3} />
             </TouchableOpacity>
           </View>
           <View style={styles.favSearchRow}>
             <View style={styles.favSearchInput}>
               <TextInput
-                style={{ flex: 1, color: colors.fg, fontSize: 15 }}
+                style={{ flex: 1, color: colors.text, fontSize: 15 }}
                 placeholder="Search for a song…"
-                placeholderTextColor={colors.fg4}
+                placeholderTextColor={colors.text4}
                 value={favSearchQuery}
                 onChangeText={setFavSearchQuery}
                 onSubmitEditing={() => void handleFavSearch()}
@@ -479,7 +476,7 @@ export default function Profile() {
               />
             </View>
             <TouchableOpacity style={styles.favSearchBtn} onPress={() => void handleFavSearch()} disabled={searchingFav}>
-              {searchingFav ? <ActivityIndicator color={colors.primaryInk} size="small" /> : <Text style={styles.favSearchBtnText}>Search</Text>}
+              {searchingFav ? <ActivityIndicator color={colors.accentInk} size="small" /> : <Text style={styles.favSearchBtnText}>Search</Text>}
             </TouchableOpacity>
           </View>
           <ScrollView>
@@ -490,7 +487,7 @@ export default function Profile() {
                   <Text style={styles.modalRowTitle} numberOfLines={1}>{song.title}</Text>
                   <Text style={styles.modalRowMeta} numberOfLines={1}>{song.artist}</Text>
                 </View>
-                <View style={[styles.svcDot, { backgroundColor: SERVICE_COLORS[song.service] }]} />
+                <View style={[styles.svcDot, { backgroundColor: serviceColor(colors, song.service) }]} />
               </TouchableOpacity>
             ))}
             {user.favorite_song && (
@@ -506,11 +503,11 @@ export default function Profile() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
   loadingScreen: { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' },
 
-  username: { fontSize: 18, fontWeight: '700', color: colors.fg, letterSpacing: -0.3 },
+  username: { fontSize: 18, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
 
   // Profile top
   profileTop: {
@@ -520,7 +517,7 @@ const styles = StyleSheet.create({
   avatarWrapper: { position: 'relative' },
   avatarRing: {
     width: 96, height: 96, borderRadius: 48,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent,
     padding: 2, alignItems: 'center', justifyContent: 'center',
   },
   avatarRingGap: {
@@ -531,50 +528,50 @@ const styles = StyleSheet.create({
   avatar: { width: 84, height: 84, borderRadius: 42 },
   avatarFallback: {
     width: 84, height: 84, borderRadius: 42,
-    backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
   },
-  initials: { fontSize: 28, fontWeight: '700', color: colors.fg },
-  avatarOverlay: { ...StyleSheet.absoluteFill, borderRadius: 48, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
+  initials: { fontSize: 28, fontWeight: '700', color: colors.text },
+  avatarOverlay: { ...StyleSheet.absoluteFill, borderRadius: 48, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center' },
   avatarEditBadge: {
     position: 'absolute', right: 2, bottom: 2,
     width: 22, height: 22, borderRadius: 11,
-    backgroundColor: colors.primary, borderWidth: 2, borderColor: colors.bg,
+    backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.bg,
     alignItems: 'center', justifyContent: 'center',
   },
   statsRow: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
   stat: { alignItems: 'center', gap: 2 },
-  statNum: { fontSize: 18, fontWeight: '800', color: colors.fg, letterSpacing: -0.5 },
-  statLabel: { fontSize: 11, color: colors.fg3 },
+  statNum: { fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
+  statLabel: { fontSize: 11, color: colors.text3 },
 
   // Bio block
   bioBlock: { paddingHorizontal: 20, paddingBottom: 12 },
-  displayName: { fontSize: 16, fontWeight: '700', color: colors.fg, marginBottom: 4 },
-  bio: { fontSize: 13, color: colors.fg2, lineHeight: 18, marginBottom: 8 },
-  bioPlaceholder: { fontSize: 13, color: colors.fg4, fontStyle: 'italic', marginBottom: 8 },
+  displayName: { fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 4 },
+  bio: { fontSize: 13, color: colors.text2, lineHeight: 18, marginBottom: 8 },
+  bioPlaceholder: { fontSize: 13, color: colors.text4, fontStyle: 'italic', marginBottom: 8 },
   tagRow: { gap: 6 },
-  tag: { backgroundColor: colors.bgCard, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: colors.line },
-  tagText: { fontSize: 11, color: colors.fg3, fontWeight: '600' },
+  tag: { backgroundColor: colors.surface, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: colors.line },
+  tagText: { fontSize: 11, color: colors.text3, fontWeight: '600' },
 
   svcDot: { width: 8, height: 8, borderRadius: 4 },
 
   // Edit / share buttons
   actionRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 16 },
-  editBtn: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line, alignItems: 'center' },
-  editBtnText: { fontSize: 13, fontWeight: '600', color: colors.fg },
-  iconBtn: { width: 38, height: 38, borderRadius: 10, backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
+  editBtn: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, alignItems: 'center' },
+  editBtnText: { fontSize: 13, fontWeight: '600', color: colors.text },
+  iconBtn: { width: 38, height: 38, borderRadius: 10, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
 
   // Favorite song
   favBanner: {
     marginHorizontal: 16, marginBottom: 12,
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: colors.bgCard, borderRadius: 14, padding: 12,
+    backgroundColor: colors.surface, borderRadius: 14, padding: 12,
     borderWidth: 1, borderColor: colors.line,
   },
   favBannerEmpty: { justifyContent: 'center', borderStyle: 'dashed', gap: 8 },
-  favBannerLabel: { fontSize: 10, color: colors.coral, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
-  favBannerTitle: { fontSize: 15, fontWeight: '700', color: colors.fg },
-  favBannerArtist: { fontSize: 12, color: colors.fg2, marginTop: 1 },
-  favBannerEmptyText: { fontSize: 13, color: colors.fg3, fontStyle: 'italic' },
+  favBannerLabel: { fontSize: 10, color: colors.danger, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
+  favBannerTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
+  favBannerArtist: { fontSize: 12, color: colors.text2, marginTop: 1 },
+  favBannerEmptyText: { fontSize: 13, color: colors.text3, fontStyle: 'italic' },
 
   // Wrapped stats
   wrappedCard: {
@@ -583,24 +580,24 @@ const styles = StyleSheet.create({
   },
   wrappedCardHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.bgCard,
+    paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.surface,
     borderBottomWidth: 1, borderBottomColor: colors.line,
   },
-  wrappedCardTitle: { fontSize: 16, fontWeight: '700', color: colors.fg },
-  wrappedCardSub: { fontSize: 11, color: colors.fg3, fontVariant: ['tabular-nums'] },
+  wrappedCardTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
+  wrappedCardSub: { fontSize: 11, color: colors.text3, fontVariant: ['tabular-nums'] },
   wrappedGrid: { backgroundColor: colors.bgElev, padding: 14, flexDirection: 'row', flexWrap: 'wrap', gap: 0 },
   wrappedStat: { width: '50%', paddingVertical: 8, paddingHorizontal: 4 },
-  wrappedStatLabel: { fontSize: 10, color: colors.fg3, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '600', marginBottom: 3 },
-  wrappedStatValue: { fontSize: 16, fontWeight: '700', color: colors.fg, letterSpacing: -0.3 },
+  wrappedStatLabel: { fontSize: 10, color: colors.text3, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '600', marginBottom: 3 },
+  wrappedStatValue: { fontSize: 16, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
 
   // Pinned playlists
-  rightAction: { fontSize: 13, color: colors.fg3, fontWeight: '500' },
+  rightAction: { fontSize: 13, color: colors.text3, fontWeight: '500' },
   pinnedGrid: {
     flexDirection: 'row', paddingHorizontal: 16, gap: 12, marginBottom: 16,
   },
   pinnedItem: { flex: 1 },
-  pinnedTitle: { fontSize: 12, fontWeight: '600', color: colors.fg, marginTop: 6, lineHeight: 16 },
-  pinnedMeta: { fontSize: 10, color: colors.fg3, marginTop: 2 },
+  pinnedTitle: { fontSize: 12, fontWeight: '600', color: colors.text, marginTop: 6, lineHeight: 16 },
+  pinnedMeta: { fontSize: 10, color: colors.text3, marginTop: 2 },
 
   // Public shares
   publicSharesHeader: {
@@ -610,41 +607,41 @@ const styles = StyleSheet.create({
   },
   publicSharesPlayBtn: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent,
     alignItems: 'center', justifyContent: 'center',
   },
-  publicSharesTitle: { fontSize: 16, fontWeight: '700', color: colors.fg },
-  publicSharesSub: { fontSize: 12, color: colors.fg3, marginTop: 1 },
+  publicSharesTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
+  publicSharesSub: { fontSize: 12, color: colors.text3, marginTop: 1 },
 
   publicSharesList: {
     marginHorizontal: 16, marginBottom: 16,
-    backgroundColor: colors.bgCard, borderRadius: 14,
+    backgroundColor: colors.surface, borderRadius: 14,
     borderWidth: 1, borderColor: colors.line, overflow: 'hidden',
   },
   shareRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10 },
   shareRowSep: { borderBottomWidth: 1, borderBottomColor: colors.line },
   shareRowInfo: { flex: 1, minWidth: 0 },
-  shareRowTitle: { fontSize: 14, fontWeight: '600', color: colors.fg },
+  shareRowTitle: { fontSize: 14, fontWeight: '600', color: colors.text },
   shareRowMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  shareRowArtist: { fontSize: 12, color: colors.fg3 },
-  shareRowTime: { fontSize: 11, color: colors.fg3 },
+  shareRowArtist: { fontSize: 12, color: colors.text3 },
+  shareRowTime: { fontSize: 11, color: colors.text3 },
   emptyPublic: { alignItems: 'center', paddingVertical: 24 },
-  emptyPublicText: { color: colors.fg4, fontSize: 13, fontStyle: 'italic' },
+  emptyPublicText: { color: colors.text4, fontSize: 13, fontStyle: 'italic' },
 
   // Modals
   modal: { flex: 1, backgroundColor: colors.bg },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: colors.line },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: colors.fg },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
   modalRow: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12, borderBottomWidth: 1, borderBottomColor: colors.line },
   modalRowInfo: { flex: 1 },
-  modalRowTitle: { fontSize: 15, fontWeight: '600', color: colors.fg, marginBottom: 2 },
-  modalRowMeta: { fontSize: 12, color: colors.fg3 },
-  modalEmpty: { color: colors.fg4, fontSize: 14, textAlign: 'center', marginTop: 48, paddingHorizontal: 32 },
+  modalRowTitle: { fontSize: 15, fontWeight: '600', color: colors.text, marginBottom: 2 },
+  modalRowMeta: { fontSize: 12, color: colors.text3 },
+  modalEmpty: { color: colors.text4, fontSize: 14, textAlign: 'center', marginTop: 48, paddingHorizontal: 32 },
 
   favSearchRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line },
-  favSearchInput: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bgCard, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderColor: colors.line },
-  favSearchBtn: { backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
-  favSearchBtnText: { color: colors.primaryInk, fontSize: 14, fontWeight: '700' },
+  favSearchInput: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderColor: colors.line },
+  favSearchBtn: { backgroundColor: colors.accent, borderRadius: 10, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  favSearchBtnText: { color: colors.accentInk, fontSize: 14, fontWeight: '700' },
   clearFavBtn: { alignItems: 'center', paddingVertical: 20 },
-  clearFavText: { color: colors.coral, fontSize: 14, fontWeight: '600' },
-});
+  clearFavText: { color: colors.danger, fontSize: 14, fontWeight: '600' },
+}));

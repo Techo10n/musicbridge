@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet,
-  Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator, FlatList, ScrollView, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,9 +9,9 @@ import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { ShareModal } from '../../components/ShareModal';
 import { UserProfileModal } from '../../components/UserProfileModal';
-import { Avatar, AppBar, IconBtn, TasteBar, ServiceDot } from '../../components/ui';
+import { Avatar, AppBar, IconBtn, TasteBar, ServiceDot, useToast } from '../../components/ui';
 import { User } from '../../types';
-import { colors } from '../../lib/theme';
+import { makeStyles, useTheme } from '../../lib/theme';
 
 type PeopleTab = 'following' | 'followers' | 'suggested';
 type SharedTasteRow = { sender_id: string; title: string | null; artist: string | null };
@@ -63,6 +62,9 @@ async function fetchSharedTasteRows(userIds: string[]): Promise<SharedTasteRow[]
 }
 
 export default function People() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
   const { user: currentUser } = useAuth();
   const {
     following,
@@ -96,19 +98,18 @@ export default function People() {
   }, [searchQuery, searchUsers]);
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      setSearching(false);
-      return;
-    }
-
+    const isEmpty = !searchQuery.trim();
+    // An empty box clears on the next tick; a real query waits out the debounce.
     const timeoutId = setTimeout(() => {
+      if (isEmpty) {
+        setSearchResults([]);
+        setSearching(false);
+        return;
+      }
       void handleSearch();
-    }, 200);
+    }, isEmpty ? 0 : 200);
 
-    return () => {
-      clearTimeout(timeoutId);
-    };
+    return () => { clearTimeout(timeoutId); };
   }, [handleSearch, searchQuery]);
 
   useEffect(() => {
@@ -123,14 +124,14 @@ export default function People() {
 
     const targets = [...following, ...followers, ...suggestedUsers, ...searchResults];
     const uniqueTargets = Array.from(new Map(targets.map((u) => [u.id, u])).values());
-    if (uniqueTargets.length === 0) {
-      setMatchScores({});
-      return;
-    }
 
     let cancelled = false;
 
     const computeMatchScores = async () => {
+      if (uniqueTargets.length === 0) {
+        if (!cancelled) setMatchScores({});
+        return;
+      }
       const userIds = [currentUser.id, ...uniqueTargets.map((u) => u.id)];
       let data: SharedTasteRow[] = [];
       try {
@@ -204,11 +205,11 @@ export default function People() {
 
   const handleFollow = async (userId: string) => {
     try { await followUser(userId); await refresh(); }
-    catch (err) { Alert.alert('Error', err instanceof Error ? err.message : 'Could not follow'); }
+    catch (err) { toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not follow' }); }
   };
   const handleUnfollow = async (userId: string) => {
     try { await unfollowUser(userId); await refresh(); }
-    catch (err) { Alert.alert('Error', err instanceof Error ? err.message : 'Could not unfollow'); }
+    catch (err) { toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not unfollow' }); }
   };
 
   const listData = activeTab === 'following'
@@ -222,17 +223,17 @@ export default function People() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <AppBar
         title="People"
-        right={<IconBtn name="person-add-outline" />}
+        right={<IconBtn name="person-add-outline" label="Find people" onPress={() => setActiveTab('suggested')} />}
       />
 
       {/* Search */}
       <View style={styles.searchRow}>
         <View style={styles.searchPill}>
-          <Ionicons name="search-outline" size={16} color={colors.fg3} />
+          <Ionicons name="search-outline" size={16} color={colors.text3} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search by username…"
-            placeholderTextColor={colors.fg4}
+            placeholderTextColor={colors.text4}
             value={searchQuery}
             onChangeText={setSearchQuery}
             onSubmitEditing={handleSearch}
@@ -240,7 +241,7 @@ export default function People() {
             autoCapitalize="none"
             autoCorrect={false}
           />
-          {searching && <ActivityIndicator size="small" color={colors.primary} />}
+          {searching && <ActivityIndicator size="small" color={colors.accent} />}
         </View>
       </View>
 
@@ -276,9 +277,9 @@ export default function People() {
             >
               <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
                 {t === 'following'
-                  ? <><Text style={[styles.tabText, isActive && styles.tabTextActive]}>Following </Text><Text style={{ color: colors.fg3, fontWeight: '500' }}>{following.length > 0 ? following.length : ''}</Text></>
+                  ? <><Text style={[styles.tabText, isActive && styles.tabTextActive]}>Following </Text><Text style={{ color: colors.text3, fontWeight: '500' }}>{following.length > 0 ? following.length : ''}</Text></>
                   : t === 'followers'
-                  ? <><Text style={[styles.tabText, isActive && styles.tabTextActive]}>Followers </Text><Text style={{ color: colors.fg3, fontWeight: '500' }}>{followers.length > 0 ? followers.length : ''}</Text></>
+                  ? <><Text style={[styles.tabText, isActive && styles.tabTextActive]}>Followers </Text><Text style={{ color: colors.text3, fontWeight: '500' }}>{followers.length > 0 ? followers.length : ''}</Text></>
                   : 'Suggested'}
               </Text>
               {isActive && <View style={styles.tabUnderline} />}
@@ -289,7 +290,7 @@ export default function People() {
 
       {loading ? (
         <View style={styles.loadingCenter}>
-          <ActivityIndicator color={colors.primary} size="large" />
+          <ActivityIndicator color={colors.accent} size="large" />
         </View>
       ) : activeTab === 'suggested' ? (
         <SuggestedSection
@@ -366,6 +367,8 @@ function PersonRow({
   streak?: number;
   onViewProfile?: () => void;
 }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const svc = (user as any).primary_service as string | undefined;
   return (
     <TouchableOpacity style={styles.personRow} onPress={onViewProfile} activeOpacity={0.8}>
@@ -390,7 +393,7 @@ function PersonRow({
       <View style={styles.personActions}>
         {onShare && (
           <TouchableOpacity style={styles.sendBtn} onPress={onShare} activeOpacity={0.8} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="paper-plane-outline" size={16} color={colors.fg2} />
+            <Ionicons name="paper-plane-outline" size={16} color={colors.text2} />
             <Text style={styles.sendBtnText}>Send</Text>
           </TouchableOpacity>
         )}
@@ -420,6 +423,7 @@ function SuggestedSection({
   onFollow: (id: string) => void;
   onViewProfile: (u: User) => void;
 }) {
+  const styles = useStyles();
   if (users.length === 0) {
     return (
       <View style={styles.empty}>
@@ -458,21 +462,21 @@ function SuggestedSection({
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
 
   searchRow: { paddingHorizontal: 20, paddingBottom: 12 },
   searchPill: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: colors.bgCard, borderRadius: 999,
+    backgroundColor: colors.surface, borderRadius: 999,
     paddingHorizontal: 14, paddingVertical: 11,
     borderWidth: 1, borderColor: colors.line,
   },
-  searchInput: { flex: 1, color: colors.fg, fontSize: 14 },
+  searchInput: { flex: 1, color: colors.text, fontSize: 14 },
 
   searchResults: {
     marginHorizontal: 16, marginBottom: 8,
-    backgroundColor: colors.bgCard, borderRadius: 14,
+    backgroundColor: colors.surface, borderRadius: 14,
     overflow: 'hidden', borderWidth: 1, borderColor: colors.line,
   },
 
@@ -486,23 +490,23 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   tabActive: {},
-  tabText: { fontSize: 14, fontWeight: '500', color: colors.fg3 },
-  tabTextActive: { color: colors.fg, fontWeight: '700' },
+  tabText: { fontSize: 14, fontWeight: '500', color: colors.text3 },
+  tabTextActive: { color: colors.text, fontWeight: '700' },
   tabUnderline: {
     position: 'absolute', bottom: -1, left: '20%', right: '20%',
-    height: 2, backgroundColor: colors.primary, borderRadius: 1,
+    height: 2, backgroundColor: colors.accent, borderRadius: 1,
   },
 
   sectionLabel: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 },
   sectionLabelText: {
-    fontSize: 11, fontWeight: '600', color: colors.fg3,
+    fontSize: 11, fontWeight: '600', color: colors.text3,
     textTransform: 'uppercase', letterSpacing: 0.8,
   },
 
   loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   sep: { height: 1, backgroundColor: colors.line, marginLeft: 76 },
   empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 40 },
-  emptyText: { color: colors.fg3, fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  emptyText: { color: colors.text3, fontSize: 14, textAlign: 'center', lineHeight: 20 },
 
   // Person row
   personRow: {
@@ -511,13 +515,13 @@ const styles = StyleSheet.create({
   },
   personInfo: { flex: 1, minWidth: 0 },
   personNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  personName: { fontSize: 15, fontWeight: '600', color: colors.fg, flexShrink: 1 },
+  personName: { fontSize: 15, fontWeight: '600', color: colors.text, flexShrink: 1 },
   streakBadge: { fontSize: 12 },
   personMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  personUsername: { fontSize: 12, color: colors.fg3, flexShrink: 1 },
-  mutualBadge: { fontSize: 11, color: colors.violet, flexShrink: 0 },
+  personUsername: { fontSize: 12, color: colors.text3, flexShrink: 1 },
+  mutualBadge: { fontSize: 11, color: colors.accent, flexShrink: 0 },
   matchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
-  matchPct: { fontSize: 11, color: colors.fg3, fontVariant: ['tabular-nums'] },
+  matchPct: { fontSize: 11, color: colors.text3, fontVariant: ['tabular-nums'] },
 
   personActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sendBtn: {
@@ -525,12 +529,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 7,
     borderRadius: 999, borderWidth: 1, borderColor: colors.line,
   },
-  sendBtnText: { color: colors.fg2, fontSize: 12, fontWeight: '600' },
+  sendBtnText: { color: colors.text2, fontSize: 12, fontWeight: '600' },
   followBtn: {
-    backgroundColor: colors.primary, borderRadius: 999,
+    backgroundColor: colors.accent, borderRadius: 999,
     paddingVertical: 7, paddingHorizontal: 16,
   },
-  followingBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.line2 },
-  followBtnText: { color: colors.primaryInk, fontSize: 13, fontWeight: '700' },
-  followingBtnText: { color: colors.fg3 },
-});
+  followingBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.lineStrong },
+  followBtnText: { color: colors.accentInk, fontSize: 13, fontWeight: '700' },
+  followingBtnText: { color: colors.text3 },
+}));

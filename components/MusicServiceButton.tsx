@@ -1,5 +1,8 @@
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, TouchableOpacity, View } from 'react-native';
+import { makeStyles, serviceColor, useTheme } from '../lib/theme';
+import { serviceConnectHint, serviceLabel } from '../lib/services';
 import { MusicService } from '../types';
+import { ServiceDot, Txt } from './ui';
 
 interface MusicServiceButtonProps {
   service: MusicService;
@@ -10,146 +13,80 @@ interface MusicServiceButtonProps {
   isPrimary?: boolean;
 }
 
-const SERVICE_CONFIG: Record<
-  MusicService,
-  { label: string; color: string; description: string }
-> = {
-  spotify: {
-    label: 'Spotify',
-    color: '#1DB954',
-    description: 'Connect your Spotify account',
-  },
-  apple_music: {
-    label: 'Apple Music',
-    color: '#fc3c44',
-    description: 'Connect via MusicKit',
-  },
-  youtube_music: {
-    label: 'YouTube Music',
-    color: '#FF0000',
-    description: 'Connect via Google account',
-  },
-};
-
 export function MusicServiceButton({
-  service,
-  connected,
-  onConnect,
-  onDisconnect,
-  loading = false,
-  isPrimary = false,
+  service, connected, onConnect, onDisconnect, loading = false, isPrimary = false,
 }: MusicServiceButtonProps) {
-  const config = SERVICE_CONFIG[service];
+  const s = useStyles();
+  const { colors } = useTheme();
+  const brand = serviceColor(colors, service);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.left}>
-        <View style={[styles.dot, { backgroundColor: config.color }]} />
-        <View>
-          <View style={styles.labelRow}>
-            <Text style={styles.label}>{config.label}</Text>
-            {isPrimary && <View style={styles.primaryBadge}><Text style={styles.primaryText}>Primary</Text></View>}
+    <View style={s.container}>
+      <View style={s.left}>
+        <ServiceDot service={service} size={12} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={s.labelRow}>
+            <Txt variant="bodyStrong">{serviceLabel(service)}</Txt>
+            {isPrimary ? (
+              <View style={s.primaryBadge}>
+                <Txt variant="micro" color="accent">Primary</Txt>
+              </View>
+            ) : null}
           </View>
-          <Text style={styles.description}>{config.description}</Text>
+          <Txt variant="caption" color="text3">{connected ? 'Connected' : serviceConnectHint(service)}</Txt>
         </View>
       </View>
 
       <TouchableOpacity
-        style={[
-          styles.button,
-          connected ? styles.disconnectButton : { backgroundColor: config.color },
-          loading && styles.buttonDisabled,
-        ]}
+        style={[s.button, connected ? s.disconnectButton : { backgroundColor: brand }, loading && s.buttonDisabled]}
         onPress={connected ? onDisconnect : onConnect}
         disabled={loading}
         activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={`${connected ? 'Disconnect' : 'Connect'} ${serviceLabel(service)}`}
       >
         {loading ? (
-          <ActivityIndicator color="#fff" size="small" />
+          <ActivityIndicator color={connected ? colors.text3 : colors.brandInk} size="small" />
         ) : (
-          <Text style={[styles.buttonText, connected && styles.disconnectText]}>
+          <Txt variant="captionStrong" style={connected ? s.disconnectText : s.buttonText}>
             {connected ? 'Disconnect' : 'Connect'}
-          </Text>
+          </Txt>
         )}
       </TouchableOpacity>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing }) => ({
   container: {
-    backgroundColor: '#26221d',
-    borderRadius: 14,
-    padding: 16,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: '#332e28',
+    borderColor: colors.line,
+    gap: spacing.md,
   },
-  left: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  labelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 2,
-  },
-  label: {
-    color: '#f5f0e8',
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  left: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 2 },
   primaryBadge: {
-    backgroundColor: 'rgba(124,91,244,0.15)',
-    borderRadius: 4,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.sm - 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(124,91,244,0.3)',
-  },
-  primaryText: {
-    color: '#9b80f8',
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  description: {
-    color: '#8a8075',
-    fontSize: 12,
   },
   button: {
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    minWidth: 96,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm + 1,
+    paddingHorizontal: spacing.lg,
+    minWidth: 100,
     alignItems: 'center',
   },
-  disconnectButton: {
-    backgroundColor: '#2c2822',
-    borderWidth: 1,
-    borderColor: '#3e3932',
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#f5f3ff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  disconnectText: {
-    color: '#8a8075',
-  },
-});
+  disconnectButton: { backgroundColor: colors.surfaceAlt },
+  buttonDisabled: { opacity: 0.6 },
+  buttonText: { color: colors.brandInk },
+  disconnectText: { color: colors.text3 },
+}));

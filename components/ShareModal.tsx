@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  FlatList,
+    FlatList,
   Image,
   Modal,
   StyleSheet,
@@ -12,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../lib/theme';
+import { makeStyles, useTheme } from '../lib/theme';
 import { supabase } from '../lib/supabase';
 import { sendPushNotification } from '../lib/notifications';
 import * as Spotify from '../lib/spotify';
@@ -21,7 +20,8 @@ import * as YouTubeMusic from '../lib/youtubeMusic';
 import { extractYouTubeTrackInfo } from '../lib/youtubeMusic';
 import { useAuth } from '../hooks/useAuth';
 import { MusicService, SpotifyTrack, AppleMusicTrack, YouTubeTrack, User } from '../types';
-import { serviceName } from './ServiceBadge';
+import { serviceLabel } from '../lib/services';
+import { useToast } from './ui';
 import { resolveArtworkUrl as resolveAppleMusicArtwork } from '../lib/appleMusic';
 import { cleanTitle, withTimeout } from '../lib/utils';
 
@@ -44,6 +44,9 @@ interface ShareModalProps {
 }
 
 export function ShareModal({ visible, recipient, onClose, onShared }: ShareModalProps) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -115,15 +118,15 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
 
   useEffect(() => {
     if (!visible) return;
-    if (!query.trim()) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-
+    const isEmpty = !query.trim();
     const timeoutId = setTimeout(() => {
+      if (isEmpty) {
+        setResults([]);
+        setSearching(false);
+        return;
+      }
       void handleSearch();
-    }, 200);
+    }, isEmpty ? 0 : 200);
 
     return () => {
       clearTimeout(timeoutId);
@@ -172,14 +175,14 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
         insertedItem.id,
       );
 
-      Alert.alert('Sent!', `Shared "${result.title}" with ${recipient.display_name}.`);
+      toast.show({ kind: 'success', message: `Sent "${result.title}" to ${recipient.display_name}` });
       onShared();
       handleClose();
     } catch (err: any) {
       const msg = err instanceof Error && err.message === 'timeout'
         ? 'Share timed out. Check your connection and try again.'
         : 'Failed to share. Please try again.';
-      Alert.alert('Error', msg);
+      toast.show({ kind: 'error', message: msg });
       console.error('[ShareModal] share error:', err);
     } finally {
       setSharing(false);
@@ -220,7 +223,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
         <View style={styles.sheetHeader}>
           <Text style={styles.sheetTitle}>Send to</Text>
           <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="close" size={22} color={colors.fg3} />
+            <Ionicons name="close" size={22} color={colors.text3} />
           </TouchableOpacity>
         </View>
 
@@ -241,24 +244,24 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
               <Text style={styles.recipientName}>{recipient.display_name}</Text>
               <Text style={styles.recipientUsername}>@{recipient.username}</Text>
             </View>
-            <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
+            <Ionicons name="checkmark-circle" size={22} color={colors.accent} />
           </View>
         )}
 
         {/* Search bar — pill style */}
         <View style={styles.searchPill}>
-          <Ionicons name="search-outline" size={16} color={colors.fg3} />
+          <Ionicons name="search-outline" size={16} color={colors.text3} />
           <TextInput
             style={styles.searchPillInput}
-            placeholder={primaryService ? `Search ${serviceName(primaryService)}…` : 'Search songs…'}
-            placeholderTextColor={colors.fg4}
+            placeholder={primaryService ? `Search ${serviceLabel(primaryService)}…` : 'Search songs…'}
+            placeholderTextColor={colors.text4}
             value={query}
             onChangeText={setQuery}
             returnKeyType="search"
             autoCapitalize="none"
             autoCorrect={false}
           />
-          {searching && <ActivityIndicator size="small" color={colors.primary} />}
+          {searching && <ActivityIndicator size="small" color={colors.accent} />}
         </View>
 
         {/* Results */}
@@ -287,7 +290,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
               >
                 {result.coverUrl
                   ? <Image source={{ uri: result.coverUrl }} style={styles.resultCover} />
-                  : <View style={[styles.resultCover, styles.resultCoverPlaceholder]}><Ionicons name="musical-note" size={18} color={colors.fg4} /></View>
+                  : <View style={[styles.resultCover, styles.resultCoverPlaceholder]}><Ionicons name="musical-note" size={18} color={colors.text4} /></View>
                 }
                 <View style={styles.resultInfo}>
                   <Text style={styles.resultTitle} numberOfLines={1}>{result.title}</Text>
@@ -301,7 +304,7 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   {sharing && isSent
-                    ? <ActivityIndicator size="small" color={isSent ? colors.primaryInk : colors.fg} />
+                    ? <ActivityIndicator size="small" color={isSent ? colors.accentInk : colors.text} />
                     : <Text style={[styles.sendBtnText, isSent && styles.sendBtnTextSent]}>{isSent ? 'Sent' : 'Send'}</Text>
                   }
                 </TouchableOpacity>
@@ -315,29 +318,21 @@ export function ShareModal({ visible, recipient, onClose, onShared }: ShareModal
           <TextInput
             style={styles.messageInput}
             placeholder="Add a message…"
-            placeholderTextColor={colors.fg4}
+            placeholderTextColor={colors.text4}
             value={message}
             onChangeText={setMessage}
             maxLength={200}
           />
-          <TouchableOpacity
-            style={[styles.sendAllBtn, (!results.length || sharing) && styles.sendAllBtnDisabled]}
-            disabled={!results.length || sharing}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="paper-plane" size={14} color={colors.primaryInk} />
-            <Text style={styles.sendAllBtnText}>Send</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type, elevation }) => ({
   overlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: colors.overlay,
   },
   sheet: {
     position: 'absolute',
@@ -346,27 +341,23 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28, borderTopRightRadius: 28,
     maxHeight: '82%',
     paddingTop: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -20 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 20,
+    ...elevation.sheet,
   },
   handle: {
     width: 36, height: 4, borderRadius: 2,
-    backgroundColor: colors.line2,
+    backgroundColor: colors.lineStrong,
     alignSelf: 'center', marginBottom: 12,
   },
   sheetHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 12,
   },
-  sheetTitle: { fontSize: 22, fontWeight: '700', color: colors.fg, letterSpacing: -0.4 },
+  sheetTitle: { fontSize: 22, fontWeight: '700', color: colors.text, letterSpacing: -0.4 },
 
   recipientCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     marginHorizontal: 16, marginBottom: 12,
-    backgroundColor: colors.bgCard, borderRadius: 14, padding: 12,
+    backgroundColor: colors.surface, borderRadius: 14, padding: 12,
     borderWidth: 1, borderColor: colors.line,
   },
   recipientAvatar: { width: 44, height: 44, borderRadius: 22 },
@@ -374,19 +365,19 @@ const styles = StyleSheet.create({
     width: 44, height: 44, borderRadius: 22,
     backgroundColor: colors.bgElev, alignItems: 'center', justifyContent: 'center',
   },
-  recipientInitials: { fontSize: 16, fontWeight: '700', color: colors.fg2 },
+  recipientInitials: { fontSize: 16, fontWeight: '700', color: colors.text2 },
   recipientInfo: { flex: 1 },
-  recipientName: { fontSize: 15, fontWeight: '600', color: colors.fg },
-  recipientUsername: { fontSize: 12, color: colors.fg3, marginTop: 1 },
+  recipientName: { fontSize: 15, fontWeight: '600', color: colors.text },
+  recipientUsername: { fontSize: 12, color: colors.text3, marginTop: 1 },
 
   searchPill: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     marginHorizontal: 16, marginBottom: 8,
-    backgroundColor: colors.bgInput, borderRadius: 999,
+    backgroundColor: colors.surfaceAlt, borderRadius: 999,
     paddingHorizontal: 14, paddingVertical: 12,
     borderWidth: 1, borderColor: colors.line,
   },
-  searchPillInput: { flex: 1, color: colors.fg, fontSize: 14 },
+  searchPillInput: { flex: 1, color: colors.text, fontSize: 14 },
 
   list: { flex: 1 },
   resultRow: {
@@ -395,24 +386,24 @@ const styles = StyleSheet.create({
   },
   resultCover: {
     width: 48, height: 48, borderRadius: 8,
-    backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.line,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line,
     alignItems: 'center', justifyContent: 'center',
   },
-  resultCoverPlaceholder: { backgroundColor: colors.bgCard },
+  resultCoverPlaceholder: { backgroundColor: colors.surface },
   resultInfo: { flex: 1 },
-  resultTitle: { color: colors.fg, fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  resultArtist: { color: colors.fg3, fontSize: 12 },
+  resultTitle: { color: colors.text, fontSize: 14, fontWeight: '600', marginBottom: 2 },
+  resultArtist: { color: colors.text3, fontSize: 12 },
 
   sendBtn: {
     borderRadius: 999, borderWidth: 1, borderColor: colors.line,
     paddingHorizontal: 14, paddingVertical: 7,
   },
-  sendBtnSent: { backgroundColor: colors.primary, borderColor: colors.primary },
-  sendBtnText: { fontSize: 13, fontWeight: '600', color: colors.fg },
-  sendBtnTextSent: { color: colors.primaryInk },
+  sendBtnSent: { backgroundColor: colors.accent, borderColor: colors.accent },
+  sendBtnText: { fontSize: 13, fontWeight: '600', color: colors.text },
+  sendBtnTextSent: { color: colors.accentInk },
 
   separator: { height: 1, backgroundColor: colors.line, marginLeft: 76 },
-  emptyText: { color: colors.fg3, fontSize: 14, textAlign: 'center', marginTop: 48 },
+  emptyText: { color: colors.text3, fontSize: 14, textAlign: 'center', marginTop: 48 },
 
   bottomBar: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -421,16 +412,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   messageInput: {
-    flex: 1, backgroundColor: colors.bgInput, borderRadius: 999,
+    flex: 1, backgroundColor: colors.surfaceAlt, borderRadius: 999,
     paddingHorizontal: 14, paddingVertical: 10,
-    color: colors.fg, fontSize: 13,
+    color: colors.text, fontSize: 13,
     borderWidth: 1, borderColor: colors.line,
   },
   sendAllBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: colors.primary, borderRadius: 999,
+    backgroundColor: colors.accent, borderRadius: 999,
     paddingHorizontal: 16, paddingVertical: 10,
   },
   sendAllBtnDisabled: { opacity: 0.4 },
-  sendAllBtnText: { color: colors.primaryInk, fontSize: 13, fontWeight: '700' },
-});
+  sendAllBtnText: { color: colors.accentInk, fontSize: 13, fontWeight: '700' },
+}));

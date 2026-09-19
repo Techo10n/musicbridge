@@ -26,43 +26,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const sessionUserId = session?.user.id;
 
-  const fetchUserProfile = useCallback(async (userId: string, retries = 3) => {
-    let isRetrying = false;
+  /**
+   * Loads the `public.users` row for a session. The row is created by the
+   * `on_auth_user_created` trigger, which can still be running right after
+   * sign-up, so a missing row is retried a few times before giving up.
+   * Written as a loop rather than recursion — a self-referencing useCallback
+   * reads its own binding during render, which the React compiler rejects.
+   */
+  const fetchUserProfile = useCallback(async (userId: string, attempts = 4) => {
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single();
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .single();
 
-      if (error) {
-        // PGRST116 means zero rows were found. The trigger might still be running.
-        if (error.code === 'PGRST116') {
-          if (retries > 0) {
-            isRetrying = true;
-            console.log(`Profile not found yet, retrying... (${retries} retries left)`);
-            await new Promise((resolve) => setTimeout(resolve, 500));
-            return fetchUserProfile(userId, retries - 1);
-          } else {
-            // We ran out of retries and there's STILL no profile row.
-            // This user is broken (signup trigger failed). Log them out so they aren't stuck.
-            console.error('CRITICAL: User has auth session but no profile row. Logging out.');
-            await supabase.auth.signOut();
-            setUser(null);
-            setSession(null);
-            return;
-          }
+        if (!error) {
+          setUser(data as User);
+          return;
         }
-        throw error;
+
+        // PGRST116 means zero rows were found — the trigger may still be running.
+        if (error.code !== 'PGRST116') throw error;
+
+        if (attempt < attempts) {
+          console.log(`Profile not found yet, retrying... (${attempts - attempt} retries left)`);
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
+
+        // Out of retries and still no profile row. This user is broken (the
+        // sign-up trigger failed), so sign them out rather than leave them stuck.
+        console.error('CRITICAL: User has auth session but no profile row. Logging out.');
+        await supabase.auth.signOut();
+        setUser(null);
+        setSession(null);
       }
-      setUser(data as User);
     } catch (err) {
       console.error('Error fetching user profile:', err);
     } finally {
-      if (!isRetrying) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   }, []);
 
@@ -143,10 +149,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   };
 
   const refreshUser = useCallback(async () => {
-    if (session?.user.id) {
-      await fetchUserProfile(session.user.id);
+    if (sessionUserId) {
+      await fetchUserProfile(sessionUserId);
     }
-  }, [session?.user.id, fetchUserProfile]);
+  }, [sessionUserId, fetchUserProfile]);
 
   return (
     <AuthContext.Provider

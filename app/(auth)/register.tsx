@@ -1,47 +1,25 @@
 import { useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, View } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
+import { SERVICES, serviceLabel } from '../../lib/services';
+import { makeStyles } from '../../lib/theme';
 import { MusicService } from '../../types';
+import { Button, Field, ServiceDot, Txt, Wordmark } from '../../components/ui';
 
 type Step = 'credentials' | 'service';
 
-const SERVICES: { id: MusicService; label: string; color: string; description: string }[] = [
-  {
-    id: 'spotify',
-    label: 'Spotify',
-    color: '#1DB954',
-    description: 'Green music for the people',
-  },
-  {
-    id: 'apple_music',
-    label: 'Apple Music',
-    color: '#fc3c44',
-    description: 'Over 100 million songs',
-  },
-  {
-    id: 'youtube_music',
-    label: 'YouTube Music',
-    color: '#FF0000',
-    description: 'Official albums, singles & more',
-  },
-];
+const SERVICE_BLURB: Record<MusicService, string> = {
+  spotify: 'Playlists, liked songs, and Blend',
+  apple_music: 'Your library via MusicKit',
+  youtube_music: 'Liked music and playlists via Google',
+};
 
 export default function Register() {
+  const s = useStyles();
   const [step, setStep] = useState<Step>('credentials');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -53,25 +31,11 @@ export default function Register() {
   const { signUp, session, setPrimaryService, refreshUser } = useAuth();
   const router = useRouter();
 
-  const getServiceLabel = (service: MusicService): string => {
-    switch (service) {
-      case 'spotify':
-        return 'Spotify';
-      case 'apple_music':
-        return 'Apple Music';
-      case 'youtube_music':
-        return 'YouTube Music';
-    }
-  };
-
   const connectSelectedService = async (userId: string, service: MusicService): Promise<boolean> => {
     switch (service) {
-      case 'spotify':
-        return Spotify.connectSpotify(userId);
-      case 'apple_music':
-        return AppleMusic.connectAppleMusic(userId);
-      case 'youtube_music':
-        return YouTubeMusic.connectYouTubeMusic(userId);
+      case 'spotify': return Spotify.connectSpotify(userId);
+      case 'apple_music': return AppleMusic.connectAppleMusic(userId);
+      case 'youtube_music': return YouTubeMusic.connectYouTubeMusic(userId);
     }
   };
 
@@ -80,14 +44,8 @@ export default function Register() {
       setError('Please fill in all fields');
       return;
     }
-    if (username.length < 3) {
-      setError('Username must be at least 3 characters');
-      return;
-    }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
+    if (username.length < 3) { setError('Username must be at least 3 characters'); return; }
+    if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
 
     setLoading(true);
     setError(null);
@@ -109,22 +67,13 @@ export default function Register() {
       setLoading(false);
 
       const userId = session?.user.id;
-      if (!userId) {
-        router.replace('/(tabs)/home');
-        return;
-      }
+      if (!userId) { router.replace('/(tabs)/home'); return; }
 
       Alert.alert(
-        `Connect ${getServiceLabel(service)}?`,
-        'Connecting now gives Museaic immediate access to open songs and create playlists on your default service.',
+        `Connect ${serviceLabel(service)}?`,
+        'Connecting now lets Museaic open songs and create playlists on your service right away.',
         [
-          {
-            text: 'Later',
-            style: 'cancel',
-            onPress: () => {
-              router.replace('/(tabs)/home');
-            },
-          },
+          { text: 'Later', style: 'cancel', onPress: () => router.replace('/(tabs)/home') },
           {
             text: 'Connect now',
             onPress: () => {
@@ -137,7 +86,7 @@ export default function Register() {
                     router.replace('/(tabs)/home');
                     return;
                   }
-                  setError(`Could not connect ${getServiceLabel(service)}. You can connect it later from your profile.`);
+                  setError(`Could not connect ${serviceLabel(service)}. You can connect it later from Settings.`);
                   setLoading(false);
                 } catch (err) {
                   setError(err instanceof Error ? err.message : 'Connection failed');
@@ -156,30 +105,30 @@ export default function Register() {
 
   if (step === 'service') {
     return (
-      <View style={styles.container}>
-        <View style={styles.inner}>
-          <Text style={styles.logo}>museaic</Text>
-          <Text style={styles.stepTitle}>Choose your primary service</Text>
-          <Text style={styles.stepSubtitle}>
-            This is where you&apos;ll listen — you can still share to friends on other services.
-          </Text>
+      <View style={s.container}>
+        <View style={s.inner}>
+          <Wordmark size={32} />
+          <Txt variant="title1" align="center" style={s.stepTitle}>Where do you listen?</Txt>
+          <Txt variant="callout" color="text3" align="center" style={s.stepSubtitle}>
+            This is where shared songs open for you. You can still send to friends on any service.
+          </Txt>
 
-          {error && <Text style={styles.error}>{error}</Text>}
+          {error ? <Txt variant="callout" color="danger" align="center" style={s.error}>{error}</Txt> : null}
 
           {SERVICES.map((svc) => (
             <TouchableOpacity
-              key={svc.id}
-              style={[styles.serviceCard, { borderColor: svc.color }]}
-              onPress={() => handleServiceSelect(svc.id)}
+              key={svc}
+              style={s.serviceCard}
+              onPress={() => handleServiceSelect(svc)}
               disabled={loading}
               activeOpacity={0.8}
+              accessibilityRole="button"
             >
-              <View style={[styles.serviceIndicator, { backgroundColor: svc.color }]} />
-              <View style={styles.serviceInfo}>
-                <Text style={styles.serviceLabel}>{svc.label}</Text>
-                <Text style={styles.serviceDescription}>{svc.description}</Text>
+              <ServiceDot service={svc} size={14} />
+              <View style={{ flex: 1 }}>
+                <Txt variant="bodyStrong">{serviceLabel(svc)}</Txt>
+                <Txt variant="caption" color="text3">{SERVICE_BLURB[svc]}</Txt>
               </View>
-              {loading && <ActivityIndicator color={svc.color} />}
             </TouchableOpacity>
           ))}
         </View>
@@ -188,192 +137,65 @@ export default function Register() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView
-        contentContainerStyle={styles.inner}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.logo}>museaic</Text>
-        <Text style={styles.stepTitle}>Create your account</Text>
+    <KeyboardAvoidingView style={s.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView contentContainerStyle={s.inner} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <Wordmark size={32} />
+        <Txt variant="title1" align="center" style={s.stepTitle}>Create your account</Txt>
 
-        {error && <Text style={styles.error}>{error}</Text>}
-
-        <TextInput
-          style={styles.input}
-          placeholder="Display Name"
-          placeholderTextColor="#5a5248"
-          value={displayName}
-          onChangeText={setDisplayName}
-          autoCapitalize="words"
-          editable={!loading}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Username (e.g. jsmith)"
-          placeholderTextColor="#5a5248"
+        <Field placeholder="Display name" value={displayName} onChangeText={setDisplayName} autoCapitalize="words" editable={!loading} containerStyle={s.field} />
+        <Field
+          placeholder="Username"
           value={username}
           onChangeText={(t) => setUsername(t.replace(/[^a-zA-Z0-9_]/g, ''))}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!loading}
+          containerStyle={s.field}
         />
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          placeholderTextColor="#5a5248"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          autoComplete="email"
-          editable={!loading}
-        />
-        <TextInput
-          style={styles.input}
+        <Field placeholder="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" editable={!loading} containerStyle={s.field} />
+        <Field
           placeholder="Password (min 6 characters)"
-          placeholderTextColor="#5a5248"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
           editable={!loading}
+          error={error}
+          containerStyle={s.field}
+          onSubmitEditing={handleRegister}
+          returnKeyType="go"
         />
 
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleRegister}
-          disabled={loading}
-          activeOpacity={0.8}
-        >
-          {loading ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={styles.buttonText}>Continue</Text>
-          )}
-        </TouchableOpacity>
+        <Button label="Continue" onPress={handleRegister} loading={loading} fullWidth style={s.button} />
 
         <Link href="/(auth)/login" asChild>
-          <TouchableOpacity style={styles.linkRow} activeOpacity={0.7}>
-            <Text style={styles.linkText}>
-              Already have an account?{' '}
-              <Text style={styles.linkHighlight}>Sign In</Text>
-            </Text>
-          </TouchableOpacity>
+          <Txt variant="callout" color="text3" align="center" style={s.link}>
+            Already have an account? <Txt variant="callout" color="accent">Sign in</Txt>
+          </Txt>
         </Link>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#1a1813',
-  },
-  inner: {
-    flexGrow: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 48,
-  },
-  logo: {
-    fontSize: 38,
-    fontWeight: '800',
-    color: '#f5f0e8',
-    letterSpacing: -1.5,
-    marginBottom: 8,
-  },
-  stepTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#f5f0e8',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  stepSubtitle: {
-    fontSize: 14,
-    color: '#8a8075',
-    textAlign: 'center',
-    marginBottom: 32,
-    lineHeight: 20,
-  },
-  error: {
-    color: '#e8704a',
-    fontSize: 14,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  input: {
-    width: '100%',
-    backgroundColor: '#26221d',
-    borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    color: '#f5f0e8',
-    fontSize: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#332e28',
-  },
-  button: {
-    width: '100%',
-    backgroundColor: '#7C5BF4',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 24,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#f5f3ff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  linkRow: {
-    paddingVertical: 8,
-  },
-  linkText: {
-    color: '#8a8075',
-    fontSize: 14,
-  },
-  linkHighlight: {
-    color: '#9b80f8',
-    fontWeight: '600',
-  },
+const useStyles = makeStyles(({ colors, radius, spacing }) => ({
+  container: { flex: 1, backgroundColor: colors.bg },
+  inner: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xxxl, paddingVertical: spacing.xxxl + spacing.lg },
+  stepTitle: { marginTop: spacing.lg, marginBottom: spacing.sm },
+  stepSubtitle: { marginBottom: spacing.xxxl },
+  error: { marginBottom: spacing.lg },
+  field: { alignSelf: 'stretch', marginBottom: spacing.md },
+  button: { marginTop: spacing.sm },
+  link: { marginTop: spacing.xxl, paddingVertical: spacing.sm },
   serviceCard: {
-    width: '100%',
-    backgroundColor: '#26221d',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    padding: 18,
-    marginBottom: 12,
+    alignSelf: 'stretch',
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: spacing.lg + 2,
+    marginBottom: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: spacing.lg,
   },
-  serviceIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  serviceInfo: {
-    flex: 1,
-  },
-  serviceLabel: {
-    color: '#f5f0e8',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  serviceDescription: {
-    color: '#8a8075',
-    fontSize: 13,
-  },
-});
+}));

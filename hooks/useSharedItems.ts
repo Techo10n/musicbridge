@@ -9,9 +9,10 @@ export function useSharedItems() {
   const [refreshing, setRefreshing] = useState(false);
 
   const { session } = useAuth();
+  const userId = session?.user.id;
 
   const fetchItems = useCallback(async () => {
-    if (!session?.user.id) return;
+    if (!userId) return;
 
     try {
       // Explicitly exclude `tracks`: the list only needs a count, and selecting
@@ -22,7 +23,7 @@ export function useSharedItems() {
       const { data, error } = await supabase
         .from('shared_items')
         .select('id, sender_id, recipient_id, type, title, artist, cover_image_url, spotify_id, apple_music_id, youtube_music_id, spotify_playlist_id, apple_music_playlist_id, apple_music_playlist_url, youtube_music_playlist_id, tracks_count, message, opened, conversion_status, created_at')
-        .eq('recipient_id', session.user.id)
+        .eq('recipient_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -48,25 +49,32 @@ export function useSharedItems() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [session?.user.id]);
+  }, [userId]);
 
+  // The guard is not ceremony: without it a resolved fetch can land after the
+  // screen unmounts, and setting state then is both a warning and a leak.
   useEffect(() => {
-    fetchItems();
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await fetchItems();
+    })();
+    return () => { cancelled = true; };
   }, [fetchItems]);
 
   // Real-time: re-fetch whenever a new shared_item lands in our inbox
   useEffect(() => {
-    if (!session?.user.id) return;
+    if (!userId) return;
 
     const channel = supabase
-      .channel(`shared_items:${session.user.id}`)
+      .channel(`shared_items:${userId}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'shared_items',
-          filter: `recipient_id=eq.${session.user.id}`,
+          filter: `recipient_id=eq.${userId}`,
         },
         () => { fetchItems(); },
       )
@@ -76,14 +84,14 @@ export function useSharedItems() {
           event: 'UPDATE',
           schema: 'public',
           table: 'shared_items',
-          filter: `recipient_id=eq.${session.user.id}`,
+          filter: `recipient_id=eq.${userId}`,
         },
         () => { fetchItems(); },
       )
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [session?.user.id, fetchItems]);
+  }, [userId, fetchItems]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);

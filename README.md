@@ -12,13 +12,15 @@ Long-term vision: social music platform with feeds, following, collaborative pla
 
 | | |
 |---|---|
-| Framework | Expo SDK 55, React Native 0.83.2, React 19.2.0 |
+| Framework | Expo SDK 57, React Native 0.86.3, React 19.2.3 |
 | Routing | Expo Router (file-based) |
 | Backend | Supabase (PostgreSQL + Auth + RLS + Realtime) |
 | Language | TypeScript |
 | Node.js | 22.13.0 via `.nvmrc` |
 
-> `npm install --legacy-peer-deps` required (react-dom peer dep conflict with Expo SDK 55 / React 19).
+> `npm install --legacy-peer-deps` required (react-dom peer dep conflict with Expo SDK 57 / React 19).
+> Because peers are not enforced, anything `jest-expo` needs must be a direct devDependency —
+> see `@react-native/jest-preset`.
 
 ---
 
@@ -32,7 +34,7 @@ npx expo run:ios             # iOS native build
 npx expo run:android         # Android native build
 npm run typecheck            # app TypeScript check (excludes Deno edge functions)
 npm test                     # Jest + jest-expo test suite
-npm run verify               # typecheck + tests
+npm run verify               # typecheck + lint + tests
 supabase db push             # apply new Supabase migrations to linked dev  project
 eas env:push production --path .env.local --force  # sync EXPO_PUBLIC_* vars before TestFlight builds
 ```
@@ -53,7 +55,7 @@ musicbridge/
 │   │   └── register.tsx        2-step registration: credentials → primary service → optional immediate service connection
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar (Ionicons)
-│       ├── home.tsx            Feed of received shared items with self-contained inbox cards, aligned sender/action headers, working inbox/following/mixes filters, story posting/reactions, editable story captions, and top-bar search/notifications/share actions
+│       ├── home.tsx            Feed of received shared items with self-contained inbox cards, aligned sender/action headers, working inbox/following/mixes filters, emoji reactions, and top-bar search/notifications/share actions
 │       ├── friends.tsx         People tab with auto-search, suggested follows, and data-based taste match scores
 │       ├── library.tsx         User's streaming library with sort controls, an All Songs pseudo-playlist, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
 │       ├── notifications.tsx   Notification inbox for recent shares and new followers
@@ -61,22 +63,32 @@ musicbridge/
 │       ├── settings.tsx        Settings screen with keyboard-aware profile editing, streaming service management, avatar upload, password reset, persisted toggles, and placeholder legal/rating rows
 │       └── share.tsx           Placeholder route backing the center tab pill; redirects to People
 ├── components/
-│   ├── SongCard.tsx
-│   ├── PlaylistCard.tsx
+│   ├── ui/                     The design system's primitives — screens compose from these only
+│   │   ├── index.ts            Barrel export; import everything from '../components/ui'
+│   │   ├── Txt.tsx             Themed text; every style comes from the type scale
+│   │   ├── Button.tsx          primary / secondary / ghost / danger, with loading and icon
+│   │   ├── Field.tsx           Text input with label, hint, error, and leading icon
+│   │   ├── Sheet.tsx           Bottom sheet with scrim, handle, and header
+│   │   ├── Toast.tsx           ToastProvider + useToast(); success and failure feedback
+│   │   ├── EmptyState.tsx      Icon, title, body, and one clear action
+│   │   ├── Skeleton.tsx        Pulsing placeholder block
+│   │   ├── ListRow.tsx         Leading art/avatar, two lines, trailing action
+│   │   ├── SegmentedTabs.tsx   Underline (sections) and pill (filters) variants
+│   │   ├── ServiceBadge.tsx    ServiceDot / ServiceChip, brand-colored
+│   │   └── core.tsx            Avatar, Chip, SectionTitle, Wordmark, AppBar, IconBtn, CoverArt, TasteBar
 │   ├── PlaylistModal.tsx       Playlist detail + conversion UI; preserves in-flight progress/success and shows "Already In Library" when reopened later
 │   ├── ShareModal.tsx          Search + share-to-friend modal
-│   ├── FriendListItem.tsx
 │   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
-│   ├── StoryViewer.tsx         Story playback with reactions, open-in-service, and placeholder more/reply handling
-│   ├── MusicServiceButton.tsx
-│   ├── ServiceBadge.tsx
-│   └── ui.tsx                  Shared app bar, avatar, chip, icon-button, and cover-art primitives
+│   ├── MusicServiceButton.tsx  Connect/disconnect row for one streaming service
+│   └── UserProfileModal.tsx    Another user's profile, taste match, and send-a-song entry point
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
 │   ├── useFollows.ts           Following/follower graph, search, and suggested users
 │   ├── useSharedItems.ts       Inbox fetch + realtime insert/update refresh
 │   ├── useLibrary.ts           Playlists, saved tracks, followed artists; bounded/lazy playlist-track loading
+│   ├── useReactions.ts         Emoji reactions with optimistic updates and rollback
+│   ├── useProfileStats.ts      Top tracks/artists, recents, taste tags, pinned playlists
 │   └── useNotifications.ts     Push registration + tap handler
 ├── lib/
 │   ├── supabase.ts
@@ -84,8 +96,11 @@ musicbridge/
 │   ├── appleMusic.ts           Native Apple Music auth + Apple Music API
 │   ├── youtubeMusic.ts
 │   ├── notifications.ts        Register/unregister tokens, sendPushNotification helper
-│   ├── theme.ts                Shared colors and radius tokens
-│   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle()
+│   ├── theme.tsx               The design system: light/dark palettes, spacing/radius/type/elevation
+│   │                           scales, ThemeProvider, useTheme(), makeStyles(). The only file that
+│   │                           may name a color.
+│   ├── services.ts             Streaming service names and helpers (serviceLabel, serviceLabelShort)
+│   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle(), timeAgo(), monthWeekLabel()
 ├── modules/
 │   └── apple-music/
 │       ├── index.ts            JS bridge for the local Expo module
@@ -93,7 +108,9 @@ musicbridge/
 ├── types/index.ts
 ├── __tests__/
 │   ├── utils.test.ts          Matching/utility helper coverage
-│   ├── ui.test.tsx            Shared UI primitive behavior
+│   ├── ui.test.tsx            Theme tokens, makeStyles caching, and UI primitive behavior
+│   ├── services.test.ts       Service labels/colors, timeAgo, monthWeekLabel
+│   ├── appearance.test.tsx    Light/dark preference: system-follow, override, persistence
 │   ├── useReactions.test.ts   Reaction hook state, optimistic updates, rollback
 │   └── notifications.test.ts  Push notification helper behavior
 ├── test/
@@ -113,6 +130,66 @@ musicbridge/
 ```
 
 ---
+
+## Design System
+
+Everything visual comes from `lib/theme.tsx`. **No file outside it may name a color.**
+
+**Light or dark** is the user's choice, in Settings → Appearance: System, Light, or Dark. The choice
+persists in AsyncStorage under `museaic_appearance`; `system` defers to the device. Read or change it
+with `useAppearance()`. Both palettes define the same semantic
+tokens — `bg`, `bgElev`, `surface`, `surfaceAlt`, `line`, `lineStrong`, `text` through `text4`,
+`accent`, `accentInk`, `accentSoft`, `accentBorder`, `danger`, `success`, `warning`, `overlay`,
+`skeleton`, `brandInk`, the toast trio, and the three service brand colors — so a screen written
+against them works in either scheme without a branch.
+
+```tsx
+import { makeStyles, useTheme } from '../lib/theme';
+import { Button, Txt } from '../components/ui';
+
+function Example() {
+  const s = useStyles();
+  const { colors } = useTheme();          // only when you need a raw value, e.g. an icon color
+  return (
+    <View style={s.card}>
+      <Txt variant="headline">Title</Txt>
+      <Txt variant="caption" color="text3">Supporting line</Txt>
+      <Button label="Send" onPress={send} />
+    </View>
+  );
+}
+
+const useStyles = makeStyles(({ colors, spacing, radius }) => ({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+}));
+```
+
+`makeStyles` builds one `StyleSheet` per scheme and caches it, so calling the hook costs the same as
+reading a module-level sheet. `ThemeProvider` takes an optional `scheme` prop to pin a palette in tests.
+
+**Rules that keep it coherent**
+
+- Compose screens from `components/ui`. Reach for a raw `View`/`Text` only for layout.
+- Type comes from the scale (`Txt variant=...`), never a bare `fontSize`.
+- Service colors come from `serviceColor(colors, service)` or `<ServiceDot>`, never a literal.
+- Content on a fill that stays dark in both schemes (service brand, photo scrim, switch knob) uses
+  `brandInk`; content on the accent fill uses `accentInk`.
+- Feedback is a toast (`useToast()`). `Alert` is only for destructive confirms.
+- Every visible control does something, and every empty list renders an `EmptyState`.
+
+**Typography.** Fraunces (`@expo-google-fonts/fraunces`) is the display face, used for the wordmark
+and screen titles; body copy stays on the system face. Fonts load in `app/_layout.tsx` and a load
+failure falls through to the system face rather than blocking the app.
+
+**Changing native-facing config.** `ios/` is a committed native project, so editing `app.json` alone
+does nothing — mirror the change into the native files by hand (see the vault's gotchas page). This
+bit dark mode specifically: `Info.plist` pinned `UIUserInterfaceStyle = Light`, which makes
+`useColorScheme()` report light no matter what the device is set to, so **System** appeared broken.
+The key is now removed, but any build made before that still needs rebuilding to pick it up.
 
 ## Testing and TDD
 

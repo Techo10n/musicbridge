@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator, Alert, Image, Modal, ScrollView,
-  StyleSheet, Text, TouchableOpacity, View,
+  Text, TouchableOpacity, View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useFollows } from '../hooks/useFollows';
-import { colors } from '../lib/theme';
+import { makeStyles, serviceColor, useTheme } from '../lib/theme';
+import { serviceLabelShort } from '../lib/services';
 import { User } from '../types';
-import { CoverArt, serviceLabelShort } from './ui';
+import { CoverArt, useToast } from './ui';
 import { ShareModal } from './ShareModal';
 
 interface UserProfileModalProps {
@@ -18,13 +19,10 @@ interface UserProfileModalProps {
   onClose: () => void;
 }
 
-const SERVICE_COLORS: Record<string, string> = {
-  spotify: '#1DB954',
-  apple_music: '#fc3c44',
-  youtube_music: '#FF0000',
-};
-
 export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
   const { user: currentUser } = useAuth();
   const { isFollowing, followUser, unfollowUser, getFollowCounts } = useFollows();
   const insets = useSafeAreaInsets();
@@ -40,9 +38,13 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   const [shareModalVisible, setShareModalVisible] = useState(false);
 
   useEffect(() => {
-    if (!userId) { setProfile(null); setShareModalVisible(false); return; }
-    setLoading(true);
+    let cancelled = false;
     void (async () => {
+      if (!userId) {
+        if (!cancelled) { setProfile(null); setShareModalVisible(false); }
+        return;
+      }
+      if (!cancelled) setLoading(true);
       try {
         // Another user's row — public profile view only, never the base
         // `users` table, which now only allows owner-only reads of the OAuth
@@ -96,9 +98,13 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
       } catch (err) {
         console.error('[UserProfileModal]', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => { cancelled = true; };
+  // `getFollowCounts` is a stable useCallback from useFollows; listing it here
+  // adds a dependency that never changes but makes the lint rule's job harder.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, currentUser]);
 
   const handleFollow = async () => {
@@ -106,7 +112,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
     try {
       if (isFollowing(userId)) await unfollowUser(userId);
       else await followUser(userId);
-    } catch { Alert.alert('Error', 'Could not update follow status'); }
+    } catch { toast.show({ kind: 'error', message: 'Could not update follow status' }); }
   };
 
   const showUnavailable = (feature: string) => {
@@ -127,7 +133,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
         {loading || !profile ? (
           <View style={styles.loadingCenter}>
             {loading
-              ? <ActivityIndicator color={colors.primary} size="large" />
+              ? <ActivityIndicator color={colors.accent} size="large" />
               : <Text style={styles.errorText}>User not found</Text>
             }
           </View>
@@ -137,15 +143,15 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
             {/* ── App bar ── */}
             <View style={styles.appBar}>
               <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="chevron-back" size={22} color={colors.fg2} />
+                <Ionicons name="chevron-back" size={22} color={colors.text2} />
               </TouchableOpacity>
               <Text style={styles.appBarUsername} numberOfLines={1}>@{profile.username}</Text>
               <View style={styles.appBarRight}>
                 <TouchableOpacity onPress={() => showUnavailable('Profile notifications')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="notifications-outline" size={22} color={colors.fg2} />
+                  <Ionicons name="notifications-outline" size={22} color={colors.text2} />
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => showUnavailable('Profile options')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="ellipsis-horizontal" size={22} color={colors.fg2} />
+                  <Ionicons name="ellipsis-horizontal" size={22} color={colors.text2} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -226,11 +232,11 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                 onPress={() => setShareModalVisible(true)}
                 activeOpacity={0.85}
               >
-                <Ionicons name="paper-plane-outline" size={14} color={colors.fg} />
+                <Ionicons name="paper-plane-outline" size={14} color={colors.text} />
                 <Text style={styles.messageBtnText}>Message</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.moreBtn} onPress={() => showUnavailable('Profile options')} activeOpacity={0.85}>
-                <Ionicons name="ellipsis-horizontal" size={18} color={colors.fg} />
+                <Ionicons name="ellipsis-horizontal" size={18} color={colors.text} />
               </TouchableOpacity>
             </View>
 
@@ -238,7 +244,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
             {profile.primary_service && (
               <View style={styles.svcRow}>
                 <View style={styles.svcChip}>
-                  <View style={[styles.svcDot, { backgroundColor: SERVICE_COLORS[profile.primary_service] ?? colors.fg3 }]} />
+                  <View style={[styles.svcDot, { backgroundColor: serviceColor(colors, profile.primary_service) }]} />
                   <Text style={styles.svcChipText}>{serviceLabelShort(profile.primary_service)}</Text>
                   <Text style={styles.svcChipPrimary}>Primary</Text>
                 </View>
@@ -258,7 +264,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                   <Text style={styles.listenArtist} numberOfLines={1}>{recentShare.artist}</Text>
                 </View>
                 <TouchableOpacity onPress={() => setShareModalVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="paper-plane-outline" size={18} color={colors.fg3} />
+                  <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
                 </TouchableOpacity>
               </View>
             )}
@@ -273,7 +279,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                   <Text style={styles.favArtist} numberOfLines={1}>{profile.favorite_song.artist}</Text>
                 </View>
                 {profile.favorite_song.service && (
-                  <View style={[styles.svcDot, { backgroundColor: SERVICE_COLORS[profile.favorite_song.service] ?? colors.fg3, width: 10, height: 10, borderRadius: 5 }]} />
+                  <View style={[styles.svcDot, { backgroundColor: serviceColor(colors, profile.favorite_song.service), width: 10, height: 10, borderRadius: 5 }]} />
                 )}
               </View>
             )}
@@ -312,17 +318,17 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   root: { flex: 1, backgroundColor: colors.bg },
   loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: colors.fg3, fontSize: 15 },
+  errorText: { color: colors.text3, fontSize: 15 },
 
   // App bar
   appBar: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 16, paddingVertical: 14, gap: 10,
   },
-  appBarUsername: { flex: 1, fontSize: 18, fontWeight: '700', color: colors.fg, letterSpacing: -0.3 },
+  appBarUsername: { flex: 1, fontSize: 18, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
   appBarRight: { flexDirection: 'row', gap: 14 },
 
   // Profile top
@@ -332,7 +338,7 @@ const styles = StyleSheet.create({
   },
   avatarRing: {
     width: 96, height: 96, borderRadius: 48,
-    backgroundColor: colors.primary, padding: 2,
+    backgroundColor: colors.accent, padding: 2,
     alignItems: 'center', justifyContent: 'center',
   },
   avatarRingGap: {
@@ -343,26 +349,26 @@ const styles = StyleSheet.create({
   avatar: { width: 84, height: 84, borderRadius: 42 },
   avatarFallback: {
     width: 84, height: 84, borderRadius: 42,
-    backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
   },
-  avatarInitials: { fontSize: 28, fontWeight: '700', color: colors.fg },
+  avatarInitials: { fontSize: 28, fontWeight: '700', color: colors.text },
   statsBlock: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
   stat: { alignItems: 'center', gap: 2 },
-  statNum: { fontSize: 18, fontWeight: '800', color: colors.fg, letterSpacing: -0.5 },
-  statLabel: { fontSize: 11, color: colors.fg3 },
+  statNum: { fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
+  statLabel: { fontSize: 11, color: colors.text3 },
 
   // Bio
   bioBlock: { paddingHorizontal: 20, paddingBottom: 10 },
-  displayName: { fontSize: 16, fontWeight: '700', color: colors.fg, marginBottom: 3 },
-  bio: { fontSize: 13, color: colors.fg2, lineHeight: 18 },
-  bioEmpty: { fontSize: 13, color: colors.fg4, fontStyle: 'italic' },
+  displayName: { fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 3 },
+  bio: { fontSize: 13, color: colors.text2, lineHeight: 18 },
+  bioEmpty: { fontSize: 13, color: colors.text4, fontStyle: 'italic' },
 
   // Taste match banner
   matchBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
     marginHorizontal: 16, marginBottom: 14, padding: 14,
-    borderRadius: 14, borderWidth: 1.5, borderColor: colors.primary,
-    backgroundColor: 'rgba(124,91,244,0.08)',
+    borderRadius: 14, borderWidth: 1.5, borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
   },
   matchCircle: {
     width: 56, height: 56, borderRadius: 28,
@@ -370,14 +376,14 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     flexShrink: 0,
   },
-  matchPct: { fontSize: 16, fontWeight: '800', color: colors.primary },
-  matchTitle: { fontSize: 16, fontWeight: '700', color: colors.fg },
-  matchSub: { fontSize: 12, color: colors.fg3, marginTop: 2 },
+  matchPct: { fontSize: 16, fontWeight: '800', color: colors.accent },
+  matchTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
+  matchSub: { fontSize: 12, color: colors.text3, marginTop: 2 },
   blendBtn: {
-    borderRadius: 999, borderWidth: 1.5, borderColor: colors.primary,
+    borderRadius: 999, borderWidth: 1.5, borderColor: colors.accent,
     paddingVertical: 7, paddingHorizontal: 12,
   },
-  blendBtnText: { fontSize: 12, fontWeight: '600', color: colors.primary },
+  blendBtnText: { fontSize: 12, fontWeight: '600', color: colors.accent },
 
   // Follow/Message/More row
   actionRow: {
@@ -385,20 +391,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingBottom: 14,
   },
   followBtn: {
-    flex: 1, backgroundColor: colors.primary, borderRadius: 999,
+    flex: 1, backgroundColor: colors.accent, borderRadius: 999,
     paddingVertical: 11, alignItems: 'center',
   },
-  followBtnFollowing: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.line2 },
-  followBtnText: { fontSize: 14, fontWeight: '700', color: colors.primaryInk },
-  followBtnTextFollowing: { color: colors.fg3 },
+  followBtnFollowing: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.lineStrong },
+  followBtnText: { fontSize: 14, fontWeight: '700', color: colors.accentInk },
+  followBtnTextFollowing: { color: colors.text3 },
   messageBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: colors.bgCard, borderRadius: 999,
+    backgroundColor: colors.surface, borderRadius: 999,
     paddingVertical: 11, borderWidth: 1, borderColor: colors.line,
   },
-  messageBtnText: { fontSize: 14, fontWeight: '600', color: colors.fg },
+  messageBtnText: { fontSize: 14, fontWeight: '600', color: colors.text },
   moreBtn: {
-    width: 42, backgroundColor: colors.bgCard, borderRadius: 999,
+    width: 42, backgroundColor: colors.surface, borderRadius: 999,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: colors.line,
   },
@@ -407,47 +413,47 @@ const styles = StyleSheet.create({
   svcRow: { paddingHorizontal: 16, paddingBottom: 14, flexDirection: 'row' },
   svcChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: colors.bgCard, borderRadius: 999,
+    backgroundColor: colors.surface, borderRadius: 999,
     paddingHorizontal: 10, paddingVertical: 5,
     borderWidth: 1, borderColor: colors.line,
   },
   svcDot: { width: 8, height: 8, borderRadius: 4 },
-  svcChipText: { fontSize: 12, color: colors.fg2, fontWeight: '600' },
-  svcChipPrimary: { fontSize: 10, color: colors.primary, fontWeight: '700', marginLeft: 2 },
+  svcChipText: { fontSize: 12, color: colors.text2, fontWeight: '600' },
+  svcChipPrimary: { fontSize: 10, color: colors.accent, fontWeight: '700', marginLeft: 2 },
 
   // Currently listening / last shared
   listeningCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     marginHorizontal: 16, marginBottom: 12, padding: 12,
-    backgroundColor: colors.bgCard, borderRadius: 14,
+    backgroundColor: colors.surface, borderRadius: 14,
     borderWidth: 1, borderColor: colors.line,
   },
   liveDot: {
     position: 'absolute', right: -3, bottom: -3,
     width: 14, height: 14, borderRadius: 7,
-    backgroundColor: colors.primary,
-    borderWidth: 2, borderColor: colors.bgCard,
+    backgroundColor: colors.accent,
+    borderWidth: 2, borderColor: colors.surface,
   },
-  liveLabel: { fontSize: 9, fontWeight: '700', color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
-  listenTitle: { fontSize: 14, fontWeight: '600', color: colors.fg },
-  listenArtist: { fontSize: 12, color: colors.fg3 },
+  liveLabel: { fontSize: 9, fontWeight: '700', color: colors.accent, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
+  listenTitle: { fontSize: 14, fontWeight: '600', color: colors.text },
+  listenArtist: { fontSize: 12, color: colors.text3 },
 
   // Favorite song
   favCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     marginHorizontal: 16, marginBottom: 16, padding: 12,
     borderRadius: 14, borderWidth: 1, borderColor: colors.line,
-    backgroundColor: colors.bgCard,
+    backgroundColor: colors.surface,
   },
-  favLabel: { fontSize: 10, color: colors.coral, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 },
-  favTitle: { fontSize: 15, fontWeight: '700', color: colors.fg },
-  favArtist: { fontSize: 12, color: colors.fg2, marginTop: 2 },
+  favLabel: { fontSize: 10, color: colors.danger, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 },
+  favTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
+  favArtist: { fontSize: 12, color: colors.text2, marginTop: 2 },
 
   // Top shares
   sectionHeader: { paddingHorizontal: 20, paddingBottom: 10, paddingTop: 4 },
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: colors.fg, letterSpacing: -0.3 },
+  sectionTitle: { fontSize: 17, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
   topSharesRow: { paddingHorizontal: 16, paddingBottom: 16, gap: 14 },
   topShareItem: { width: 80, alignItems: 'center', gap: 5 },
-  topShareTitle: { fontSize: 11, fontWeight: '600', color: colors.fg, textAlign: 'center', lineHeight: 15 },
-  topShareArtist: { fontSize: 10, color: colors.fg3, textAlign: 'center' },
-});
+  topShareTitle: { fontSize: 11, fontWeight: '600', color: colors.text, textAlign: 'center', lineHeight: 15 },
+  topShareArtist: { fontSize: 10, color: colors.text3, textAlign: 'center' },
+}));

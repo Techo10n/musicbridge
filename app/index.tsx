@@ -1,13 +1,15 @@
 import { ActivityIndicator, View } from 'react-native';
+import { useTheme } from '../lib/theme';
 
 /**
- * Root index — shows a loading spinner while the auth layout
- * determines whether to redirect to login or the home feed.
+ * Root index — a quiet screen while the root layout resolves auth and
+ * decides between the sign-in stack and the tabs.
  */
 export default function Index() {
+  const { colors } = useTheme();
   return (
-    <View style={{ flex: 1, backgroundColor: '#1a1813', alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator color="#7C5BF4" size="large" />
+    <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator color={colors.accent} size="large" />
     </View>
   );
 }

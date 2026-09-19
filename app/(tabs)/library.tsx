@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, Image, Modal,
-  RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View,
+  RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,8 +13,9 @@ import { LibraryArtist, LibraryPlaylist, LibraryTrack, Track, User } from '../..
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
 import { FriendPickerModal } from '../../components/FriendPickerModal';
 import { sendPushNotification } from '../../lib/notifications';
-import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, serviceLabelShort } from '../../components/ui';
-import { colors } from '../../lib/theme';
+import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, useToast } from '../../components/ui';
+import { serviceLabelShort } from '../../lib/services';
+import { makeStyles, useTheme } from '../../lib/theme';
 
 type FilterChip = 'all' | 'playlists' | 'songs' | 'artists';
 type SortMode = 'recent' | 'name' | 'count';
@@ -56,6 +57,9 @@ function toTrackPayload(t: LibraryTrack): Track {
 }
 
 export default function LibraryScreen() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const primaryService = user?.primary_service ?? null;
@@ -107,8 +111,11 @@ export default function LibraryScreen() {
       if (!cancelled) setPlaylistTrackIndex(nextIndex);
     }
 
-    setPlaylistTrackIndex({});
-    if (playlists.length > 0) void preloadPlaylistTracks();
+    void (async () => {
+      if (cancelled) return;
+      setPlaylistTrackIndex({});
+      if (playlists.length > 0) await preloadPlaylistTracks();
+    })();
 
     return () => {
       cancelled = true;
@@ -146,7 +153,7 @@ export default function LibraryScreen() {
         }).select('id').single();
         if (dbError) throw dbError;
         if (insertedItem?.id) sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        Alert.alert('Sent!', `Shared "${pendingSongShare.title}" with ${friend.display_name}.`);
+        toast.show({ kind: 'success', message: `Sent "${pendingSongShare.title}" to ${friend.display_name}` });
       } else if (pendingPlaylistShare) {
         const tracks = await getPlaylistTracks(pendingPlaylistShare.id);
         // The track loaders degrade to an empty list on any failure — a dead
@@ -177,9 +184,9 @@ export default function LibraryScreen() {
         }).select('id').single();
         if (dbError) throw dbError;
         if (insertedItem?.id) sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        Alert.alert('Sent!', `Shared "${pendingPlaylistShare.name}" with ${friend.display_name}.`);
+        toast.show({ kind: 'success', message: `Sent "${pendingPlaylistShare.name}" to ${friend.display_name}` });
       }
-    } catch { Alert.alert('Error', 'Failed to share. Try again.'); }
+    } catch { toast.show({ kind: 'error', message: 'Could not send that. Try again.' }); }
     finally { setSharingSong(false); setPendingSongShare(null); setPendingPlaylistShare(null); }
   };
 
@@ -339,7 +346,7 @@ export default function LibraryScreen() {
   if (!user?.primary_service) {
     return (
       <View style={styles.emptyScreen}>
-        <Ionicons name="library-outline" size={52} color={colors.fg4} />
+        <Ionicons name="library-outline" size={52} color={colors.text4} />
         <Text style={styles.emptyTitle}>No music service connected</Text>
         <Text style={styles.emptySubtitle}>Connect a streaming service in Profile to see your library here.</Text>
       </View>
@@ -353,8 +360,8 @@ export default function LibraryScreen() {
         title="Library"
         right={
           <>
-            <IconBtn name="search-outline" onPress={() => setSearchVisible(true)} />
-            <IconBtn name="paper-plane-outline" onPress={() => router.push('/(tabs)/friends' as any)} />
+            <IconBtn name="search-outline" label="Search" onPress={() => setSearchVisible(true)} />
+            <IconBtn name="paper-plane-outline" label="Send a song" onPress={() => router.push('/(tabs)/friends' as any)} />
           </>
         }
       />
@@ -396,12 +403,12 @@ export default function LibraryScreen() {
 
       {loading && !playlists.length ? (
         <View style={styles.loadingCenter}>
-          <ActivityIndicator color={colors.primary} size="large" />
+          <ActivityIndicator color={colors.accent} size="large" />
           <Text style={styles.loadingText}>Loading your library…</Text>
         </View>
       ) : error ? (
         <View style={styles.emptyScreen}>
-          <Ionicons name="warning-outline" size={40} color={colors.coral} />
+          <Ionicons name="warning-outline" size={40} color={colors.danger} />
           <Text style={styles.emptyTitle}>Couldn&apos;t load library</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={fetchLibrary}>
             <Text style={styles.retryBtnText}>Try Again</Text>
@@ -411,7 +418,7 @@ export default function LibraryScreen() {
         <ScrollView
           style={{ flex: 1 }}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.primary} />}
+          refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.accent} />}
           contentContainerStyle={{ paddingBottom: 100 }}
         >
 
@@ -446,9 +453,9 @@ export default function LibraryScreen() {
                       disabled={sharingSong}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Ionicons name="paper-plane-outline" size={18} color={colors.fg3} />
+                      <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
                     </TouchableOpacity>
-                    <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
+                    <Ionicons name="chevron-forward" size={16} color={colors.text3} />
                   </TouchableOpacity>
                 ))}
               </View>
@@ -481,7 +488,7 @@ export default function LibraryScreen() {
                         disabled={sharingSong}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       >
-                        <Ionicons name="paper-plane-outline" size={18} color={colors.fg3} />
+                        <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
                       </TouchableOpacity>
                     </View>
                   ))
@@ -492,13 +499,13 @@ export default function LibraryScreen() {
                     activeOpacity={0.8}
                   >
                     <View style={styles.allSongsIcon}>
-                      <Ionicons name="albums" size={24} color={colors.primaryInk} />
+                      <Ionicons name="albums" size={24} color={colors.accentInk} />
                     </View>
                     <View style={styles.rowInfo}>
                       <Text style={styles.rowTitle} numberOfLines={1}>All Songs</Text>
                       <Text style={styles.rowMetaText}>{allSongsTracks.length} songs across your library</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={16} color={colors.fg3} />
+                    <Ionicons name="chevron-forward" size={16} color={colors.text3} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -531,7 +538,7 @@ export default function LibraryScreen() {
           {/* Empty */}
           {!hasVisibleContent && (
             <View style={styles.emptyInline}>
-              <Ionicons name="library-outline" size={44} color={colors.fg4} />
+              <Ionicons name="library-outline" size={44} color={colors.text4} />
               <Text style={styles.emptyInlineTitle}>No Results.</Text>
               <Text style={styles.emptyInlineSub}>There is no saved content for this filter yet.</Text>
             </View>
@@ -558,15 +565,15 @@ export default function LibraryScreen() {
           <View style={styles.searchModalHeader}>
             <Text style={styles.searchModalTitle}>Search Library</Text>
             <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); }}>
-              <Ionicons name="close" size={22} color={colors.fg3} />
+              <Ionicons name="close" size={22} color={colors.text3} />
             </TouchableOpacity>
           </View>
           <View style={styles.searchInputRow}>
-            <Ionicons name="search-outline" size={16} color={colors.fg3} />
+            <Ionicons name="search-outline" size={16} color={colors.text3} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search playlists, songs, artists…"
-              placeholderTextColor={colors.fg4}
+              placeholderTextColor={colors.text4}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoCapitalize="none"
@@ -603,7 +610,7 @@ export default function LibraryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
   filterRailScroll: {
     flexGrow: 0,
@@ -619,7 +626,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
 
-  sortLabel: { fontSize: 13, color: colors.fg3, fontWeight: '500' },
+  sortLabel: { fontSize: 13, color: colors.text3, fontWeight: '500' },
   sortRail: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -631,20 +638,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: colors.bgCard,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.line,
   },
   sortChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
-  sortChipText: { color: colors.fg3, fontSize: 12, fontWeight: '600' },
-  sortChipTextActive: { color: colors.primaryInk },
+  sortChipText: { color: colors.text3, fontSize: 12, fontWeight: '600' },
+  sortChipTextActive: { color: colors.accentInk },
 
   listSection: {
     marginHorizontal: 16,
-    backgroundColor: colors.bgCard,
+    backgroundColor: colors.surface,
     borderRadius: 16,
     borderWidth: 1, borderColor: colors.line,
     overflow: 'hidden',
@@ -656,52 +663,52 @@ const styles = StyleSheet.create({
   },
   rowSep: { borderBottomWidth: 1, borderBottomColor: colors.line },
   rowInfo: { flex: 1, minWidth: 0 },
-  rowTitle: { fontSize: 14, fontWeight: '600', color: colors.fg, marginBottom: 3 },
+  rowTitle: { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 3 },
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rowMetaText: { fontSize: 12, color: colors.fg3 },
+  rowMetaText: { fontSize: 12, color: colors.text3 },
   rowAction: { padding: 4 },
   allSongsIcon: {
     width: 56, height: 56, borderRadius: 10,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent,
     alignItems: 'center', justifyContent: 'center',
   },
 
   artistList: { paddingHorizontal: 16, paddingBottom: 8, gap: 14 },
   artistChip: { alignItems: 'center', width: 80, gap: 6 },
   artistImage: { width: 64, height: 64, borderRadius: 32 },
-  artistName: { fontSize: 11, color: colors.fg2, textAlign: 'center', lineHeight: 15 },
+  artistName: { fontSize: 11, color: colors.text2, textAlign: 'center', lineHeight: 15 },
 
   loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  loadingText: { color: colors.fg3, fontSize: 14 },
+  loadingText: { color: colors.text3, fontSize: 14 },
 
   emptyScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 10 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.fg, textAlign: 'center' },
-  emptySubtitle: { fontSize: 14, color: colors.fg3, textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center' },
+  emptySubtitle: { fontSize: 14, color: colors.text3, textAlign: 'center', lineHeight: 20 },
 
   emptyInline: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 40, gap: 10 },
-  emptyInlineTitle: { fontSize: 16, fontWeight: '600', color: colors.fg3, textAlign: 'center' },
-  emptyInlineSub: { fontSize: 13, color: colors.fg4, textAlign: 'center', lineHeight: 18 },
+  emptyInlineTitle: { fontSize: 16, fontWeight: '600', color: colors.text3, textAlign: 'center' },
+  emptyInlineSub: { fontSize: 13, color: colors.text4, textAlign: 'center', lineHeight: 18 },
 
-  retryBtn: { backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 8 },
-  retryBtnText: { color: colors.primaryInk, fontSize: 15, fontWeight: '600' },
+  retryBtn: { backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 8 },
+  retryBtnText: { color: colors.accentInk, fontSize: 15, fontWeight: '600' },
 
   searchModal: { flex: 1, backgroundColor: colors.bg },
   searchModalHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: colors.line,
   },
-  searchModalTitle: { fontSize: 20, fontWeight: '700', color: colors.fg },
+  searchModalTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
   searchInputRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    margin: 16, backgroundColor: colors.bgCard, borderRadius: 14,
+    margin: 16, backgroundColor: colors.surface, borderRadius: 14,
     paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: colors.line,
   },
-  searchInput: { flex: 1, color: colors.fg, fontSize: 14 },
+  searchInput: { flex: 1, color: colors.text, fontSize: 14 },
   searchRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line,
   },
-  searchRowTitle: { color: colors.fg, fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  searchRowMeta: { color: colors.fg3, fontSize: 12 },
-  searchEmptyText: { color: colors.fg4, fontSize: 14, textAlign: 'center', marginTop: 48 },
-});
+  searchRowTitle: { color: colors.text, fontSize: 14, fontWeight: '600', marginBottom: 2 },
+  searchRowMeta: { color: colors.text3, fontSize: 12 },
+  searchEmptyText: { color: colors.text4, fontSize: 14, textAlign: 'center', marginTop: 48 },
+}));

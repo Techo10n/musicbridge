@@ -15,6 +15,10 @@ type ReactionMap = Record<string, Record<string, number>>;
 
 export function useReactions(itemIds: string[]) {
   const { user } = useAuth();
+  // Callers rebuild the array every render, so depend on its contents rather
+  // than its identity — and derive the list back from that same key so the
+  // dependency and the value used can never drift apart.
+  const itemIdsKey = itemIds.join(',');
   const [reactions, setReactions] = useState<ReactionMap>({});
   const [myReactions, setMyReactions] = useState<Record<string, string>>({});
   const latestMyReactions = useRef<Record<string, string>>({});
@@ -24,12 +28,13 @@ export function useReactions(itemIds: string[]) {
   }, [myReactions]);
 
   const fetch = useCallback(async () => {
-    if (!itemIds.length || !user) return;
+    const ids = itemIdsKey ? itemIdsKey.split(',') : [];
+    if (!ids.length || !user) return;
     try {
       const { data } = await supabase
         .from('shared_item_reactions')
         .select('*')
-        .in('item_id', itemIds);
+        .in('item_id', ids);
 
       if (!data) return;
 
@@ -50,9 +55,16 @@ export function useReactions(itemIds: string[]) {
         console.error('[useReactions] query failed:', err);
       }
     }
-  }, [itemIds.join(','), user]);
+  }, [itemIdsKey, user]);
 
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await fetch();
+    })();
+    return () => { cancelled = true; };
+  }, [fetch]);
 
   const react = useCallback(async (itemId: string, emoji: string) => {
     if (!user) return;

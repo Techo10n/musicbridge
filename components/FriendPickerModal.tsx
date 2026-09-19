@@ -1,18 +1,9 @@
 import { useEffect, useState } from 'react';
-import {
-  FlatList,
-  Modal,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-import { Image } from 'expo-image';
-import { Ionicons } from '@expo/vector-icons';
+import { FlatList, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFollows } from '../hooks/useFollows';
+import { makeStyles, useTheme } from '../lib/theme';
 import { User } from '../types';
-import { colors } from '../lib/theme';
+import { Avatar, EmptyState, ListRow, Sheet, Txt } from './ui';
 
 interface FriendPickerModalProps {
   visible: boolean;
@@ -21,18 +12,19 @@ interface FriendPickerModalProps {
   onSelect: (user: User, message: string) => void;
 }
 
-export function FriendPickerModal({
-  visible,
-  title = 'Send to Someone',
-  onClose,
-  onSelect,
-}: FriendPickerModalProps) {
+/**
+ * Pick one mutual follower to send something to, with an optional note.
+ * Replaced by the share composer in a later phase; kept themed until then.
+ */
+export function FriendPickerModal({ visible, title = 'Send to someone', onClose, onSelect }: FriendPickerModalProps) {
+  const s = useStyles();
+  const { colors } = useTheme();
   const [message, setMessage] = useState('');
-  const { mutualFollows: following, refresh } = useFollows();
+  const { mutualFollows: friends, refresh } = useFollows();
 
   useEffect(() => {
     if (!visible) return;
-    void refresh();
+    void Promise.resolve().then(refresh);
   }, [visible, refresh]);
 
   const handleSelect = (user: User) => {
@@ -47,154 +39,63 @@ export function FriendPickerModal({
   };
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={handleClose}
-      statusBarTranslucent
-    >
-      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={handleClose} />
-
-      <View style={styles.sheet}>
-        {/* Handle */}
-        <View style={styles.handle} />
-
-        {/* Header */}
-        <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{title}</Text>
-          <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="close" size={22} color={colors.fg3} />
-          </TouchableOpacity>
-        </View>
-
-        {/* "SUGGESTED" section label */}
-        <View style={styles.sectionLabelRow}>
-          <Text style={styles.sectionLabel}>Mutual follows</Text>
-        </View>
-
-        <FlatList
-          data={following}
-          keyExtractor={(u) => u.id}
-          style={styles.list}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          showsVerticalScrollIndicator={false}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              You can only share with mutual followers. Follow someone and have them follow you back.
-            </Text>
-          }
-          renderItem={({ item: friend }) => {
-            const initials = (friend.display_name[0] ?? friend.username[0] ?? '?').toUpperCase();
-            return (
-              <TouchableOpacity
-                style={styles.userRow}
-                onPress={() => handleSelect(friend)}
-                activeOpacity={0.8}
-              >
-                <View style={styles.avatarContainer}>
-                  {friend.avatar_url ? (
-                    <Image source={{ uri: friend.avatar_url }} style={styles.avatarImage} />
-                  ) : (
-                    <View style={styles.avatarFallback}>
-                      <Text style={styles.avatarText}>{initials}</Text>
-                    </View>
-                  )}
-                </View>
-                <View style={styles.userInfo}>
-                  <Text style={styles.userName}>{friend.display_name}</Text>
-                  <Text style={styles.userUsername}>@{friend.username}</Text>
-                </View>
-                <View style={styles.sendBtn}>
-                  <Text style={styles.sendBtnText}>Send</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          }}
-        />
-
-        {/* Bottom bar: message + send */}
-        <View style={styles.bottomBar}>
-          <TextInput
-            style={styles.messageInput}
-            placeholder="Add a message (optional)"
-            placeholderTextColor={colors.fg4}
-            value={message}
-            onChangeText={setMessage}
-            maxLength={200}
+    <Sheet visible={visible} onClose={handleClose} title={title}>
+      <Txt variant="micro" color="text3" style={s.sectionLabel}>Mutual follows</Txt>
+      <FlatList
+        data={friends}
+        keyExtractor={(u) => u.id}
+        style={s.list}
+        contentContainerStyle={{ paddingBottom: 16 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <EmptyState
+            compact
+            icon="people-outline"
+            title="No one to send to yet"
+            body="You can share with people who follow you back. Follow someone and ask them to follow you."
           />
-        </View>
+        }
+        renderItem={({ item: friend }) => (
+          <ListRow
+            leading={<Avatar name={friend.display_name} avatarUrl={friend.avatar_url} size={44} />}
+            title={friend.display_name}
+            subtitle={`@${friend.username}`}
+            trailing={
+              <TouchableOpacity style={s.sendBtn} onPress={() => handleSelect(friend)} accessibilityRole="button">
+                <Txt variant="captionStrong">Send</Txt>
+              </TouchableOpacity>
+            }
+            onPress={() => handleSelect(friend)}
+            separator
+          />
+        )}
+      />
+      <View style={s.bottomBar}>
+        <TextInput
+          style={s.messageInput}
+          placeholder="Add a message (optional)"
+          placeholderTextColor={colors.text4}
+          value={message}
+          onChangeText={setMessage}
+          maxLength={200}
+        />
       </View>
-    </Modal>
+    </Sheet>
   );
 }
 
-const styles = StyleSheet.create({
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  sheet: {
-    position: 'absolute',
-    left: 0, right: 0, bottom: 0,
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    maxHeight: '80%', paddingTop: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -20 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 20,
-  },
-  handle: {
-    width: 36, height: 4, borderRadius: 2,
-    backgroundColor: colors.line2,
-    alignSelf: 'center', marginBottom: 12,
-  },
-  sheetHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12,
-  },
-  sheetTitle: { fontSize: 22, fontWeight: '700', color: colors.fg, letterSpacing: -0.4 },
-  sectionLabelRow: { paddingHorizontal: 20, paddingBottom: 6 },
-  sectionLabel: {
-    fontSize: 11, fontWeight: '600', color: colors.fg3,
-    textTransform: 'uppercase', letterSpacing: 0.8,
-  },
-  list: { flex: 1 },
-  separator: { height: 1, backgroundColor: colors.line, marginLeft: 72 },
-  emptyText: {
-    color: colors.fg3, fontSize: 14, textAlign: 'center',
-    marginTop: 48, paddingHorizontal: 32, lineHeight: 20,
-  },
-  userRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 11, gap: 12,
-  },
-  avatarContainer: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden' },
-  avatarImage: { width: 44, height: 44, borderRadius: 22 },
-  avatarFallback: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center',
-  },
-  avatarText: { color: colors.fg3, fontSize: 16, fontWeight: '700' },
-  userInfo: { flex: 1 },
-  userName: { color: colors.fg, fontSize: 15, fontWeight: '600', marginBottom: 2 },
-  userUsername: { color: colors.fg3, fontSize: 12 },
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
+  sectionLabel: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xs },
+  list: { flexGrow: 0, maxHeight: 360 },
   sendBtn: {
-    borderRadius: 999, borderWidth: 1, borderColor: colors.line,
-    paddingHorizontal: 14, paddingVertical: 7,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.lineStrong,
+    paddingHorizontal: spacing.lg - 2, paddingVertical: spacing.sm - 1,
   },
-  sendBtnText: { fontSize: 13, fontWeight: '600', color: colors.fg },
-  bottomBar: {
-    borderTopWidth: 1, borderTopColor: colors.line,
-    padding: 14, backgroundColor: colors.bg,
-  },
+  bottomBar: { borderTopWidth: 1, borderTopColor: colors.line, padding: spacing.lg - 2 },
   messageInput: {
-    backgroundColor: colors.bgInput, borderRadius: 999,
-    paddingHorizontal: 14, paddingVertical: 10,
-    color: colors.fg, fontSize: 13,
-    borderWidth: 1, borderColor: colors.line,
+    backgroundColor: colors.surfaceAlt, borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 2,
+    ...type.callout, color: colors.text,
   },
-});
+}));

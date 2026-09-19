@@ -1,8 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import {
-  ActivityIndicator, FlatList, ScrollView, StyleSheet,
-  Text, TouchableOpacity, View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,19 +7,19 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useSharedItems } from '../../hooks/useSharedItems';
 import { useFollows } from '../../hooks/useFollows';
-import { AppBar, Avatar, CoverArt } from '../../components/ui';
-import { colors } from '../../lib/theme';
+import { AppBar, Avatar, CoverArt, EmptyState, SegmentedTabs, Txt } from '../../components/ui';
+import { makeStyles, useTheme } from '../../lib/theme';
+import { timeAgo } from '../../lib/utils';
 import { User } from '../../types';
 
-type FilterType = 'all' | 'shares' | 'follows' | 'reactions';
-const FILTERS: { id: FilterType; label: string }[] = [
+type FilterType = 'all' | 'shares' | 'follows';
+const FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'shares', label: 'Shares' },
   { id: 'follows', label: 'Follows' },
-  { id: 'reactions', label: 'Reactions' },
-];
+] as const satisfies readonly { id: FilterType; label: string }[];
 
-type NotifKind = 'share' | 'follow' | 'streak' | 'reaction' | 'taste';
+type NotifKind = 'share' | 'follow';
 interface NotifItem {
   id: string;
   kind: NotifKind;
@@ -31,10 +28,7 @@ interface NotifItem {
   who: string;
   body: string;
   avatarUrl: string | null;
-  primaryService: string | null;
-  // Extra data
   coverUrl?: string | null;
-  songTitle?: string;
   followerId?: string;
 }
 
@@ -44,17 +38,12 @@ type FollowRow = {
   follower: Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'> | null;
 };
 
-function timeAgo(iso: string): string {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return 'now';
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
-
 export default function ActivityScreen() {
+  const s = useStyles();
+  const { colors } = useTheme();
   const router = useRouter();
   const { user } = useAuth();
+  const userId = user?.id;
   const { items, loading: loadingShares, markAsOpened } = useSharedItems();
   const { followUser, isFollowing } = useFollows();
   const [followRows, setFollowRows] = useState<FollowRow[]>([]);
@@ -62,21 +51,21 @@ export default function ActivityScreen() {
   const [filter, setFilter] = useState<FilterType>('all');
 
   const loadFollowActivity = useCallback(async () => {
-    if (!user?.id) { setFollowRows([]); setLoadingFollows(false); return; }
+    if (!userId) { setFollowRows([]); setLoadingFollows(false); return; }
     setLoadingFollows(true);
     try {
       const { data: follows } = await supabase
         .from('follows')
         .select('id, created_at, follower_id')
-        .eq('following_id', user.id)
+        .eq('following_id', userId)
         .order('created_at', { ascending: false })
         .limit(25);
       const rows = follows ?? [];
 
       // `follower_id` only names the row; public profile fields live in
-      // `user_public_profiles`, not the now owner-only `users` table.
+      // `user_public_profiles`, not the owner-only `users` table.
       const followerIds = Array.from(new Set(rows.map((r) => r.follower_id as string)));
-      const profileById = new Map<string, Pick<User, 'id' | 'username' | 'display_name' | 'avatar_url' | 'primary_service'>>();
+      const profileById = new Map<string, FollowRow['follower']>();
       if (followerIds.length > 0) {
         const { data: profiles } = await supabase
           .from('user_public_profiles')
@@ -93,14 +82,13 @@ export default function ActivityScreen() {
     } catch (err) {
       console.error('[notifications] follow activity fetch error:', err);
       setFollowRows([]);
-    }
-    finally { setLoadingFollows(false); }
-  }, [user?.id]);
+    } finally { setLoadingFollows(false); }
+  }, [userId]);
 
-  useFocusEffect(useCallback(() => { void loadFollowActivity(); }, [loadFollowActivity]));
+  useFocusEffect(useCallback(() => { void Promise.resolve().then(loadFollowActivity); }, [loadFollowActivity]));
 
   const notifications = useMemo<NotifItem[]>(() => {
-    const shareNotifs: NotifItem[] = items.slice(0, 25).map(item => ({
+    const shareNotifs: NotifItem[] = items.slice(0, 25).map((item) => ({
       id: `share:${item.id}`,
       kind: 'share',
       created_at: item.created_at,
@@ -108,23 +96,20 @@ export default function ActivityScreen() {
       who: item.sender?.display_name ?? 'Someone',
       body: `sent you "${item.title ?? 'a song'}"`,
       avatarUrl: item.sender?.avatar_url ?? null,
-      primaryService: item.sender?.primary_service ?? null,
       coverUrl: item.cover_image_url,
-      songTitle: item.title,
     }));
 
-    const followNotifs: NotifItem[] = followRows.flatMap(entry => {
+    const followNotifs: NotifItem[] = followRows.flatMap((entry) => {
       const f = entry.follower;
       if (!f) return [];
       return [{
         id: `follow:${entry.id}`,
-        kind: 'follow' as NotifKind,
+        kind: 'follow' as const,
         created_at: entry.created_at,
         unread: false,
         who: f.display_name ?? 'Someone',
         body: 'started following you',
         avatarUrl: f.avatar_url ?? null,
-        primaryService: f.primary_service ?? null,
         followerId: f.id,
       }];
     });
@@ -132,63 +117,37 @@ export default function ActivityScreen() {
     const all = [...shareNotifs, ...followNotifs]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-    if (filter === 'all') return all;
-    if (filter === 'shares') return all.filter(n => n.kind === 'share');
-    if (filter === 'follows') return all.filter(n => n.kind === 'follow');
-    if (filter === 'reactions') return all.filter(n => n.kind === 'reaction');
+    if (filter === 'shares') return all.filter((n) => n.kind === 'share');
+    if (filter === 'follows') return all.filter((n) => n.kind === 'follow');
     return all;
   }, [items, followRows, filter]);
 
   const loading = loadingShares || loadingFollows;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* App bar */}
-      <AppBar
-        left={
-          <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="chevron-back" size={22} color={colors.fg2} />
-          </TouchableOpacity>
-        }
-        title="Activity"
-      />
+    <SafeAreaView style={s.container} edges={['top']}>
+      <AppBar onBack={() => router.back()} title="Activity" />
 
-      {/* Filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRow}
-      >
-        {FILTERS.map(f => (
-          <TouchableOpacity
-            key={f.id}
-            style={[styles.filterChip, filter === f.id && styles.filterChipActive]}
-            onPress={() => setFilter(f.id)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.filterChipText, filter === f.id && styles.filterChipTextActive]}>
-              {f.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      <View style={s.filters}>
+        <SegmentedTabs tabs={FILTERS} value={filter} onChange={setFilter} variant="pill" />
+      </View>
 
       {loading && notifications.length === 0 ? (
-        <View style={styles.loadingCenter}>
-          <ActivityIndicator color={colors.primary} size="large" />
+        <View style={s.loadingCenter}>
+          <ActivityIndicator color={colors.accent} size="large" />
         </View>
       ) : (
         <FlatList
           data={notifications}
-          keyExtractor={n => n.id}
+          keyExtractor={(n) => n.id}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <Ionicons name="notifications-outline" size={44} color={colors.fg4} />
-              <Text style={styles.emptyTitle}>Nothing here yet</Text>
-              <Text style={styles.emptySubtitle}>Shares and activity will appear here.</Text>
-            </View>
+            <EmptyState
+              icon="notifications-outline"
+              title="Nothing here yet"
+              body={filter === 'follows' ? 'When someone follows you, it shows up here.' : 'Songs friends send you and new followers land here.'}
+            />
           }
           renderItem={({ item: notif }) => (
             <NotifRow
@@ -196,19 +155,13 @@ export default function ActivityScreen() {
               onPress={() => {
                 if (notif.kind === 'share') {
                   void markAsOpened(notif.id.replace('share:', ''));
-                  router.push('/(tabs)/home' as any);
-                } else if (notif.kind === 'follow') {
-                  router.push('/(tabs)/friends' as any);
+                  router.push('/(tabs)/home');
+                } else {
+                  router.push('/(tabs)/friends');
                 }
               }}
-              onFollowBack={notif.kind === 'follow' && notif.followerId
-                ? () => followUser(notif.followerId!)
-                : undefined
-              }
-              isFollowingBack={notif.kind === 'follow' && notif.followerId
-                ? isFollowing(notif.followerId)
-                : false
-              }
+              onFollowBack={notif.followerId ? () => followUser(notif.followerId!) : undefined}
+              isFollowingBack={notif.followerId ? isFollowing(notif.followerId) : false}
             />
           )}
         />
@@ -217,7 +170,6 @@ export default function ActivityScreen() {
   );
 }
 
-// ─── NotifRow ─────────────────────────────────────────────────────────────────
 function NotifRow({
   notif, onPress, onFollowBack, isFollowingBack,
 }: {
@@ -226,96 +178,66 @@ function NotifRow({
   onFollowBack?: () => void;
   isFollowingBack?: boolean;
 }) {
+  const s = useStyles();
+  const { colors } = useTheme();
   return (
-    <TouchableOpacity
-      style={[styles.row, notif.unread && styles.rowUnread]}
-      onPress={onPress}
-      activeOpacity={0.82}
-    >
-      <Avatar name={notif.who} avatarUrl={notif.avatarUrl} size={44} />
-
-      <View style={styles.rowBody}>
-        <Text style={styles.rowText} numberOfLines={2}>
-          <Text style={styles.rowWho}>{notif.who}</Text>
-          <Text style={styles.rowBodyText}> {notif.body}</Text>
-        </Text>
-        <Text style={styles.rowTime}>{timeAgo(notif.created_at)}</Text>
+    <TouchableOpacity style={[s.row, notif.unread && s.rowUnread]} onPress={onPress} activeOpacity={0.82} accessibilityRole="button">
+      <View>
+        <Avatar name={notif.who} avatarUrl={notif.avatarUrl} size={44} />
+        <View style={s.kindBadge}>
+          <Ionicons name={notif.kind === 'share' ? 'musical-note' : 'person-add'} size={10} color={colors.accentInk} />
+        </View>
       </View>
 
-      {/* Right-side decoration */}
-      {notif.kind === 'follow' && (
+      <View style={s.rowBody}>
+        <Txt variant="callout" color="text2" numberOfLines={2}>
+          <Txt variant="callout" style={{ fontWeight: '700', color: colors.text }}>{notif.who}</Txt>
+          {` ${notif.body}`}
+        </Txt>
+        <Txt variant="caption" color="text3" style={s.rowTime}>{timeAgo(notif.created_at)}</Txt>
+      </View>
+
+      {notif.kind === 'follow' ? (
         <TouchableOpacity
-          style={[styles.followBackBtn, isFollowingBack && styles.followBackBtnDone]}
-          onPress={e => { e.stopPropagation(); onFollowBack?.(); }}
+          style={[s.followBackBtn, isFollowingBack && s.followBackBtnDone]}
+          onPress={onFollowBack}
           activeOpacity={0.8}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          hitSlop={8}
+          accessibilityRole="button"
         >
-          <Text style={[styles.followBackBtnText, isFollowingBack && styles.followBackBtnTextDone]}>
+          <Txt variant="captionStrong" style={isFollowingBack ? s.followBackTextDone : s.followBackText}>
             {isFollowingBack ? 'Following' : 'Follow back'}
-          </Text>
+          </Txt>
         </TouchableOpacity>
-      )}
-      {notif.kind === 'share' && notif.coverUrl && (
-        <CoverArt uri={notif.coverUrl} size={44} radius={8} />
-      )}
-      {notif.kind === 'share' && !notif.coverUrl && (
-        <View style={styles.shareMusicIcon}>
-          <Ionicons name="musical-note" size={18} color={colors.primary} />
-        </View>
-      )}
-      {notif.kind === 'streak' && (
-        <Text style={styles.streakEmoji}>🔥</Text>
+      ) : (
+        <CoverArt uri={notif.coverUrl} size={44} />
       )}
     </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
-
-  filterRow: {
-    paddingHorizontal: 16, paddingBottom: 14, paddingTop: 4, gap: 8,
-    flexDirection: 'row',
-  },
-  filterChip: {
-    paddingHorizontal: 14, paddingVertical: 7,
-    borderRadius: 999, backgroundColor: colors.bgCard,
-    borderWidth: 1, borderColor: colors.line,
-  },
-  filterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  filterChipText: { fontSize: 13, fontWeight: '500', color: colors.fg2 },
-  filterChipTextActive: { color: colors.primaryInk, fontWeight: '600' },
-
+  filters: { paddingBottom: spacing.md, paddingTop: spacing.xs },
   loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-
   row: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 13, gap: 12,
+    paddingHorizontal: spacing.xl, paddingVertical: spacing.md + 1, gap: spacing.md,
   },
-  rowUnread: { backgroundColor: 'rgba(124,91,244,0.045)' },
-  rowBody: { flex: 1, minWidth: 0 },
-  rowText: { fontSize: 14, lineHeight: 20 },
-  rowWho: { color: colors.fg, fontWeight: '700' },
-  rowBodyText: { color: colors.fg2 },
-  rowTime: { fontSize: 11, color: colors.fg3, marginTop: 3 },
-
-  followBackBtn: {
-    borderWidth: 1, borderColor: colors.line, borderRadius: 999,
-    paddingVertical: 7, paddingHorizontal: 14,
-  },
-  followBackBtnDone: { backgroundColor: 'transparent', borderColor: colors.line2 },
-  followBackBtnText: { fontSize: 12, fontWeight: '600', color: colors.fg },
-  followBackBtnTextDone: { color: colors.fg3 },
-
-  shareMusicIcon: {
-    width: 44, height: 44, borderRadius: 8,
-    backgroundColor: 'rgba(124,91,244,0.12)',
-    borderWidth: 1, borderColor: 'rgba(124,91,244,0.2)',
+  rowUnread: { backgroundColor: colors.accentSoft },
+  kindBadge: {
+    position: 'absolute', right: -3, bottom: -3,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.bg,
     alignItems: 'center', justifyContent: 'center',
   },
-  streakEmoji: { fontSize: 24 },
-
-  empty: { alignItems: 'center', paddingTop: 80, gap: 10, paddingHorizontal: 40 },
-  emptyTitle: { color: colors.fg, fontSize: 18, fontWeight: '700' },
-  emptySubtitle: { color: colors.fg3, fontSize: 14, textAlign: 'center', lineHeight: 20 },
-});
+  rowBody: { flex: 1, minWidth: 0 },
+  rowTime: { marginTop: 3 },
+  followBackBtn: {
+    backgroundColor: colors.accent, borderRadius: radius.pill,
+    paddingVertical: spacing.sm - 1, paddingHorizontal: spacing.lg - 2,
+  },
+  followBackBtnDone: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.lineStrong },
+  followBackText: { color: colors.accentInk },
+  followBackTextDone: { color: colors.text3 },
+}));

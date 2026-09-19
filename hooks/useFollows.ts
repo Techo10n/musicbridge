@@ -53,7 +53,12 @@ export function useFollows() {
   }, [userId]);
 
   useEffect(() => {
-    fetchFollows();
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await fetchFollows();
+    })();
+    return () => { cancelled = true; };
   }, [fetchFollows]);
 
   const followUser = useCallback(

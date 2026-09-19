@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  FlatList,
+    FlatList,
   Image,
   Linking,
   Modal,
@@ -14,6 +13,8 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { makeStyles, useTheme } from '../lib/theme';
+import { useToast } from './ui';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useFollows } from '../hooks/useFollows';
@@ -70,6 +71,9 @@ export function LibraryPlaylistDetailModal({
   onClose,
   preloadedTracks,
 }: LibraryPlaylistDetailModalProps) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
   const { user } = useAuth();
   const { mutualFollows: friends, refresh: refreshFollows } = useFollows();
 
@@ -138,7 +142,7 @@ export function LibraryPlaylistDetailModal({
             ? 'Timed out loading tracks. Pull down to retry.'
             : 'Failed to load tracks.';
           console.error('[LibraryPlaylistDetailModal] load tracks:', err);
-          Alert.alert('Error', msg);
+          toast.show({ kind: 'error', message: msg });
         }
       } finally {
         if (!cancelled) setLoadingTracks(false);
@@ -146,6 +150,10 @@ export function LibraryPlaylistDetailModal({
     })();
 
     return () => { cancelled = true; };
+  // Keyed on `playlist.id`, not the `playlist` object: the library refetches and
+  // hands down a fresh object each time, which would cancel and restart this
+  // load mid-flight and leave the track list empty.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preloadedTracks, visible, playlist?.id, user?.id, user?.primary_service]);
 
   const openPickerForPlaylist = () => {
@@ -207,7 +215,7 @@ export function LibraryPlaylistDetailModal({
         );
         if (error) throw error;
         sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        Alert.alert('Sent!', `Shared "${trackSnapshot.title}" with ${friend.display_name}.`);
+        toast.show({ kind: 'success', message: `Sent "${trackSnapshot.title}" to ${friend.display_name}` });
       } else {
         // ── Share whole playlist ─────────────────────────────────────────
         const trackPayloads = tracksSnapshot.map(toTrackPayload);
@@ -235,19 +243,16 @@ export function LibraryPlaylistDetailModal({
         );
         if (error) throw error;
         sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        Alert.alert(
-          'Sent!',
-          `Shared "${playlist.name}" (${tracksSnapshot.length} tracks) with ${friend.display_name}.`,
-        );
+        toast.show({ kind: 'success', message: `Sent "${playlist.name}" to ${friend.display_name}` });
         onClose();
       }
     } catch (err: any) {
-      Alert.alert(
-        'Error',
-        err instanceof Error && err.message === 'timeout'
-          ? 'Share timed out. Check your connection and try again.'
-          : 'Failed to share. Please try again.',
-      );
+      toast.show({
+        kind: 'error',
+        message: err instanceof Error && err.message === 'timeout'
+          ? 'Share timed out. Check your connection.'
+          : 'Could not send that. Try again.',
+      });
       console.error('[LibraryPlaylistDetailModal] share error:', err);
     } finally {
       setSharing(false);
@@ -279,7 +284,7 @@ export function LibraryPlaylistDetailModal({
         disabled={sharing}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
-        <Ionicons name="paper-plane-outline" size={18} color="#555" />
+        <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
       </TouchableOpacity>
     </View>
   );
@@ -307,7 +312,7 @@ export function LibraryPlaylistDetailModal({
               <Ionicons
                 name={playlist.id === '__all_songs__' ? 'albums' : (playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? 'heart' : 'musical-notes'}
                 size={28}
-                color={playlist.id === '__all_songs__' ? '#7C5BF4' : (playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? (playlist.id === '__liked_music__' ? '#FF0000' : '#1DB954') : '#555'}
+                color={playlist.id === '__all_songs__' ? colors.accent : (playlist.id === '__liked_songs__' || playlist.id === '__liked_music__') ? (playlist.id === '__liked_music__' ? colors.youtubeMusic : colors.spotify) : colors.text3}
               />
             </View>
           )}
@@ -334,8 +339,8 @@ export function LibraryPlaylistDetailModal({
           ListHeaderComponent={
             loadingTracks ? (
               <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
-                <ActivityIndicator color="#fff" size="large" />
-                <Text style={{ color: '#555', fontSize: 14 }}>Loading tracks…</Text>
+                <ActivityIndicator color={colors.accent} size="large" />
+                <Text style={{ color: colors.text3, fontSize: 14 }}>Loading tracks…</Text>
               </View>
             ) : null
           }
@@ -347,7 +352,7 @@ export function LibraryPlaylistDetailModal({
           ListFooterComponent={
             streamingMore ? (
               <View style={{ alignItems: 'center', paddingVertical: 16 }}>
-                <ActivityIndicator color="#555" size="small" />
+                <ActivityIndicator color={colors.text3} size="small" />
               </View>
             ) : (
               <View style={{ height: 20 }} />
@@ -367,10 +372,10 @@ export function LibraryPlaylistDetailModal({
             activeOpacity={0.8}
           >
             {sharing ? (
-              <ActivityIndicator color="#000" />
+              <ActivityIndicator color={colors.accentInk} />
             ) : (
               <>
-                <Ionicons name="paper-plane" size={18} color="#000" />
+                <Ionicons name="paper-plane" size={18} color={colors.accentInk} />
                 <Text style={styles.shareButtonText}>Share Playlist with Friend</Text>
               </>
             )}
@@ -392,7 +397,7 @@ export function LibraryPlaylistDetailModal({
                 <TextInput
                   style={styles.pickerMessageInput}
                   placeholder="Add a message (optional)"
-                  placeholderTextColor="#5a5248"
+                  placeholderTextColor={colors.text4}
                   value={pickerMessage}
                   onChangeText={setPickerMessage}
                   maxLength={200}
@@ -439,10 +444,10 @@ export function LibraryPlaylistDetailModal({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: {
     flex: 1,
-    backgroundColor: '#1a1813',
+    backgroundColor: colors.bg,
   },
   header: {
     flexDirection: 'row',
@@ -450,13 +455,13 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#332e28',
+    borderBottomColor: colors.line,
   },
   cover: {
     width: 72,
     height: 72,
     borderRadius: 10,
-    backgroundColor: '#332e28',
+    backgroundColor: colors.line,
   },
   coverPlaceholder: {
     alignItems: 'center',
@@ -466,20 +471,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   playlistTitle: {
-    color: '#f5f0e8',
+    color: colors.text,
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 4,
   },
   trackCount: {
-    color: '#8a8075',
+    color: colors.text3,
     fontSize: 13,
   },
   closeButton: {
     padding: 4,
   },
   closeText: {
-    color: '#5a5248',
+    color: colors.text4,
     fontSize: 18,
   },
   list: {
@@ -502,27 +507,27 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 6,
-    backgroundColor: '#332e28',
+    backgroundColor: colors.line,
   },
   trackCoverPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   trackIndexFallback: {
-    color: '#8a8075',
+    color: colors.text3,
     fontSize: 13,
   },
   trackInfo: {
     flex: 1,
   },
   trackTitle: {
-    color: '#f5f0e8',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '500',
     marginBottom: 2,
   },
   trackArtist: {
-    color: '#8a8075',
+    color: colors.text3,
     fontSize: 13,
   },
   shareTrackButton: {
@@ -530,11 +535,11 @@ const styles = StyleSheet.create({
   },
   separator: {
     height: 1,
-    backgroundColor: '#332e28',
+    backgroundColor: colors.line,
     marginLeft: 72,
   },
   emptyText: {
-    color: '#8a8075',
+    color: colors.text3,
     fontSize: 14,
     textAlign: 'center',
     marginTop: 40,
@@ -542,10 +547,10 @@ const styles = StyleSheet.create({
   footer: {
     padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#332e28',
+    borderTopColor: colors.line,
   },
   shareButton: {
-    backgroundColor: '#7C5BF4',
+    backgroundColor: colors.accent,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -557,22 +562,22 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   shareButtonText: {
-    color: '#f5f3ff',
+    color: colors.accentInk,
     fontSize: 16,
     fontWeight: '700',
   },
   pickerOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
   },
   pickerSheet: {
-    backgroundColor: '#201d18',
+    backgroundColor: colors.bgElev,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '75%',
     borderTopWidth: 1,
-    borderTopColor: '#332e28',
+    borderTopColor: colors.line,
   },
   pickerHeader: {
     flexDirection: 'row',
@@ -580,10 +585,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#332e28',
+    borderBottomColor: colors.line,
   },
   pickerTitle: {
-    color: '#f5f0e8',
+    color: colors.text,
     fontSize: 18,
     fontWeight: '700',
     flex: 1,
@@ -594,17 +599,17 @@ const styles = StyleSheet.create({
     paddingTop: 14,
   },
   pickerMessageInput: {
-    backgroundColor: '#26221d',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    color: '#f5f0e8',
+    color: colors.text,
     fontSize: 14,
     borderWidth: 1,
-    borderColor: '#332e28',
+    borderColor: colors.line,
   },
   pickerSectionLabel: {
-    color: '#8a8075',
+    color: colors.text3,
     fontSize: 12,
     fontWeight: '600',
     textTransform: 'uppercase',
@@ -617,7 +622,7 @@ const styles = StyleSheet.create({
     flexGrow: 0,
   },
   pickerEmptyText: {
-    color: '#8a8075',
+    color: colors.text3,
     fontSize: 14,
     textAlign: 'center',
     marginTop: 24,
@@ -634,12 +639,12 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#2c2822',
+    backgroundColor: colors.surfaceAlt,
     alignItems: 'center',
     justifyContent: 'center',
   },
   pickerAvatarText: {
-    color: '#8a8075',
+    color: colors.text3,
     fontSize: 16,
     fontWeight: '700',
   },
@@ -647,13 +652,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pickerFriendName: {
-    color: '#f5f0e8',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 2,
   },
   pickerFriendUsername: {
-    color: '#6a6258',
+    color: colors.text4,
     fontSize: 13,
   },
-});
+}));

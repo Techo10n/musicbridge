@@ -4,7 +4,6 @@ import {
   Image,
   Linking,
   Modal,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -12,12 +11,12 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { SharedItem, Track } from '../types';
-import { serviceName } from './ServiceBadge';
+import { serviceLabel } from '../lib/services';
 import { useAuth } from '../hooks/useAuth';
 import * as AppleMusic from '../lib/appleMusic';
 import * as Spotify from '../lib/spotify';
 import * as YouTubeMusic from '../lib/youtubeMusic';
-import { colors } from '../lib/theme';
+import { makeStyles, useTheme } from '../lib/theme';
 
 type ConversionState = 'idle' | 'waiting' | 'processing' | 'done' | 'failed';
 
@@ -45,6 +44,8 @@ interface ConvertPlaylistResult {
 }
 
 export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const { user } = useAuth();
 
   const [conversionState, setConversionState] = useState<ConversionState>('idle');
@@ -314,17 +315,17 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
     if (!primaryService) return 'No service connected.';
     if (failureReason === 'spotify_rate_limit_exceeded') return "Spotify's daily quota reached. Try again in ~12 hours.";
     if (failureReason === 'apple_music_token_unavailable') return 'Apple Music auth unavailable. Reconnect in Profile.';
-    if (failureReason === 'No tracks could be matched on the destination service') return `None of the tracks found on ${serviceName(primaryService)}.`;
+    if (failureReason === 'No tracks could be matched on the destination service') return `None of the tracks found on ${serviceLabel(primaryService)}.`;
     if (failureReason === 'spotify_token_refresh_failed') return 'Spotify session expired. Reconnect in Profile.';
-    if (failureReason === 'not_connected') return `Not connected to ${serviceName(primaryService)}. Go to Profile.`;
+    if (failureReason === 'not_connected') return `Not connected to ${serviceLabel(primaryService)}. Go to Profile.`;
     if (failureReason === 'spotify_permission_denied') return 'Missing Spotify permission. Disconnect and reconnect Spotify.';
     // Auth/scope/quota failures during track search. These abort the whole run,
     // so they must not be reported as "no tracks matched" — see gotchas.md.
-    if (failureReason?.endsWith('_auth_failed')) return `${serviceName(primaryService)} session expired. Reconnect in Profile.`;
-    if (failureReason?.endsWith('_permission_denied')) return `Missing ${serviceName(primaryService)} permission. Disconnect and reconnect in Profile.`;
-    if (failureReason?.endsWith('_quota_exceeded')) return `${serviceName(primaryService)}'s daily quota is exhausted. Try again tomorrow.`;
-    if (failureReason === 'tracks_not_added') return `Playlist created but no tracks added. Try reconnecting ${serviceName(primaryService)}.`;
-    if (failureReason === 'playlist_creation_failed') return `Playlist couldn't be created on ${serviceName(primaryService)}.`;
+    if (failureReason?.endsWith('_auth_failed')) return `${serviceLabel(primaryService)} session expired. Reconnect in Profile.`;
+    if (failureReason?.endsWith('_permission_denied')) return `Missing ${serviceLabel(primaryService)} permission. Disconnect and reconnect in Profile.`;
+    if (failureReason?.endsWith('_quota_exceeded')) return `${serviceLabel(primaryService)}'s daily quota is exhausted. Try again tomorrow.`;
+    if (failureReason === 'tracks_not_added') return `Playlist created but no tracks added. Try reconnecting ${serviceLabel(primaryService)}.`;
+    if (failureReason === 'playlist_creation_failed') return `Playlist couldn't be created on ${serviceLabel(primaryService)}.`;
     if (failureReason) return `Conversion failed: ${failureReason}`;
     return 'Conversion failed. Check connection and try again.';
   };
@@ -334,7 +335,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
   const isConverting = conversionState === 'waiting' || conversionState === 'processing';
   const progress = totalTracks > 0 ? tracksProcessed / totalTracks : 0;
   const senderSvc = (item.sender?.primary_service as string | null) ?? 'spotify';
-  const senderSvcLabel = serviceName(senderSvc as any);
+  const senderSvcLabel = serviceLabel(senderSvc as any);
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
@@ -343,13 +344,13 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
         {/* ── Hero ── */}
         <View style={styles.hero}>
           <TouchableOpacity onPress={handleClose} style={styles.backBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="chevron-back" size={22} color={colors.fg2} />
+            <Ionicons name="chevron-back" size={22} color={colors.text2} />
           </TouchableOpacity>
 
           <View style={styles.heroCenter}>
             {item.cover_image_url
               ? <Image source={{ uri: item.cover_image_url }} style={styles.heroCover} />
-              : <View style={styles.heroCoverFallback}><Ionicons name="musical-notes" size={48} color={colors.fg4} /></View>
+              : <View style={styles.heroCoverFallback}><Ionicons name="musical-notes" size={48} color={colors.text4} /></View>
             }
             {item.sender && (
               <Text style={styles.heroSharedBy}>Shared by {item.sender.display_name}</Text>
@@ -362,14 +363,14 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
             {/* Service direction chips */}
             <View style={styles.svcFlow}>
               <View style={styles.svcChip}>
-                <View style={[styles.svcDot, { backgroundColor: senderSvc === 'spotify' ? '#1DB954' : senderSvc === 'apple_music' ? '#fc3c44' : '#FF0000' }]} />
+                <View style={[styles.svcDot, { backgroundColor: senderSvc === 'spotify' ? colors.spotify : senderSvc === 'apple_music' ? colors.appleMusic : colors.youtubeMusic }]} />
                 <Text style={styles.svcChipText}>{senderSvcLabel}</Text>
               </View>
-              <Ionicons name="arrow-forward" size={14} color={colors.fg3} />
+              <Ionicons name="arrow-forward" size={14} color={colors.text3} />
               {primaryService && (
                 <View style={styles.svcChip}>
-                  <View style={[styles.svcDot, { backgroundColor: primaryService === 'spotify' ? '#1DB954' : primaryService === 'apple_music' ? '#fc3c44' : '#FF0000' }]} />
-                  <Text style={styles.svcChipText}>{serviceName(primaryService)} · Yours</Text>
+                  <View style={[styles.svcDot, { backgroundColor: primaryService === 'spotify' ? colors.spotify : primaryService === 'apple_music' ? colors.appleMusic : colors.youtubeMusic }]} />
+                  <Text style={styles.svcChipText}>{serviceLabel(primaryService)} · Yours</Text>
                 </View>
               )}
             </View>
@@ -380,17 +381,17 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
         {isConverting && (
           <View style={styles.conversionDiagram}>
             <View style={styles.conversionSide}>
-              <View style={[styles.convDot, { backgroundColor: senderSvc === 'apple_music' ? '#fc3c44' : '#1DB954' }]} />
+              <View style={[styles.convDot, { backgroundColor: senderSvc === 'apple_music' ? colors.appleMusic : colors.spotify }]} />
               <Text style={styles.convLabel}>Source</Text>
             </View>
             <View style={styles.convArrow}>
               <View style={styles.convArrowLine} />
               <View style={styles.convShuffleBtn}>
-                <Ionicons name="shuffle" size={14} color={colors.primary} />
+                <Ionicons name="shuffle" size={14} color={colors.accent} />
               </View>
             </View>
             <View style={styles.conversionSide}>
-              <View style={[styles.convDot, { backgroundColor: primaryService === 'spotify' ? '#1DB954' : primaryService === 'apple_music' ? '#fc3c44' : '#FF0000' }]} />
+              <View style={[styles.convDot, { backgroundColor: primaryService === 'spotify' ? colors.spotify : primaryService === 'apple_music' ? colors.appleMusic : colors.youtubeMusic }]} />
               <Text style={styles.convLabel}>Yours</Text>
             </View>
           </View>
@@ -423,7 +424,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
                   <Ionicons
                     name={quotaExhausted ? 'time-outline' : 'alert-circle-outline'}
                     size={15}
-                    color={colors.fg3}
+                    color={colors.text3}
                   />
                   <Text style={styles.missedHeaderText}>
                     {quotaExhausted
@@ -433,8 +434,8 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
                 </View>
                 <Text style={styles.missedHint}>
                   {quotaExhausted
-                    ? `${serviceName(primaryService)} caps how many songs can be looked up per day. Open this again tomorrow to add the rest.`
-                    : `No confident match on ${serviceName(primaryService)}. A close-but-wrong song is worse than a missing one, so these were skipped.`}
+                    ? `${serviceLabel(primaryService)} caps how many songs can be looked up per day. Open this again tomorrow to add the rest.`
+                    : `No confident match on ${serviceLabel(primaryService)}. A close-but-wrong song is worse than a missing one, so these were skipped.`}
                 </Text>
                 {(showAllMissed ? unmatchedTracks : unmatchedTracks.slice(0, 4)).map((t, i) => (
                   <View key={`${t.title}-${i}`} style={styles.missedRow}>
@@ -456,7 +457,7 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
                     <Ionicons
                       name={showAllMissed ? 'chevron-up' : 'chevron-down'}
                       size={14}
-                      color={colors.primary}
+                      color={colors.accent}
                     />
                   </TouchableOpacity>
                 )}
@@ -493,18 +494,18 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
           {/* Idle: show Add button */}
           {conversionState === 'idle' && !alreadyInLibrary && primaryService && (
             <TouchableOpacity style={styles.addBtn} onPress={handleAddToService} activeOpacity={0.85}>
-              <Ionicons name="add" size={18} color={colors.primaryInk} />
-              <Text style={styles.addBtnText}>Add to your {serviceName(primaryService)}</Text>
+              <Ionicons name="add" size={18} color={colors.accentInk} />
+              <Text style={styles.addBtnText}>Add to your {serviceLabel(primaryService)}</Text>
             </TouchableOpacity>
           )}
 
           {/* Already in library */}
           {alreadyInLibrary && conversionState === 'idle' && primaryService && (
             <View style={styles.doneRow}>
-              <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.primaryInk} /></View>
+              <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.accentInk} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.doneTitle}>Already in your library</Text>
-                <Text style={styles.doneSub}>{serviceName(primaryService)} · {matchedTracks ?? tracksProcessed} tracks</Text>
+                <Text style={styles.doneSub}>{serviceLabel(primaryService)} · {matchedTracks ?? tracksProcessed} tracks</Text>
               </View>
               {createdPlaylistId && (
                 <TouchableOpacity style={styles.openSvcBtn} onPress={openCreatedPlaylist} activeOpacity={0.85}>
@@ -524,9 +525,9 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
           {/* Done */}
           {conversionState === 'done' && primaryService && (
             <View style={styles.doneRow}>
-              <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.primaryInk} /></View>
+              <View style={styles.doneCheck}><Ionicons name="checkmark" size={16} color={colors.accentInk} /></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.doneTitle}>Added to {serviceName(primaryService)}!</Text>
+                <Text style={styles.doneTitle}>Added to {serviceLabel(primaryService)}!</Text>
                 <Text style={styles.doneSub}>
                   {matchedTracks ?? tracksProcessed} of {totalTracks} tracks matched
                 </Text>
@@ -558,6 +559,8 @@ export function PlaylistModal({ item, visible, onClose }: PlaylistModalProps) {
 
 // ─── Track status badge ───────────────────────────────────────────────────────
 function TrackStatusBadge({ status }: { status: 'matched' | 'checked' | 'active' | 'pending' | 'queued' }) {
+  const tsBadge = useTsBadge();
+  const { colors } = useTheme();
   // "Checked" means searched, outcome not yet known. The conversion reports how
   // many tracks it has examined, not which ones resolved, so claiming "Matched"
   // per track while it runs asserts something we cannot know yet.
@@ -567,7 +570,7 @@ function TrackStatusBadge({ status }: { status: 'matched' | 'checked' | 'active'
   if (status === 'matched') {
     return (
       <View style={tsBadge.matched}>
-        <Ionicons name="checkmark" size={12} color={colors.primaryInk} />
+        <Ionicons name="checkmark" size={12} color={colors.accentInk} />
         <Text style={tsBadge.matchedText}>Matched</Text>
       </View>
     );
@@ -586,16 +589,16 @@ function TrackStatusBadge({ status }: { status: 'matched' | 'checked' | 'active'
   return null;
 }
 
-const tsBadge = StyleSheet.create({
-  matched: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(124,91,244,0.15)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
-  matchedText: { fontSize: 11, color: colors.primary, fontWeight: '600' },
+const useTsBadge = makeStyles(({ colors, radius, spacing, type }) => ({
+  matched: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.accentSoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  matchedText: { fontSize: 11, color: colors.accent, fontWeight: '600' },
   active: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.violet },
-  activeText: { fontSize: 11, color: colors.violet, fontWeight: '600' },
-  queued: { fontSize: 11, color: colors.fg3 },
-});
+  activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  activeText: { fontSize: 11, color: colors.accent, fontWeight: '600' },
+  queued: { fontSize: 11, color: colors.text3 },
+}));
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
 
   // Hero
@@ -609,113 +612,113 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 4, marginBottom: 12 },
   heroCenter: { alignItems: 'center', gap: 8 },
-  heroCover: { width: 160, height: 160, borderRadius: 16, backgroundColor: colors.bgCard },
+  heroCover: { width: 160, height: 160, borderRadius: 16, backgroundColor: colors.surface },
   heroCoverFallback: {
     width: 160, height: 160, borderRadius: 16,
-    backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: colors.line,
   },
-  heroSharedBy: { fontSize: 11, color: colors.primary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  heroTitle: { fontSize: 22, fontWeight: '700', color: colors.fg, letterSpacing: -0.4, textAlign: 'center' },
-  heroMeta: { fontSize: 13, color: colors.fg2, textAlign: 'center' },
+  heroSharedBy: { fontSize: 11, color: colors.accent, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+  heroTitle: { fontSize: 22, fontWeight: '700', color: colors.text, letterSpacing: -0.4, textAlign: 'center' },
+  heroMeta: { fontSize: 13, color: colors.text2, textAlign: 'center' },
   svcFlow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   svcChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: colors.bgCard, borderRadius: 999,
+    backgroundColor: colors.surface, borderRadius: 999,
     paddingHorizontal: 10, paddingVertical: 5,
     borderWidth: 1, borderColor: colors.line,
   },
   svcDot: { width: 8, height: 8, borderRadius: 4 },
-  svcChipText: { fontSize: 12, color: colors.fg2, fontWeight: '600' },
+  svcChipText: { fontSize: 12, color: colors.text2, fontWeight: '600' },
 
   // Conversion diagram
   conversionDiagram: {
     flexDirection: 'row', alignItems: 'center',
     marginHorizontal: 20, marginVertical: 12,
-    backgroundColor: colors.bgCard, borderRadius: 14,
+    backgroundColor: colors.surface, borderRadius: 14,
     padding: 14, borderWidth: 1, borderColor: colors.line,
   },
   conversionSide: { alignItems: 'center', gap: 4 },
   convDot: { width: 32, height: 32, borderRadius: 16 },
-  convLabel: { fontSize: 11, color: colors.fg3 },
+  convLabel: { fontSize: 11, color: colors.text3 },
   convArrow: {
     flex: 1, position: 'relative', height: 32,
     alignItems: 'center', justifyContent: 'center',
   },
   convArrowLine: {
     position: 'absolute', left: 0, right: 0,
-    height: 2, backgroundColor: colors.line2,
+    height: 2, backgroundColor: colors.lineStrong,
   },
   convShuffleBtn: {
     width: 28, height: 28, borderRadius: 14,
-    backgroundColor: colors.bgElev, borderWidth: 2, borderColor: colors.primary,
+    backgroundColor: colors.bgElev, borderWidth: 2, borderColor: colors.accent,
     alignItems: 'center', justifyContent: 'center',
   },
 
   // Progress
   progressSection: { paddingHorizontal: 20, paddingBottom: 8 },
   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  progressLabel: { fontSize: 15, fontWeight: '600', color: colors.fg },
-  progressCount: { fontSize: 13, color: colors.fg3, fontVariant: ['tabular-nums'] },
-  progressBar: { height: 6, borderRadius: 3, backgroundColor: colors.bgCard, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 3 },
+  progressLabel: { fontSize: 15, fontWeight: '600', color: colors.text },
+  progressCount: { fontSize: 13, color: colors.text3, fontVariant: ['tabular-nums'] },
+  progressBar: { height: 6, borderRadius: 3, backgroundColor: colors.surface, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: colors.accent, borderRadius: 3 },
 
   // Track list
   trackRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 11, gap: 12 },
-  trackNum: { width: 26, fontSize: 11, color: colors.fg3, textAlign: 'right', fontVariant: ['tabular-nums'] },
+  trackNum: { width: 26, fontSize: 11, color: colors.text3, textAlign: 'right', fontVariant: ['tabular-nums'] },
   trackInfo: { flex: 1 },
-  trackTitle: { fontSize: 14, fontWeight: '500', color: colors.fg, marginBottom: 2 },
-  trackArtist: { fontSize: 12, color: colors.fg3 },
+  trackTitle: { fontSize: 14, fontWeight: '500', color: colors.text, marginBottom: 2 },
+  trackArtist: { fontSize: 12, color: colors.text3 },
   sep: { height: 1, backgroundColor: colors.line, marginLeft: 58 },
-  emptyText: { color: colors.fg3, fontSize: 14, textAlign: 'center', marginTop: 40 },
+  emptyText: { color: colors.text3, fontSize: 14, textAlign: 'center', marginTop: 40 },
 
   // Footer
   footer: { padding: 16, borderTopWidth: 1, borderTopColor: colors.line },
 
   addBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 15,
+    backgroundColor: colors.accent, borderRadius: 999, paddingVertical: 15,
   },
-  addBtnText: { color: colors.primaryInk, fontSize: 16, fontWeight: '700' },
+  addBtnText: { color: colors.accentInk, fontSize: 16, fontWeight: '700' },
 
   doneRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: colors.bgCard, borderRadius: 14, padding: 14,
+    backgroundColor: colors.surface, borderRadius: 14, padding: 14,
     borderWidth: 1, borderColor: colors.line,
   },
-  doneCheck: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  doneTitle: { fontSize: 15, fontWeight: '700', color: colors.fg, marginBottom: 2 },
-  doneSub: { fontSize: 12, color: colors.fg3 },
+  doneCheck: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  doneTitle: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 2 },
+  doneSub: { fontSize: 12, color: colors.text3 },
   // Skipped tracks live under the track list, not in the fixed footer: there can
   // be dozens, and the footer has to stay one compact row next to "Open".
   missedSection: {
     marginTop: 8, marginHorizontal: 16, marginBottom: 20,
-    backgroundColor: colors.bgCard, borderRadius: 12,
+    backgroundColor: colors.surface, borderRadius: 12,
     borderWidth: 1, borderColor: colors.line,
     paddingVertical: 12, paddingHorizontal: 14,
   },
   missedHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  missedHeaderText: { fontSize: 13, fontWeight: '700', color: colors.fg2, flex: 1 },
-  missedHint: { fontSize: 11, lineHeight: 15, color: colors.fg3, marginTop: 4, marginBottom: 10 },
+  missedHeaderText: { fontSize: 13, fontWeight: '700', color: colors.text2, flex: 1 },
+  missedHint: { fontSize: 11, lineHeight: 15, color: colors.text3, marginTop: 4, marginBottom: 10 },
   missedRow: {
     paddingVertical: 6,
     borderTopWidth: 1, borderTopColor: colors.line,
   },
-  missedRowTitle: { fontSize: 13, color: colors.fg2 },
-  missedRowArtist: { fontSize: 11, color: colors.fg4, marginTop: 1 },
+  missedRowTitle: { fontSize: 13, color: colors.text2 },
+  missedRowArtist: { fontSize: 11, color: colors.text4, marginTop: 1 },
   missedToggle: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
     paddingTop: 10,
   },
-  missedToggleText: { fontSize: 12, fontWeight: '600', color: colors.primary },
-  openSvcBtn: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 14 },
-  openSvcBtnText: { color: colors.primaryInk, fontSize: 13, fontWeight: '700' },
+  missedToggleText: { fontSize: 12, fontWeight: '600', color: colors.accent },
+  openSvcBtn: { backgroundColor: colors.accent, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 14 },
+  openSvcBtnText: { color: colors.accentInk, fontSize: 13, fontWeight: '700' },
 
-  bgBtn: { backgroundColor: colors.bgCard, borderRadius: 999, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: colors.line },
-  bgBtnText: { color: colors.fg2, fontSize: 15, fontWeight: '600' },
+  bgBtn: { backgroundColor: colors.surface, borderRadius: 999, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: colors.line },
+  bgBtnText: { color: colors.text2, fontSize: 15, fontWeight: '600' },
 
   failedRow: { gap: 12 },
-  failedText: { color: colors.coral, fontSize: 14, textAlign: 'center', lineHeight: 20 },
-  retryBtn: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 14, alignItems: 'center' },
-  retryBtnText: { color: colors.primaryInk, fontSize: 15, fontWeight: '700' },
-});
+  failedText: { color: colors.danger, fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  retryBtn: { backgroundColor: colors.accent, borderRadius: 999, paddingVertical: 14, alignItems: 'center' },
+  retryBtnText: { color: colors.accentInk, fontSize: 15, fontWeight: '700' },
+}));

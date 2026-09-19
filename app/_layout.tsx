@@ -1,29 +1,40 @@
 import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Alert, View } from 'react-native';
 import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
+import {
+  Fraunces_500Medium_Italic,
+  Fraunces_600SemiBold,
+  Fraunces_700Bold,
+  useFonts,
+} from '@expo-google-fonts/fraunces';
 import { AuthProvider, useAuth } from '../hooks/useAuth';
 import { useNotifications } from '../hooks/useNotifications';
 import { getSpotifyReconnectRequired } from '../lib/spotify';
+import { ThemeProvider, useTheme } from '../lib/theme';
+import { ToastProvider } from '../components/ui';
 
-const tutorialKey = (userId: string) => `museaic_tutorial_seen_${userId}`;
+void SplashScreen.preventAutoHideAsync().catch(() => {
+  // Already hidden or unavailable (e.g. web) — nothing to do.
+});
 
 /**
  * Inner navigator — reacts to auth state and redirects accordingly.
- * Keeping this separate from AuthProvider lets us consume the context here.
+ * Kept separate from the providers so it can consume them.
  */
-function RootLayoutNav() {
+function RootLayoutNav({ fontsReady }: { fontsReady: boolean }) {
   const { session, user, loading } = useAuth();
+  const { colors, isDark } = useTheme();
   useNotifications();
 
   const segments = useSegments();
   const router = useRouter();
   const navState = useRootNavigationState();
-
-  const [shownSpotifyReconnectPrompt, setShownSpotifyReconnectPrompt] = useState(false);
+  const promptedReconnectFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (!navState?.key || loading) return;
@@ -38,70 +49,39 @@ function RootLayoutNav() {
     }
   }, [navState?.key, session, user, loading, segments, router]);
 
+  // Hide the splash once fonts and the first auth resolution are both in.
   useEffect(() => {
-    setShownSpotifyReconnectPrompt(false);
-  }, [session?.user.id]);
+    if (fontsReady && !loading) void SplashScreen.hideAsync().catch(() => {});
+  }, [fontsReady, loading]);
+
+  const maybePromptSpotifyReconnect = useCallback(async () => {
+    if (!session || !user) return;
+    if (promptedReconnectFor.current === session.user.id) return;
+    const reconnectRequired = await getSpotifyReconnectRequired();
+    if (!reconnectRequired || user.spotify_access_token) return;
+    promptedReconnectFor.current = session.user.id;
+    Alert.alert(
+      'Reconnect Spotify',
+      'Your Spotify session expired. Reconnect Spotify from Settings to keep opening songs and using Spotify library features.',
+      [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => router.push('/(tabs)/settings') },
+      ],
+    );
+  }, [router, session, user]);
 
   useEffect(() => {
-    if (!session || !user || loading || shownSpotifyReconnectPrompt) return;
-
-    let cancelled = false;
-
-    const maybePromptSpotifyReconnect = async () => {
-      const reconnectRequired = await getSpotifyReconnectRequired();
-      if (cancelled || !reconnectRequired) return;
-      if (user.spotify_access_token) return;
-
-      setShownSpotifyReconnectPrompt(true);
-      Alert.alert(
-        'Reconnect Spotify',
-        'Your Spotify session expired. Reconnect Spotify from your profile to keep opening songs and using Spotify library features.',
-        [
-          { text: 'Later', style: 'cancel' },
-          {
-            text: 'Open Profile',
-            onPress: () => {
-              router.push('/(tabs)/profile');
-            },
-          },
-        ],
-      );
-    };
-
+    if (loading) return;
     void maybePromptSpotifyReconnect();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, router, session, shownSpotifyReconnectPrompt, user]);
-
-  useEffect(() => {
-    if (!session || !user || loading) return;
-
-    let cancelled = false;
-    void (async () => {
-      const key = tutorialKey(user.id);
-      const seen = await AsyncStorage.getItem(key);
-      if (cancelled || seen) return;
-      await AsyncStorage.setItem(key, '1');
-      Alert.alert(
-        'Welcome to Museaic',
-        'Connect your streaming services in Settings, share songs from the center tab, and use Library to open saved playlists.',
-        [{ text: 'Got it' }],
-      );
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, session, user]);
+  }, [loading, maybePromptSpotifyReconnect]);
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#1a1813' },
+          contentStyle: { backgroundColor: colors.bg },
           animation: 'fade',
         }}
       />
@@ -110,11 +90,23 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  const [fontsLoaded, fontError] = useFonts({
+    Fraunces_500Medium_Italic,
+    Fraunces_600SemiBold,
+    Fraunces_700Bold,
+  });
+  // A font failure must not brick the app: fall through to the system face.
+  const fontsReady = fontsLoaded || !!fontError;
+
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <RootLayoutNav />
-      </AuthProvider>
+      <ThemeProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <RootLayoutNav fontsReady={fontsReady} />
+          </AuthProvider>
+        </ToastProvider>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
