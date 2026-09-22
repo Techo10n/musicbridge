@@ -6,13 +6,12 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useLibrary } from '../../hooks/useLibrary';
-import { LibraryArtist, LibraryPlaylist, LibraryTrack, Track, User } from '../../types';
+import { EmptyPlaylistError, ShareDraft, toTrackPayload } from '../../lib/sharing';
+import { LibraryArtist, LibraryPlaylist, LibraryTrack } from '../../types';
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
-import { FriendPickerModal } from '../../components/FriendPickerModal';
-import { sendPushNotification } from '../../lib/notifications';
+import { ShareComposer } from '../../components/ShareComposer';
 import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, useToast } from '../../components/ui';
 import { serviceLabelShort } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
@@ -34,28 +33,6 @@ function normalizeTrackKey(title: string, artist: string): string {
   return `${normalizeSearch(title).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()}::${normalizeSearch(artist).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()}`;
 }
 
-function toTrackPayload(t: LibraryTrack): Track {
-  return {
-    title: t.title,
-    artist: t.artist,
-    // Carried across the share because only the sender can obtain it — the
-    // recipient holds a token for their own service only. Lets a Spotify <->
-    // Apple Music conversion resolve by exact recording instead of guessing
-    // from title and artist.
-    isrc: t.isrc ?? null,
-    spotify_id: t.service === 'spotify' ? t.id : null,
-    apple_music_id: t.service === 'apple_music' ? t.id : null,
-    // Only a video confirmed to come from an "Artist - Topic" channel is a
-    // valid YouTube Music Song id (see decisions.md "Never add non-Topic
-    // videos to YouTube Music"). A library playlist can hold a regular video
-    // that isn't one — sending its raw id would let the recipient's device
-    // build a mix-radio deep link to something that isn't a Song. Leave it
-    // null instead so the recipient re-resolves by title/artist through the
-    // same strict `searchTrack` path used when no id is stored at all.
-    youtube_music_id: t.service === 'youtube_music' && t.ytTopicVerified ? t.id : null,
-  };
-}
-
 export default function LibraryScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -72,10 +49,8 @@ export default function LibraryScreen() {
   const [selectedPlaylistTracks, setSelectedPlaylistTracks] = useState<LibraryTrack[] | null>(null);
   const [playlistModalVisible, setPlaylistModalVisible] = useState(false);
   const [playlistTrackIndex, setPlaylistTrackIndex] = useState<Record<string, LibraryTrack[]>>({});
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [pendingSongShare, setPendingSongShare] = useState<LibraryTrack | null>(null);
-  const [pendingPlaylistShare, setPendingPlaylistShare] = useState<LibraryPlaylist | null>(null);
-  const [sharingSong, setSharingSong] = useState(false);
+  const [shareDraft, setShareDraft] = useState<ShareDraft | null>(null);
+  const [preparingShare, setPreparingShare] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const fetchedLibraryKey = useRef<string | null>(null);
@@ -133,63 +108,42 @@ export default function LibraryScreen() {
     setSelectedPlaylistTracks(null);
   };
 
-  const handleSongShareFriendSelected = async (friend: User, message: string) => {
-    if (!user || (!pendingSongShare && !pendingPlaylistShare)) return;
-    setSharingSong(true);
-    try {
-      if (pendingSongShare) {
-        const { data: insertedItem, error: dbError } = await supabase.from('shared_items').insert({
-          sender_id: user.id, recipient_id: friend.id, type: 'song',
-          title: pendingSongShare.title, artist: pendingSongShare.artist,
-          cover_image_url: pendingSongShare.coverUrl,
-          spotify_id: pendingSongShare.service === 'spotify' ? pendingSongShare.id : null,
-          apple_music_id: pendingSongShare.service === 'apple_music' ? pendingSongShare.id : null,
-          // Only trust ids confirmed to be from an "Artist - Topic" channel —
-          // see the matching comment on toTrackPayload above.
-          youtube_music_id: pendingSongShare.service === 'youtube_music' && pendingSongShare.ytTopicVerified
-            ? pendingSongShare.id
-            : null,
-          message: message || null,
-        }).select('id').single();
-        if (dbError) throw dbError;
-        if (insertedItem?.id) sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        toast.show({ kind: 'success', message: `Sent "${pendingSongShare.title}" to ${friend.display_name}` });
-      } else if (pendingPlaylistShare) {
-        const tracks = await getPlaylistTracks(pendingPlaylistShare.id);
-        // The track loaders degrade to an empty list on any failure — a dead
-        // token, a 403, a timeout. Sharing anyway writes a playlist whose
-        // `tracks` payload is permanently empty, and the recipient can never
-        // recover it because the share stores the tracks, not a live reference.
-        // Refuse instead: a failed share the sender can retry beats a silently
-        // broken one they never learn about.
-        if (tracks.length === 0) {
-          Alert.alert(
-            "Couldn't read that playlist",
-            `No tracks came back for "${pendingPlaylistShare.name}". Check that your music service is still connected in Profile, then try again.`,
-          );
-          return;
-        }
-        const { data: insertedItem, error: dbError } = await supabase.from('shared_items').insert({
-          sender_id: user.id,
-          recipient_id: friend.id,
-          type: 'playlist',
-          title: pendingPlaylistShare.name,
-          artist: null,
-          cover_image_url: pendingPlaylistShare.coverUrl,
-          spotify_playlist_id: pendingPlaylistShare.service === 'spotify' ? pendingPlaylistShare.id : null,
-          apple_music_playlist_id: pendingPlaylistShare.service === 'apple_music' ? pendingPlaylistShare.id : null,
-          youtube_music_playlist_id: pendingPlaylistShare.service === 'youtube_music' ? pendingPlaylistShare.id : null,
-          tracks: tracks.map(toTrackPayload),
-          message: message || null,
-        }).select('id').single();
-        if (dbError) throw dbError;
-        if (insertedItem?.id) sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        toast.show({ kind: 'success', message: `Sent "${pendingPlaylistShare.name}" to ${friend.display_name}` });
-      }
-    } catch { toast.show({ kind: 'error', message: 'Could not send that. Try again.' }); }
-    finally { setSharingSong(false); setPendingSongShare(null); setPendingPlaylistShare(null); }
+  const shareSong = (track: LibraryTrack) => {
+    setShareDraft({
+      kind: 'song',
+      title: track.title,
+      artist: track.artist,
+      coverUrl: track.coverUrl,
+      service: track.service,
+      serviceId: track.id,
+      isrc: track.isrc,
+      ytTopicVerified: track.ytTopicVerified,
+    });
   };
 
+  // A playlist share stores its tracks rather than a reference, so they have to
+  // be read before the composer opens. `sendShare` refuses an empty list, but
+  // failing here means the user never gets as far as picking a recipient.
+  const sharePlaylist = async (playlist: LibraryPlaylist) => {
+    if (preparingShare) return;
+    setPreparingShare(true);
+    try {
+      const tracks = await getPlaylistTracks(playlist.id);
+      if (tracks.length === 0) throw new EmptyPlaylistError(playlist.name);
+      setShareDraft({
+        kind: 'playlist',
+        title: playlist.name,
+        coverUrl: playlist.coverUrl,
+        service: playlist.service,
+        playlistId: playlist.id,
+        tracks: tracks.map(toTrackPayload),
+      });
+    } catch (err) {
+      toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not read that playlist' });
+    } finally {
+      setPreparingShare(false);
+    }
+  };
 
   const handleArtistPress = (artist: LibraryArtist) => {
     Alert.alert('Artist page unavailable', `${artist.name} artist pages are not currently available.`);
@@ -324,9 +278,7 @@ export default function LibraryScreen() {
         ].join(' '),
         coverUrl: song.coverUrl,
         onPress: () => {
-          setPendingSongShare(song.track);
-          setPendingPlaylistShare(null);
-          setPickerVisible(true);
+          shareSong(song.track);
         },
       })),
       ...followedArtists.map((artist) => ({
@@ -449,8 +401,8 @@ export default function LibraryScreen() {
                     </View>
                     <TouchableOpacity
                       style={styles.rowAction}
-                      onPress={() => { setPendingSongShare(null); setPendingPlaylistShare(p); setPickerVisible(true); }}
-                      disabled={sharingSong}
+                      onPress={() => void sharePlaylist(p)}
+                      disabled={preparingShare}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                       <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
@@ -484,8 +436,8 @@ export default function LibraryScreen() {
                       </View>
                       <TouchableOpacity
                         style={styles.rowAction}
-                        onPress={() => { setPendingSongShare(row.track); setPendingPlaylistShare(null); setPickerVisible(true); }}
-                        disabled={sharingSong}
+                        onPress={() => shareSong(row.track)}
+                        disabled={preparingShare}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       >
                         <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
@@ -553,11 +505,10 @@ export default function LibraryScreen() {
         preloadedTracks={selectedPlaylistTracks}
       />
 
-      <FriendPickerModal
-        visible={pickerVisible}
-        title={pendingSongShare ? `Share "${pendingSongShare.title}"` : pendingPlaylistShare ? `Share "${pendingPlaylistShare.name}"` : 'Share'}
-        onClose={() => { setPickerVisible(false); setPendingSongShare(null); setPendingPlaylistShare(null); }}
-        onSelect={handleSongShareFriendSelected}
+      <ShareComposer
+        visible={shareDraft !== null}
+        draft={shareDraft}
+        onClose={() => setShareDraft(null)}
       />
 
       <Modal visible={searchVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSearchVisible(false)}>

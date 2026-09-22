@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlatList, Linking, Modal,
+import { FlatList, Modal,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,14 +11,11 @@ import { useSharedItems } from '../../hooks/useSharedItems';
 import { useReactions } from '../../hooks/useReactions';
 import { PlaylistModal } from '../../components/PlaylistModal';
 import { FirstShareCard } from '../../components/FirstShareCard';
-import { AppBar, Avatar, CoverArt, EmptyState, IconBtn, ServiceDot, useToast } from '../../components/ui';
-import { serviceLabel, serviceLabelShort } from '../../lib/services';
+import { AppBar, Avatar, CoverArt, EmptyState, IconBtn, ServiceDot } from '../../components/ui';
+import { serviceLabelShort } from '../../lib/services';
 import { SharedItem, MusicService } from '../../types';
 import { makeStyles, useTheme } from '../../lib/theme';
-import * as Spotify from '../../lib/spotify';
-import * as AppleMusic from '../../lib/appleMusic';
-import * as YouTubeMusic from '../../lib/youtubeMusic';
-import { timeAgo, withTimeout } from '../../lib/utils';
+import { timeAgo } from '../../lib/utils';
 
 type HomeTab = 'inbox' | 'following' | 'mixes';
 const REACTIONS_ROW = ['🔥', '❤️', '🤯', '😮'];
@@ -26,7 +23,6 @@ const REACTIONS_ROW = ['🔥', '❤️', '🤯', '😮'];
 // ─── FeedRow ──────────────────────────────────────────────────────────────────
 function FeedRow({
   item,
-  isResolving,
   onPress,
   reactionMap,
   myReaction,
@@ -34,7 +30,6 @@ function FeedRow({
   viewerService,
 }: {
   item: SharedItem;
-  isResolving: boolean;
   onPress: (item: SharedItem) => void;
   reactionMap: Record<string, number>;
   myReaction: string | undefined;
@@ -65,15 +60,13 @@ function FeedRow({
         <View style={styles.headerAction}>
           <Text style={styles.shareTypeText} numberOfLines={1}>{shareType} · {timeAgo(item.created_at)}</Text>
           {isUnread && <View style={styles.unreadDot} />}
-          {isResolving ? <Ionicons name="sync" size={17} color={colors.text3} /> : null}
-        </View>
+                  </View>
       </View>
 
       <TouchableOpacity
         style={styles.feedMediaRow}
         onPress={() => onPress(item)}
         activeOpacity={0.85}
-        disabled={isResolving}
       >
         <View style={{ position: 'relative', flexShrink: 0 }}>
           <CoverArt uri={item.cover_image_url} size={58} radius={12} />
@@ -99,7 +92,7 @@ function FeedRow({
           </View>
         </View>
 
-        <Ionicons name="play-circle" size={38} color={colors.accent} style={{ opacity: isResolving ? 0.4 : 1 }} />
+        <Ionicons name="play-circle" size={38} color={colors.accent} />
       </TouchableOpacity>
 
       {item.message ? (
@@ -144,7 +137,6 @@ function FeedRow({
 export default function Home() {
   const styles = useStyles();
   const { colors } = useTheme();
-  const toast = useToast();
   const { user } = useAuth();
   const router = useRouter();
   const { items, loading, refreshing, refresh, markAsOpened, unreadCount } = useSharedItems();
@@ -154,49 +146,15 @@ export default function Home() {
 
   const [tab, setTab] = useState<HomeTab>('inbox');
   const [playlistModalItem, setPlaylistModalItem] = useState<SharedItem | null>(null);
-  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const handleItemPress = async (item: SharedItem) => {
+  const handleItemPress = (item: SharedItem) => {
     void markAsOpened(item.id);
+    // Playlists still open their conversion sheet; a song now gets a screen of
+    // its own rather than being handed straight to a streaming app.
     if (item.type === 'playlist') { setPlaylistModalItem(item); return; }
-
-    const primaryService = user?.primary_service as MusicService | null;
-    if (!primaryService) { toast.show({ kind: 'error', message: 'Set a primary streaming service in Settings first' }); return; }
-
-    setResolvingId(item.id);
-    try {
-      let links: string[] = [];
-      switch (primaryService) {
-        case 'spotify': {
-          let sid: string | null = item.spotify_id ?? null;
-          if (!sid && item.title && item.artist) {
-            sid = await withTimeout(Spotify.searchTrack(user!.id, item.title, item.artist), 10_000);
-          }
-          if (sid) links = Spotify.getSpotifyDeepLink(sid);
-          break;
-        }
-        case 'apple_music': {
-          links = await withTimeout(AppleMusic.resolveAppleMusicTrackLinks(user!.id, item.title, item.artist, item.apple_music_id), 10_000);
-          break;
-        }
-        case 'youtube_music': {
-          // Hand off as a search, not a playback link: opening a shared song
-          // must not interrupt whatever is already playing, and YouTube Music's
-          // watch?v= link starts immediately. This also removes the only reason
-          // this path resolved a video id at all — that cost a 100-unit search
-          // against a ~100-search daily quota, spent purely to build a URL.
-          links = YouTubeMusic.getYouTubeMusicSearchLink(item.title, item.artist);
-          break;
-        }
-      }
-      for (const l of links) { try { await Linking.openURL(l); return; } catch { continue; } }
-      toast.show({ kind: 'error', message: `Make sure ${serviceLabel(primaryService)} is installed` });
-    } catch (err: any) {
-      const msg = err?.message === 'timeout' ? 'Timed out.' : err?.message === 'youtube_quota_exceeded' ? 'YouTube quota reached.' : 'Could not open song.';
-      toast.show({ kind: 'error', message: msg });
-    } finally { setResolvingId(null); }
+    router.push(`/song/${item.id}`);
   };
 
   const filteredItems = items.filter((item) => {
@@ -279,7 +237,6 @@ export default function Home() {
         renderItem={({ item }) => (
           <FeedRow
             item={item}
-            isResolving={resolvingId === item.id}
             onPress={handleItemPress}
             reactionMap={reactions[item.id] ?? {}}
             myReaction={myReactions[item.id]}

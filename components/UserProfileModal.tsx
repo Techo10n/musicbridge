@@ -12,7 +12,7 @@ import { makeStyles, serviceColor, useTheme } from '../lib/theme';
 import { serviceLabelShort } from '../lib/services';
 import { User } from '../types';
 import { CoverArt, useToast } from './ui';
-import { ShareModal } from './ShareModal';
+import { ShareComposer } from './ShareComposer';
 
 interface UserProfileModalProps {
   userId: string | null;
@@ -35,13 +35,13 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
   const [sharedArtists, setSharedArtists] = useState(0);
   const [recentShare, setRecentShare] = useState<{ title: string; artist: string; coverUrl: string | null } | null>(null);
   const [topShares, setTopShares] = useState<{ title: string; artist: string; coverUrl: string | null }[]>([]);
-  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       if (!userId) {
-        if (!cancelled) { setProfile(null); setShareModalVisible(false); }
+        if (!cancelled) { setProfile(null); setComposerOpen(false); }
         return;
       }
       if (!cancelled) setLoading(true);
@@ -229,7 +229,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.messageBtn}
-                onPress={() => setShareModalVisible(true)}
+                onPress={() => setComposerOpen(true)}
                 activeOpacity={0.85}
               >
                 <Ionicons name="paper-plane-outline" size={14} color={colors.text} />
@@ -263,7 +263,7 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
                   <Text style={styles.listenTitle} numberOfLines={1}>{recentShare.title}</Text>
                   <Text style={styles.listenArtist} numberOfLines={1}>{recentShare.artist}</Text>
                 </View>
-                <TouchableOpacity onPress={() => setShareModalVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <TouchableOpacity onPress={() => setComposerOpen(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
                 </TouchableOpacity>
               </View>
@@ -307,11 +307,10 @@ export function UserProfileModal({ userId, onClose }: UserProfileModalProps) {
       </View>
 
       {profile && (
-        <ShareModal
-          visible={shareModalVisible}
+        <ShareComposer
+          visible={composerOpen}
           recipient={profile}
-          onClose={() => setShareModalVisible(false)}
-          onShared={() => setShareModalVisible(false)}
+          onClose={() => setComposerOpen(false)}
         />
       )}
     </Modal>

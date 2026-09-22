@@ -64,10 +64,12 @@ function RootLayoutNav({ fontsReady }: { fontsReady: boolean }) {
       return;
     }
 
-    // Onboarded. Let the remaining optional steps finish on their own.
-    if (inAuth || (!inOnboarding && group !== '(tabs)')) {
+    // Onboarded. Bounce only from the signed-out stack and the bare index —
+    // anything else is a real destination, including the song sheet.
+    if (inAuth || group === undefined) {
       router.replace('/(tabs)/home');
     }
+    void inOnboarding;
   }, [navState?.key, session, user, needsUsername, loading, segments, router]);
 
   // Hide the splash once fonts and the first auth resolution are both in.
@@ -105,7 +107,12 @@ function RootLayoutNav({ fontsReady }: { fontsReady: boolean }) {
           contentStyle: { backgroundColor: colors.bg },
           animation: 'fade',
         }}
-      />
+      >
+        <Stack.Screen
+          name="song/[id]"
+          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+        />
+      </Stack>
     </View>
   );
 }

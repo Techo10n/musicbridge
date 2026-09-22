@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
-import { ShareModal } from '../../components/ShareModal';
+import { ShareComposer } from '../../components/ShareComposer';
 import { UserProfileModal } from '../../components/UserProfileModal';
 import { Avatar, AppBar, IconBtn, TasteBar, ServiceDot, useToast } from '../../components/ui';
 import { User } from '../../types';
@@ -338,11 +338,10 @@ export default function People() {
         </>
       )}
 
-      <ShareModal
+      <ShareComposer
         visible={shareRecipient !== null}
         recipient={shareRecipient}
         onClose={() => setShareRecipient(null)}
-        onShared={() => setShareRecipient(null)}
       />
       <UserProfileModal userId={viewingUserId} onClose={() => setViewingUserId(null)} />
     </SafeAreaView>

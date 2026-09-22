@@ -5,45 +5,28 @@ import {
   Image,
   Linking,
   Modal,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { makeStyles, useTheme } from '../lib/theme';
 import { useToast } from './ui';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
-import { useFollows } from '../hooks/useFollows';
 import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
-import { LibraryPlaylist, LibraryTrack, Track, User } from '../types';
+import { LibraryPlaylist, LibraryTrack } from '../types';
 import { withTimeout } from '../lib/utils';
-import { sendPushNotification } from '../lib/notifications';
+import { ShareDraft, toTrackPayload } from '../lib/sharing';
+import { ShareComposer } from './ShareComposer';
 
 interface LibraryPlaylistDetailModalProps {
   playlist: LibraryPlaylist | null;
   visible: boolean;
   onClose: () => void;
   preloadedTracks?: LibraryTrack[] | null;
-}
-
-function toTrackPayload(t: LibraryTrack): Track {
-  return {
-    title: t.title,
-    artist: t.artist,
-    spotify_id: t.service === 'spotify' ? t.id : null,
-    apple_music_id: t.service === 'apple_music' ? t.id : null,
-    // Only canonical "Artist - Topic" videos are real YouTube Music songs.
-    // An unverified library video id would deep-link the recipient to a music
-    // video (or the wrong content), so send null and let the recipient's open
-    // path re-resolve through the strict searchTrack() rules.
-    youtube_music_id: t.service === 'youtube_music' && t.ytTopicVerified ? t.id : null,
-  };
 }
 
 async function openTrackInService(userId: string | undefined, track: LibraryTrack) {
@@ -75,18 +58,12 @@ export function LibraryPlaylistDetailModal({
   const { colors } = useTheme();
   const toast = useToast();
   const { user } = useAuth();
-  const { mutualFollows: friends, refresh: refreshFollows } = useFollows();
 
   const [tracks, setTracks] = useState<LibraryTrack[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [streamingMore, setStreamingMore] = useState(false);
-  const [sharing, setSharing] = useState(false);
 
-  // Inline friend picker state (avoids stacked Modal limitation on iOS)
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [pickerMessage, setPickerMessage] = useState('');
-  // null = share whole playlist; a track = share that single song
-  const [pendingTrack, setPendingTrack] = useState<LibraryTrack | null>(null);
+  const [shareDraft, setShareDraft] = useState<ShareDraft | null>(null);
 
   useEffect(() => {
     if (!visible || !playlist || !user?.primary_service) return;
@@ -156,107 +133,29 @@ export function LibraryPlaylistDetailModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preloadedTracks, visible, playlist?.id, user?.id, user?.primary_service]);
 
-  const openPickerForPlaylist = () => {
-    void refreshFollows();
-    setPendingTrack(null);
-    setPickerMessage('');
-    setPickerVisible(true);
+  const sharePlaylist = () => {
+    if (!playlist || tracks.length === 0) return;
+    setShareDraft({
+      kind: 'playlist',
+      title: playlist.name,
+      coverUrl: playlist.coverUrl,
+      service: playlist.service,
+      playlistId: playlist.id,
+      tracks: tracks.map(toTrackPayload),
+    });
   };
 
-  const openPickerForTrack = (track: LibraryTrack) => {
-    void refreshFollows();
-    setPendingTrack(track);
-    setPickerMessage('');
-    setPickerVisible(true);
-  };
-
-  const closePicker = () => {
-    setPickerVisible(false);
-    setPickerMessage('');
-    setPendingTrack(null);
-  };
-
-  const handleFriendSelected = async (friend: User) => {
-    if (!user || !playlist) return;
-
-    // Snapshot all closure values BEFORE closePicker() resets state,
-    // so the async function always uses the correct values.
-    const msgSnapshot = pickerMessage;
-    const trackSnapshot = pendingTrack;
-    const tracksSnapshot = tracks;
-
-    closePicker();
-    setSharing(true);
-
-    try {
-      if (trackSnapshot) {
-        // ── Share a single song ──────────────────────────────────────────
-        const payload = toTrackPayload(trackSnapshot);
-        const { data: insertedItem, error } = await withTimeout(
-          Promise.resolve(
-            supabase
-              .from('shared_items')
-              .insert({
-                sender_id: user.id,
-                recipient_id: friend.id,
-                type: 'song',
-                title: trackSnapshot.title,
-                artist: trackSnapshot.artist,
-                cover_image_url: trackSnapshot.coverUrl || '',
-                spotify_id: payload.spotify_id,
-                apple_music_id: payload.apple_music_id,
-                youtube_music_id: payload.youtube_music_id,
-                message: msgSnapshot || null,
-              })
-              .select('id')
-              .single(),
-          ),
-          15_000,
-        );
-        if (error) throw error;
-        sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        toast.show({ kind: 'success', message: `Sent "${trackSnapshot.title}" to ${friend.display_name}` });
-      } else {
-        // ── Share whole playlist ─────────────────────────────────────────
-        const trackPayloads = tracksSnapshot.map(toTrackPayload);
-        const { data: insertedItem, error } = await withTimeout(
-          Promise.resolve(
-            supabase
-              .from('shared_items')
-              .insert({
-                sender_id: user.id,
-                recipient_id: friend.id,
-                type: 'playlist',
-                title: playlist.name,
-                artist: null,
-                cover_image_url: playlist.coverUrl || '',
-                spotify_playlist_id: playlist.service === 'spotify' ? playlist.id : null,
-                apple_music_playlist_id: playlist.service === 'apple_music' ? playlist.id : null,
-                youtube_music_playlist_id: playlist.service === 'youtube_music' ? playlist.id : null,
-                tracks: trackPayloads,
-                message: msgSnapshot || null,
-              })
-              .select('id')
-              .single(),
-          ),
-          15_000,
-        );
-        if (error) throw error;
-        sendPushNotification(friend.id, 'new_share', insertedItem.id);
-        toast.show({ kind: 'success', message: `Sent "${playlist.name}" to ${friend.display_name}` });
-        onClose();
-      }
-    } catch (err: any) {
-      toast.show({
-        kind: 'error',
-        message: err instanceof Error && err.message === 'timeout'
-          ? 'Share timed out. Check your connection.'
-          : 'Could not send that. Try again.',
-      });
-      console.error('[LibraryPlaylistDetailModal] share error:', err);
-    } finally {
-      setSharing(false);
-    }
+  const shareTrack = (track: LibraryTrack) => {
+    setShareDraft({
+      kind: 'song',
+      title: track.title,
+      artist: track.artist,
+      coverUrl: track.coverUrl,
+      service: track.service,
+      serviceId: track.id,
+      isrc: track.isrc,
+      ytTopicVerified: track.ytTopicVerified,
+    });
   };
 
   const renderTrack = ({ item: track, index }: { item: LibraryTrack; index: number }) => (
@@ -280,8 +179,8 @@ export function LibraryPlaylistDetailModal({
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.shareTrackButton}
-        onPress={() => openPickerForTrack(track)}
-        disabled={sharing}
+        onPress={() => shareTrack(track)}
+        disabled={loadingTracks || tracks.length === 0}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
         <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
@@ -291,16 +190,12 @@ export function LibraryPlaylistDetailModal({
 
   if (!playlist) return null;
 
-  const pickerTitle = pendingTrack
-    ? `Share "${pendingTrack.title}"`
-    : `Share "${playlist.name}"`;
-
   return (
     <Modal
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={pickerVisible ? closePicker : onClose}
+      onRequestClose={onClose}
     >
       <View style={styles.container}>
         {/* Header */}
@@ -365,81 +260,25 @@ export function LibraryPlaylistDetailModal({
           <TouchableOpacity
             style={[
               styles.shareButton,
-              (sharing || loadingTracks || tracks.length === 0) && styles.shareButtonDisabled,
+              (loadingTracks || tracks.length === 0) && styles.shareButtonDisabled,
             ]}
-            onPress={openPickerForPlaylist}
-            disabled={sharing || loadingTracks || tracks.length === 0}
+            onPress={sharePlaylist}
+            disabled={loadingTracks || tracks.length === 0}
             activeOpacity={0.8}
           >
-            {sharing ? (
-              <ActivityIndicator color={colors.accentInk} />
-            ) : (
-              <>
-                <Ionicons name="paper-plane" size={18} color={colors.accentInk} />
-                <Text style={styles.shareButtonText}>Share Playlist with Friend</Text>
-              </>
-            )}
+            <Ionicons name="paper-plane" size={18} color={colors.accentInk} />
+            <Text style={styles.shareButtonText}>Send this playlist</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Inline friend picker overlay — avoids stacking two Modals (broken on iOS) */}
-        {pickerVisible && (
-          <View style={styles.pickerOverlay}>
-            <View style={styles.pickerSheet}>
-              <View style={styles.pickerHeader}>
-                <Text style={styles.pickerTitle} numberOfLines={1}>{pickerTitle}</Text>
-                <TouchableOpacity onPress={closePicker} style={styles.closeButton}>
-                  <Text style={styles.closeText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.pickerMessageRow}>
-                <TextInput
-                  style={styles.pickerMessageInput}
-                  placeholder="Add a message (optional)"
-                  placeholderTextColor={colors.text4}
-                  value={pickerMessage}
-                  onChangeText={setPickerMessage}
-                  maxLength={200}
-                />
-              </View>
-
-              <Text style={styles.pickerSectionLabel}>Mutual follows</Text>
-
-              <ScrollView style={styles.pickerList}>
-                {friends.length === 0 ? (
-                  <Text style={styles.pickerEmptyText}>
-                    You can only share with mutual followers — follow someone and have them follow you back.
-                  </Text>
-                ) : (
-                  friends.map((friend) => {
-                    const initials = (
-                      friend.display_name[0] ?? friend.username[0] ?? '?'
-                    ).toUpperCase();
-                    return (
-                      <TouchableOpacity
-                        key={friend.id}
-                        style={styles.pickerFriendRow}
-                        onPress={() => handleFriendSelected(friend)}
-                        activeOpacity={0.8}
-                      >
-                        <View style={styles.pickerAvatar}>
-                          <Text style={styles.pickerAvatarText}>{initials}</Text>
-                        </View>
-                        <View style={styles.pickerFriendInfo}>
-                          <Text style={styles.pickerFriendName}>{friend.display_name}</Text>
-                          <Text style={styles.pickerFriendUsername}>@{friend.username}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })
-                )}
-                <View style={{ height: 20 }} />
-              </ScrollView>
-            </View>
-          </View>
-        )}
       </View>
+
+      <ShareComposer
+        visible={shareDraft !== null}
+        draft={shareDraft}
+        onClose={() => setShareDraft(null)}
+        onSent={onClose}
+      />
     </Modal>
   );
 }

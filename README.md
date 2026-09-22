@@ -62,8 +62,10 @@ musicbridge/
 │   │   ├── profile.tsx         Photo, display name, username with live availability
 │   │   ├── people.tsx          Invite link and suggested follows; skippable
 │   │   └── permissions.tsx     Notifications checklist; skippable
+│   ├── song/
+│   │   └── [id].tsx            A shared song: art, note, reactions, and every way to open it
 │   └── (tabs)/
-│       ├── _layout.tsx         Tab bar (Ionicons)
+│       ├── _layout.tsx         Tab bar; the centre button opens the share composer
 │       ├── home.tsx            Feed of received shared items with self-contained inbox cards, aligned sender/action headers, working inbox/following/mixes filters, emoji reactions, and top-bar search/notifications/share actions
 │       ├── friends.tsx         People tab with auto-search, suggested follows, and data-based taste match scores
 │       ├── library.tsx         User's streaming library with sort controls, an All Songs pseudo-playlist, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
@@ -90,6 +92,7 @@ musicbridge/
 │   ├── ShareModal.tsx          Search + share-to-friend modal
 │   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
+│   ├── ShareComposer.tsx       Pick something, pick who, send. The only way a share is composed.
 │   ├── MusicServiceButton.tsx  Connect/disconnect row for one streaming service
 │   ├── OnboardingStep.tsx      One-question-per-screen scaffold: progress dots, title, footer
 │   ├── FirstShareCard.tsx      One-time prompt on Home, dismissed per user
@@ -112,6 +115,7 @@ musicbridge/
 │   │                           scales, ThemeProvider, useTheme(), makeStyles(). The only file that
 │   │                           may name a color.
 │   ├── services.ts             Streaming service names and helpers (serviceLabel, serviceLabelShort)
+│   ├── sharing.ts              The one path that writes a share; owns the service-id rules
 │   ├── authProviders.ts        Which sign-in buttons this build offers
 │   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle(), timeAgo(), monthWeekLabel()
 ├── modules/
@@ -126,6 +130,8 @@ musicbridge/
 │   ├── appearance.test.tsx    Light/dark preference: system-follow, override, persistence
 │   ├── authProviders.test.ts  Which sign-in buttons a build offers
 │   ├── username.test.ts       Username sanitizing and the rules migration 014 enforces
+│   ├── sharing.test.ts        Service-id rules, one row per recipient, refusals
+│   ├── shareComposer.test.tsx Picking content, picking people, sending
 │   ├── useReactions.test.ts   Reaction hook state, optimistic updates, rollback
 │   └── notifications.test.ts  Push notification helper behavior
 ├── test/
@@ -210,6 +216,35 @@ does nothing — mirror the change into the native files by hand (see the vault'
 bit dark mode specifically: `Info.plist` pinned `UIUserInterfaceStyle = Light`, which makes
 `useColorScheme()` report light no matter what the device is set to, so **System** appeared broken.
 The key is now removed, but any build made before that still needs rebuilding to pick it up.
+
+## Sharing
+
+`lib/sharing.ts` is the only code that writes a `shared_items` row. Three screens used to do it
+independently, with subtly different ideas about which service ids were safe to store, so a rule
+fixed in one place stayed broken in the others.
+
+It owns two rules that are easy to get wrong:
+
+- **Only the sender's own service id is trustworthy.** The sender holds a token for one service, so
+  that is the only id stored. The recipient re-resolves the rest against their own service.
+- **A YouTube id is only stored when it came from an "Artist - Topic" channel.** Anything else is not
+  a canonical Song, and an unverified id would deep-link the recipient to a music video or worse. No
+  id is better, because no id makes their device search properly.
+
+It also refuses a playlist whose track list came back empty. A share stores its tracks rather than a
+live reference, so sending an empty one writes something the recipient can never recover and neither
+side finds out.
+
+`components/ShareComposer.tsx` is the only way a share is composed: pick something (search the
+primary service, or Recent, or Playlists), pick who (multi-select from mutual follows), add a note,
+send. It opens from the centre tab with nothing chosen, and from the library, the song screen, or
+someone's profile with the content or the recipient already filled in.
+
+`app/song/[id].tsx` is where a shared song lands. It carries the art, the sender's note, reactions,
+and one button per service, so opening a share finally goes somewhere in the app rather than
+bouncing straight out to a streaming app.
+
+---
 
 ## Testing and TDD
 

@@ -52,7 +52,10 @@ export function Sheet({ visible, onClose, title, headerRight, maxHeight = '86%',
 const useStyles = makeStyles(({ colors, radius, spacing, elevation }) => ({
   root: { flex: 1, justifyContent: 'flex-end' },
   scrim: { ...({ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } as const), backgroundColor: colors.overlay },
-  avoid: { justifyContent: 'flex-end' },
+  // Needs a real height: `maxHeight` on the sheet is a percentage, and a
+  // percentage resolves against its parent. With an auto-sized parent the cap
+  // does not apply and tall content runs off the bottom of the screen.
+  avoid: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: colors.bgElev,
     borderTopLeftRadius: radius.xl + 4,

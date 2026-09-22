@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { makeStyles, useTheme } from '../../lib/theme';
+import { ShareComposer } from '../../components/ShareComposer';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -30,10 +32,11 @@ function ShareTabButton({ onPress }: { onPress: () => void }) {
 }
 
 export default function TabLayout() {
-  const router = useRouter();
   const { colors } = useTheme();
+  const [composerOpen, setComposerOpen] = useState(false);
 
   return (
+    <>
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -63,7 +66,7 @@ export default function TabLayout() {
         name="share"
         options={{
           title: '',
-          tabBarButton: () => <ShareTabButton onPress={() => router.push('/(tabs)/friends')} />,
+          tabBarButton: () => <ShareTabButton onPress={() => setComposerOpen(true)} />,
         }}
       />
       <Tabs.Screen
@@ -77,6 +80,8 @@ export default function TabLayout() {
       <Tabs.Screen name="settings" options={{ href: null }} />
       <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
+    <ShareComposer visible={composerOpen} onClose={() => setComposerOpen(false)} />
+    </>
   );
 }
 
