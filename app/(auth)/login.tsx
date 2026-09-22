@@ -36,7 +36,7 @@ export default function Login() {
       <View style={s.inner}>
         <Wordmark size={40} />
         <Txt variant="callout" color="text3" align="center" style={s.subtitle}>
-          Share music across any streaming service
+          Sign in with the password you set up before.
         </Txt>
 
         <Field
@@ -64,9 +64,9 @@ export default function Login() {
 
         <Button label="Sign in" onPress={handleLogin} loading={loading} fullWidth style={s.button} />
 
-        <Link href="/(auth)/register" asChild>
+        <Link href="/(auth)/welcome" asChild>
           <Txt variant="callout" color="text3" align="center" style={s.link}>
-            Don&apos;t have an account? <Txt variant="callout" color="accent">Sign up</Txt>
+            <Txt variant="callout" color="accent">Back to all sign-in options</Txt>
           </Txt>
         </Link>
       </View>

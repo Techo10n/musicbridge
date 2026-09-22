@@ -10,7 +10,8 @@ import { useFollows } from '../../hooks/useFollows';
 import { useSharedItems } from '../../hooks/useSharedItems';
 import { useReactions } from '../../hooks/useReactions';
 import { PlaylistModal } from '../../components/PlaylistModal';
-import { AppBar, Avatar, CoverArt, IconBtn, ServiceDot, useToast } from '../../components/ui';
+import { FirstShareCard } from '../../components/FirstShareCard';
+import { AppBar, Avatar, CoverArt, EmptyState, IconBtn, ServiceDot, useToast } from '../../components/ui';
 import { serviceLabel, serviceLabelShort } from '../../lib/services';
 import { SharedItem, MusicService } from '../../types';
 import { makeStyles, useTheme } from '../../lib/theme';
@@ -256,19 +257,23 @@ export default function Home() {
         onRefresh={refresh}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
+        ListHeaderComponent={
+          <FirstShareCard userId={user?.id} onSend={() => router.push('/(tabs)/friends')} />
+        }
         ListEmptyComponent={
           loading ? null : (
-            <View style={styles.empty}>
-              <Ionicons name="musical-notes-outline" size={44} color={colors.text4} />
-              <Text style={styles.emptyTitle}>No songs yet</Text>
-              <Text style={styles.emptySubtitle}>
-                {tab === 'following'
-                  ? 'Shares from people you follow will appear here.'
-                  : tab === 'mixes'
-                    ? 'Shared playlists and mixes will appear here.'
-                    : 'When friends share songs they\'ll appear here.'}
-              </Text>
-            </View>
+            <EmptyState
+              icon="musical-notes-outline"
+              title="No songs yet"
+              body={tab === 'following'
+                ? 'Shares from people you follow will appear here.'
+                : tab === 'mixes'
+                  ? 'Shared playlists and mixes will appear here.'
+                  : 'Send one to start things off, and whatever comes back lands here.'}
+              action={tab === 'inbox'
+                ? { label: 'Send a song', icon: 'paper-plane', onPress: () => router.push('/(tabs)/friends') }
+                : undefined}
+            />
           )
         }
         renderItem={({ item }) => (

@@ -51,8 +51,17 @@ musicbridge/
 │   ├── _layout.tsx             Root layout: AuthProvider + SafeAreaProvider + redirect logic
 │   ├── index.tsx               Loading screen while auth resolves
 │   ├── (auth)/
-│   │   ├── login.tsx           Email/password login
-│   │   └── register.tsx        2-step registration: credentials → primary service → optional immediate service connection
+│   │   ├── _layout.tsx         Stack for the signed-out routes
+│   │   ├── welcome.tsx         Apple / Google / email, gated by EXPO_PUBLIC_AUTH_PROVIDERS
+│   │   ├── email.tsx           Email entry, sends the six-digit code
+│   │   ├── code.tsx            Code entry, resend
+│   │   └── login.tsx           Password fallback for accounts that predate passwordless
+│   ├── (onboarding)/
+│   │   ├── _layout.tsx         Stack; no swipe-back, each step depends on the last
+│   │   ├── service.tsx         Where do you listen: sets primary service and connects it
+│   │   ├── profile.tsx         Photo, display name, username with live availability
+│   │   ├── people.tsx          Invite link and suggested follows; skippable
+│   │   └── permissions.tsx     Notifications checklist; skippable
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar (Ionicons)
 │       ├── home.tsx            Feed of received shared items with self-contained inbox cards, aligned sender/action headers, working inbox/following/mixes filters, emoji reactions, and top-bar search/notifications/share actions
@@ -74,6 +83,7 @@ musicbridge/
 │   │   ├── Skeleton.tsx        Pulsing placeholder block
 │   │   ├── ListRow.tsx         Leading art/avatar, two lines, trailing action
 │   │   ├── SegmentedTabs.tsx   Underline (sections) and pill (filters) variants
+│   │   ├── CodeInput.tsx       Six boxes over one field, so paste and autofill work
 │   │   ├── ServiceBadge.tsx    ServiceDot / ServiceChip, brand-colored
 │   │   └── core.tsx            Avatar, Chip, SectionTitle, Wordmark, AppBar, IconBtn, CoverArt, TasteBar
 │   ├── PlaylistModal.tsx       Playlist detail + conversion UI; preserves in-flight progress/success and shows "Already In Library" when reopened later
@@ -81,6 +91,8 @@ musicbridge/
 │   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
 │   ├── MusicServiceButton.tsx  Connect/disconnect row for one streaming service
+│   ├── OnboardingStep.tsx      One-question-per-screen scaffold: progress dots, title, footer
+│   ├── FirstShareCard.tsx      One-time prompt on Home, dismissed per user
 │   └── UserProfileModal.tsx    Another user's profile, taste match, and send-a-song entry point
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
@@ -100,6 +112,7 @@ musicbridge/
 │   │                           scales, ThemeProvider, useTheme(), makeStyles(). The only file that
 │   │                           may name a color.
 │   ├── services.ts             Streaming service names and helpers (serviceLabel, serviceLabelShort)
+│   ├── authProviders.ts        Which sign-in buttons this build offers
 │   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle(), timeAgo(), monthWeekLabel()
 ├── modules/
 │   └── apple-music/
@@ -111,6 +124,8 @@ musicbridge/
 │   ├── ui.test.tsx            Theme tokens, makeStyles caching, and UI primitive behavior
 │   ├── services.test.ts       Service labels/colors, timeAgo, monthWeekLabel
 │   ├── appearance.test.tsx    Light/dark preference: system-follow, override, persistence
+│   ├── authProviders.test.ts  Which sign-in buttons a build offers
+│   ├── username.test.ts       Username sanitizing and the rules migration 014 enforces
 │   ├── useReactions.test.ts   Reaction hook state, optimistic updates, rollback
 │   └── notifications.test.ts  Push notification helper behavior
 ├── test/
@@ -125,7 +140,12 @@ musicbridge/
 │       ├── 004_follows_and_profile.sql
 │       ├── 005_push_tokens.sql
 │       ├── 008_apple_music_playlist_url.sql
-│       └── 009_drop_reel_import.sql
+│       ├── 009_drop_reel_import.sql
+│       ├── 010_restrict_user_token_access.sql
+│       ├── 011_conversion_progress_table.sql
+│       ├── 012_track_match_cache.sql
+│       ├── 013_artist_channel_cache.sql
+│       └── 014_oauth_signup_support.sql    Profile rows for OAuth signups; username_available()
 └── .env.example
 ```
 
@@ -225,10 +245,33 @@ No custom backend server. All logic runs on the client. Supabase handles auth, t
 
 ### MusicBridge (Supabase)
 
-Email + password via `supabase.auth.signInWithPassword`. Sessions persisted in AsyncStorage. An `on_auth_user_created` trigger creates the `public.users` profile row on signup.
+Sign-in is passwordless. Three routes, all landing in the same place:
 
-Signup is a 2-step flow: credentials first, then primary-service selection. After the user picks a primary service, the app immediately offers to connect that service before routing to Home.
-If a Spotify refresh token has gone bad, the app shows a reconnect prompt on the next login and can route the user straight to Profile to reconnect.
+| Route | Mechanism | Needs |
+|---|---|---|
+| Apple | Native sheet via `expo-apple-authentication`, then `signInWithIdToken` | Sign In with Apple on the App ID, and the bundle id in Supabase's authorized client IDs. No client secret: Supabase verifies the token against Apple's public keys. |
+| Google | `signInWithOAuth` opened with `expo-web-browser`, returning to `museaic://callback` | A **Web application** OAuth client whose redirect URI is the Supabase callback. The iOS client used for YouTube Music cannot be reused. |
+| Email | Six-digit code via `signInWithOtp` / `verifyOtp` | Nothing beyond Supabase's built-in email auth. |
+
+Which of the two social buttons render is controlled by `EXPO_PUBLIC_AUTH_PROVIDERS`, so a build
+whose Supabase project has no provider configured never shows a button that would fail when tapped.
+Apple is iOS-only, because only the native flow is set up. Email + password still works for accounts
+that predate this, behind "Sign in with a password instead" on the welcome screen.
+
+The Google callback reads both a fragment (`access_token`, the implicit flow the client currently
+uses) and a query `code` (PKCE), so pinning `flowType` later cannot silently break sign-in.
+
+**Onboarding is a gate, not a suggestion.** `app/_layout.tsx` routes on two facts: an account with no
+`primary_service` has nowhere to open songs, and one whose `username_claimed` is false is holding the
+placeholder that migration 014's trigger generated and cannot be found by anyone. Either sends the
+user back into `(onboarding)`. The steps are service, then profile and username, then people, then
+notifications; the last two are skippable.
+
+An `on_auth_user_created` trigger creates the `public.users` profile row on signup. Since migration
+014 it tolerates a sign-in that carries no username or display name, which is every OAuth and email
+code sign-in, so the profile step is what turns the placeholder into a real username.
+
+If a Spotify refresh token has gone bad, the app shows a reconnect prompt on the next login and can route the user straight to Settings to reconnect.
 Push-token registration waits for hydrated auth/session state before making Supabase-backed requests so account switching does not race session transport.
 
 ### Streaming Service OAuth

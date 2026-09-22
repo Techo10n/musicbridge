@@ -37,6 +37,12 @@ export interface FavoriteSong {
 export interface User {
   id: string;
   username: string;
+  /**
+   * False while `username` is still the placeholder `handle_new_user()`
+   * generates for an OAuth or email-code sign-up. Onboarding will not let the
+   * user into the app until they have picked one. See migration 014.
+   */
+  username_claimed?: boolean;
   display_name: string;
   avatar_url: string | null;
   bio: string | null;

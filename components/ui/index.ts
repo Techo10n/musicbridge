@@ -3,6 +3,7 @@ export type { TxtProps } from './Txt';
 export { Button } from './Button';
 export type { ButtonProps } from './Button';
 export { Field } from './Field';
+export { CodeInput } from './CodeInput';
 export type { FieldProps } from './Field';
 export { Sheet } from './Sheet';
 export { ToastProvider, useToast, TAB_BAR_CLEARANCE } from './Toast';

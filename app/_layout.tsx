@@ -27,7 +27,7 @@ void SplashScreen.preventAutoHideAsync().catch(() => {
  * Kept separate from the providers so it can consume them.
  */
 function RootLayoutNav({ fontsReady }: { fontsReady: boolean }) {
-  const { session, user, loading } = useAuth();
+  const { session, user, loading, needsUsername } = useAuth();
   const { colors, isDark } = useTheme();
   useNotifications();
 
@@ -36,18 +36,39 @@ function RootLayoutNav({ fontsReady }: { fontsReady: boolean }) {
   const navState = useRootNavigationState();
   const promptedReconnectFor = useRef<string | null>(null);
 
+  // One gate for the whole app. Onboarding is not optional: an account with no
+  // service has nowhere to open songs, and one with a placeholder username
+  // (migration 014) cannot be found by anyone.
   useEffect(() => {
     if (!navState?.key || loading) return;
 
-    const inAuthGroup = segments[0] === '(auth)';
-    const inTabsGroup = segments[0] === '(tabs)';
+    const [group, leaf] = segments as string[];
+    const inAuth = group === '(auth)';
+    const inOnboarding = group === '(onboarding)';
 
-    if (!session && !inAuthGroup) {
-      router.replace('/(auth)/login');
-    } else if (session && user?.primary_service && (inAuthGroup || (!inAuthGroup && !inTabsGroup))) {
+    if (!session) {
+      if (!inAuth) router.replace('/(auth)/welcome');
+      return;
+    }
+
+    // Wait for the profile row before deciding where an authenticated user goes.
+    if (!user) return;
+
+    if (!user.primary_service) {
+      if (leaf !== 'service') router.replace('/(onboarding)/service');
+      return;
+    }
+
+    if (needsUsername) {
+      if (leaf !== 'profile') router.replace('/(onboarding)/profile');
+      return;
+    }
+
+    // Onboarded. Let the remaining optional steps finish on their own.
+    if (inAuth || (!inOnboarding && group !== '(tabs)')) {
       router.replace('/(tabs)/home');
     }
-  }, [navState?.key, session, user, loading, segments, router]);
+  }, [navState?.key, session, user, needsUsername, loading, segments, router]);
 
   // Hide the splash once fonts and the first auth resolution are both in.
   useEffect(() => {

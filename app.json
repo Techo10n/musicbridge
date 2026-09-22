@@ -25,7 +25,8 @@
           "youtubemusic",
           "music"
         ]
-      }
+      },
+      "usesAppleSignIn": true
     },
     "android": {
       "package": "com.techolon.musicbridge",
@@ -48,6 +49,7 @@
           "origin": "museaic://"
         }
       ],
+      "expo-apple-authentication",
       "expo-secure-store",
       "expo-web-browser",
       [
