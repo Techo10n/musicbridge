@@ -66,7 +66,9 @@ musicbridge/
 │   │   └── [id].tsx            A shared song: art, note, reactions, and every way to open it
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar; the centre button opens the share composer
-│       ├── home.tsx            Feed of received shared items with self-contained inbox cards, aligned sender/action headers, working inbox/following/mixes filters, emoji reactions, and top-bar search/notifications/share actions
+│       ├── home.tsx            Feed with the album art as the hero: a "new for you" strip of
+│       │                       unopened shares, then direct shares and public drops from people you
+│       │                       follow, with reactions always visible. Friends / For you tabs.
 │       ├── friends.tsx         People tab with auto-search, suggested follows, and data-based taste match scores
 │       ├── library.tsx         User's streaming library with sort controls, an All Songs pseudo-playlist, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
 │       ├── notifications.tsx   Notification inbox for recent shares and new followers
@@ -239,6 +241,25 @@ side finds out.
 primary service, or Recent, or Playlists), pick who (multi-select from mutual follows), add a note,
 send. It opens from the centre tab with nothing chosen, and from the library, the song screen, or
 someone's profile with the content or the recipient already filled in.
+
+**Public drops.** Sending to Everyone writes one row with a null `recipient_id` (migration 015),
+visible to everyone who follows the sender. It is the same table, the same insert path and the same
+card as a direct share, rather than a parallel "post" concept that would need its own conversion,
+reactions and notifications.
+
+Three consequences worth knowing:
+
+- **A drop cannot be unread.** `opened` is a column on the row, and a drop has many viewers, so there
+  is nothing per-person to mark. The unread count and the "new for you" strip only count direct shares.
+- **A drop notifies nobody.** It is something to find in the feed, not an interruption for every
+  follower.
+- **Everyone and a named person are mutually exclusive** in the composer, or a follower picked both
+  ways would see the same song twice.
+
+The feed runs two queries rather than one `or()` filter: the direct one uses the recipient index and
+the drops one uses the partial index from migration 015, where an or-filter across both would use
+neither. Drops arrive on refresh and on focus rather than through realtime, because "from someone I
+follow" is not something a realtime filter can express.
 
 `app/song/[id].tsx` is where a shared song lands. It carries the art, the sender's note, reactions,
 and one button per service, so opening a share finally goes somewhere in the app rather than

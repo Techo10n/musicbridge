@@ -8,7 +8,7 @@ import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTubeMusic from '../lib/youtubeMusic';
 import { serviceLabel } from '../lib/services';
-import { EmptyPlaylistError, ShareDraft, sendShare, toTrackPayload } from '../lib/sharing';
+import { EVERYONE, EmptyPlaylistError, ShareDraft, sendShare, toTrackPayload } from '../lib/sharing';
 import { extractYouTubeTrackInfo } from '../lib/youtubeMusic';
 import { cleanTitle } from '../lib/utils';
 import { makeStyles, useTheme } from '../lib/theme';
@@ -252,8 +252,17 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
 
   const toggleRecipient = (id: string) => {
     setSelected((prev) => {
+      if (prev.has(id)) {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      }
+      // Everyone and a named person are mutually exclusive: a follower picked
+      // both ways would see the same song twice.
+      if (id === EVERYONE) return new Set([EVERYONE]);
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      next.delete(EVERYONE);
+      next.add(id);
       return next;
     });
   };
@@ -266,7 +275,9 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
       const names = mutualFollows.filter((f) => selected.has(f.id)).map((f) => f.display_name);
       toast.show({
         kind: 'success',
-        message: names.length === 1 ? `Sent to ${names[0]}` : `Sent to ${selected.size} people`,
+        message: selected.has(EVERYONE) ? 'Dropped for everyone'
+          : names.length === 1 ? `Sent to ${names[0]}`
+          : `Sent to ${selected.size} people`,
       });
       onSent?.();
       onClose();
@@ -322,6 +333,25 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
             style={s.list}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            ListHeaderComponent={
+              <ListRow
+                leading={
+                  <View style={s.everyoneIcon}>
+                    <Ionicons name="radio-outline" size={20} color={colors.accent} />
+                  </View>
+                }
+                title="Everyone"
+                subtitle="Drops it in the feed for everyone who follows you"
+                onPress={() => toggleRecipient(EVERYONE)}
+                trailing={
+                  <Ionicons
+                    name={selected.has(EVERYONE) ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={24}
+                    color={selected.has(EVERYONE) ? colors.accent : colors.line}
+                  />
+                }
+              />
+            }
             ListEmptyComponent={
               <EmptyState
                 compact
@@ -361,7 +391,7 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
               editable={!sending}
             />
             <Button
-              label={selected.size > 1 ? `Send to ${selected.size}` : 'Send'}
+              label={selected.has(EVERYONE) ? 'Drop it' : selected.size > 1 ? `Send to ${selected.size}` : 'Send'}
               icon="paper-plane"
               loading={sending}
               disabled={selected.size === 0}
@@ -482,6 +512,11 @@ const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     paddingHorizontal: spacing.lg, paddingTop: spacing.md,
     borderTopWidth: 1, borderTopColor: colors.line,
+  },
+  everyoneIcon: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center', justifyContent: 'center',
   },
   note: {
     flex: 1, backgroundColor: colors.surfaceAlt, borderRadius: radius.pill,

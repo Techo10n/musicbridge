@@ -74,7 +74,8 @@ export interface Follow {
 export interface SharedItem {
   id: string;
   sender_id: string;
-  recipient_id: string;
+  /** Null for a public drop — see migration 015. */
+  recipient_id: string | null;
   type: SharedItemType;
   title: string;
   artist: string | null;

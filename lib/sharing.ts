@@ -37,6 +37,13 @@ export interface PlaylistDraft {
 
 export type ShareDraft = SongDraft | PlaylistDraft;
 
+/**
+ * Who a share is addressed to. `EVERYONE` writes one row with a null
+ * `recipient_id` (migration 015), visible to everyone who follows the sender.
+ */
+export const EVERYONE = '__everyone__';
+export type Recipient = string | typeof EVERYONE;
+
 /** Raised when a playlist's tracks could not be read. Carries a usable message. */
 export class EmptyPlaylistError extends Error {
   constructor(title: string) {
@@ -80,7 +87,7 @@ function songServiceIds(draft: SongDraft) {
   };
 }
 
-function rowFor(draft: ShareDraft, senderId: string, recipientId: string, message: string | null) {
+function rowFor(draft: ShareDraft, senderId: string, recipientId: string | null, message: string | null) {
   const base = {
     sender_id: senderId,
     recipient_id: recipientId,
@@ -126,13 +133,18 @@ export interface SendShareResult {
 export async function sendShare(
   senderId: string,
   draft: ShareDraft,
-  recipientIds: string[],
+  recipients: Recipient[],
   message: string | null,
 ): Promise<SendShareResult> {
-  if (recipientIds.length === 0) throw new Error('Pick at least one person to send to');
+  if (recipients.length === 0) throw new Error('Pick at least one person to send to');
   if (draft.kind === 'playlist' && draft.tracks.length === 0) throw new EmptyPlaylistError(draft.title);
 
-  const rows = recipientIds.map((recipientId) => rowFor(draft, senderId, recipientId, message));
+  // A drop is addressed to nobody in particular, so it collapses the rest of
+  // the selection: sending to everyone and also to Sam would show Sam two
+  // copies of the same song.
+  const rows = recipients.includes(EVERYONE)
+    ? [rowFor(draft, senderId, null, message)]
+    : recipients.map((recipientId) => rowFor(draft, senderId, recipientId, message));
 
   const { data, error } = await withTimeout(
     Promise.resolve(supabase.from('shared_items').insert(rows).select('id, recipient_id')),
@@ -140,11 +152,12 @@ export async function sendShare(
   );
   if (error) throw error;
 
-  const inserted = (data ?? []) as { id: string; recipient_id: string }[];
+  const inserted = (data ?? []) as { id: string; recipient_id: string | null }[];
   // Fire and forget: a share that landed should not read as failed because a
-  // push could not be delivered.
+  // push could not be delivered. A drop notifies nobody — it is something to
+  // find in the feed, not an interruption for every follower.
   for (const row of inserted) {
-    sendPushNotification(row.recipient_id, 'new_share', row.id);
+    if (row.recipient_id) sendPushNotification(row.recipient_id, 'new_share', row.id);
   }
 
   return { itemIds: inserted.map((row) => row.id) };

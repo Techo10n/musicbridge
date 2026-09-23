@@ -1,4 +1,4 @@
-import { EmptyPlaylistError, PlaylistDraft, SongDraft, sendShare, toTrackPayload } from '../lib/sharing';
+import { EVERYONE, EmptyPlaylistError, PlaylistDraft, SongDraft, sendShare, toTrackPayload } from '../lib/sharing';
 import { LibraryTrack } from '../types';
 
 const mockInsert = jest.fn();
@@ -114,5 +114,39 @@ describe('sendShare', () => {
     mockSelect.mockResolvedValue({ data: null, error: new Error('rls denied') });
     await expect(sendShare('me', song, ['u1'], null)).rejects.toThrow('rls denied');
     expect(mockPush).not.toHaveBeenCalled();
+  });
+});
+
+describe('public drops', () => {
+  it('writes a single row addressed to nobody', async () => {
+    mockSelect.mockResolvedValue({ data: [{ id: 'r1', recipient_id: null }], error: null });
+
+    await sendShare('me', song, [EVERYONE], 'for everyone');
+
+    const rows = mockInsert.mock.calls[0][0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sender_id: 'me', recipient_id: null, message: 'for everyone' });
+  });
+
+  it('notifies nobody, because a drop is not an interruption', async () => {
+    mockSelect.mockResolvedValue({ data: [{ id: 'r1', recipient_id: null }], error: null });
+    await sendShare('me', song, [EVERYONE], null);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('collapses a mixed selection, so nobody sees the same song twice', async () => {
+    mockSelect.mockResolvedValue({ data: [{ id: 'r1', recipient_id: null }], error: null });
+
+    await sendShare('me', song, ['u1', EVERYONE, 'u2'], null);
+
+    const rows = mockInsert.mock.calls[0][0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ recipient_id: null });
+  });
+
+  it('still refuses an empty playlist when dropping', async () => {
+    await expect(sendShare('me', { ...playlist, tracks: [] }, [EVERYONE], null))
+      .rejects.toBeInstanceOf(EmptyPlaylistError);
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 });

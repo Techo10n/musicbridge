@@ -1,433 +1,289 @@
-import { useMemo, useState } from 'react';
-import { FlatList, Modal,
-  Text, TextInput, TouchableOpacity, View,
-} from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { FlatList, ScrollView, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
-import { useFollows } from '../../hooks/useFollows';
 import { useSharedItems } from '../../hooks/useSharedItems';
 import { useReactions } from '../../hooks/useReactions';
 import { PlaylistModal } from '../../components/PlaylistModal';
 import { FirstShareCard } from '../../components/FirstShareCard';
-import { AppBar, Avatar, CoverArt, EmptyState, IconBtn, ServiceDot } from '../../components/ui';
-import { serviceLabelShort } from '../../lib/services';
-import { SharedItem, MusicService } from '../../types';
+import {
+  AppBar, Avatar, CoverArt, EmptyState, IconBtn, SegmentedTabs, Txt,
+} from '../../components/ui';
+import { serviceLabel } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
 import { timeAgo } from '../../lib/utils';
+import { MusicService, SharedItem } from '../../types';
 
-type HomeTab = 'inbox' | 'following' | 'mixes';
-const REACTIONS_ROW = ['🔥', '❤️', '🤯', '😮'];
+type Tab = 'friends' | 'foryou';
+const TABS = [
+  { id: 'friends', label: 'Friends' },
+  { id: 'foryou', label: 'For you' },
+] as const satisfies readonly { id: Tab; label: string }[];
 
-// ─── FeedRow ──────────────────────────────────────────────────────────────────
-function FeedRow({
-  item,
-  onPress,
-  reactionMap,
-  myReaction,
-  onReact,
-  viewerService,
-}: {
-  item: SharedItem;
-  onPress: (item: SharedItem) => void;
-  reactionMap: Record<string, number>;
-  myReaction: string | undefined;
-  onReact: (emoji: string) => void;
-  viewerService: MusicService | null;
-}) {
-  const styles = useStyles();
-  const { colors } = useTheme();
-  const [showReactions, setShowReactions] = useState(false);
-  const isUnread = !item.opened;
-  const shareType = item.type === 'playlist' ? 'sent a playlist' : 'sent a song';
-  const svc = viewerService ?? (item.sender?.primary_service as MusicService) ?? 'spotify';
-  const totalReactions = Object.values(reactionMap).reduce((a, b) => a + b, 0);
+const REACTIONS = ['🔥', '❤️', '🤯', '😮'];
+
+// ─── New for you ──────────────────────────────────────────────────────────────
+
+/** Unopened shares, as art you can flick through. The first thing on the screen. */
+function NewForYou({ items, onOpen }: { items: SharedItem[]; onOpen: (item: SharedItem) => void }) {
+  const s = useStyles();
+  if (items.length === 0) return null;
 
   return (
-    <View style={[styles.feedCard, isUnread && styles.feedCardUnread]}>
-      <View style={styles.feedCardHeader}>
-        <View style={styles.senderIdentity}>
-          <Avatar
-            name={item.sender?.display_name ?? '?'}
-            avatarUrl={item.sender?.avatar_url ?? null}
-            size={34}
-          />
-          <View style={styles.senderTextWrap}>
-            <Text style={styles.feedRowSender} numberOfLines={1}>{item.sender?.display_name ?? 'Someone'}</Text>
-          </View>
-        </View>
-        <View style={styles.headerAction}>
-          <Text style={styles.shareTypeText} numberOfLines={1}>{shareType} · {timeAgo(item.created_at)}</Text>
-          {isUnread && <View style={styles.unreadDot} />}
-                  </View>
-      </View>
-
-      <TouchableOpacity
-        style={styles.feedMediaRow}
-        onPress={() => onPress(item)}
-        activeOpacity={0.85}
-      >
-        <View style={{ position: 'relative', flexShrink: 0 }}>
-          <CoverArt uri={item.cover_image_url} size={58} radius={12} />
-          <View style={styles.svcOverlay}>
-            <ServiceDot service={svc} size={12} />
-          </View>
-        </View>
-
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[styles.feedCardTitle, isUnread && styles.feedCardTitleUnread]} numberOfLines={1}>
-            {item.title}
-          </Text>
-          {item.artist ? (
-            <Text style={styles.feedCardArtist} numberOfLines={1}>{item.artist}</Text>
-          ) : null}
-          <View style={styles.feedCardMeta}>
-            <View style={styles.feedChip}>
-              <Text style={styles.feedChipText}>{item.type}</Text>
+    <View style={s.stripBlock}>
+      <Txt variant="micro" color="text3" style={s.stripLabel}>
+        {items.length === 1 ? 'New for you' : `New for you · ${items.length}`}
+      </Txt>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
+        {items.map((item) => (
+          <TouchableOpacity
+            key={item.id}
+            style={s.stripCard}
+            onPress={() => onOpen(item)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.title} from ${item.sender?.display_name ?? 'someone'}`}
+          >
+            <CoverArt uri={item.cover_image_url} size={132} radius={14} />
+            <View style={s.stripAvatar}>
+              <Avatar name={item.sender?.display_name ?? '?'} avatarUrl={item.sender?.avatar_url ?? null} size={26} />
             </View>
-            <Text style={styles.feedCardService} numberOfLines={1}>
-              opens in your {serviceLabelShort(svc)}
-            </Text>
-          </View>
-        </View>
-
-        <Ionicons name="play-circle" size={38} color={colors.accent} />
-      </TouchableOpacity>
-
-      {item.message ? (
-        <View style={styles.messageBubble}>
-          <Text style={styles.messageBubbleText}>&quot;{item.message}&quot;</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.reactionStrip}>
-        <View style={styles.existingReactions}>
-          {Object.entries(reactionMap).filter(([, c]) => c > 0).map(([e, c]) => {
-            const isMine = myReaction === e;
-            const othersCount = c - (isMine ? 1 : 0);
-            return (
-              <TouchableOpacity key={e} style={[styles.reactionPill, isMine && styles.reactionPillActive]} onPress={() => onReact(e)}>
-                <Text style={styles.reactionEmoji}>{e}</Text>
-                {othersCount > 0 && <Text style={styles.reactionCount}>{othersCount}</Text>}
-              </TouchableOpacity>
-            );
-          })}
-          {totalReactions === 0 ? <Text style={styles.noReactionsText}>No reactions yet</Text> : null}
-        </View>
-        <TouchableOpacity style={styles.addReactionBtn} onPress={() => setShowReactions(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name={showReactions ? 'close' : 'happy-outline'} size={16} color={colors.text3} />
-        </TouchableOpacity>
-      </View>
-
-      {showReactions && (
-        <View style={styles.emojiPicker}>
-          {REACTIONS_ROW.map(e => (
-            <TouchableOpacity key={e} style={[styles.emojiPickerBtn, myReaction === e && styles.emojiPickerBtnActive]} onPress={() => { onReact(e); setShowReactions(false); }}>
-              <Text style={styles.emojiPickerEmoji}>{e}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
+            <Txt variant="captionStrong" numberOfLines={1} style={s.stripTitle}>{item.title}</Txt>
+            <Txt variant="caption" color="text3" numberOfLines={1}>{item.sender?.display_name ?? 'Someone'}</Txt>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
     </View>
   );
 }
 
-// ─── HomeScreen ───────────────────────────────────────────────────────────────
-export default function Home() {
-  const styles = useStyles();
+// ─── Feed card ────────────────────────────────────────────────────────────────
+
+function FeedCard({
+  item, onOpen, counts, myReaction, onReact, viewerService,
+}: {
+  item: SharedItem;
+  onOpen: (item: SharedItem) => void;
+  counts: Record<string, number>;
+  myReaction: string | undefined;
+  onReact: (emoji: string) => void;
+  viewerService: MusicService | null;
+}) {
+  const s = useStyles();
   const { colors } = useTheme();
-  const { user } = useAuth();
-  const router = useRouter();
-  const { items, loading, refreshing, refresh, markAsOpened, unreadCount } = useSharedItems();
-  const { followingIds } = useFollows();
-  const itemIds = useMemo(() => items.map(i => i.id), [items]);
-  const { reactions, myReactions, react } = useReactions(itemIds);
+  const { width, height } = useWindowDimensions();
+  // Art is the hero, but not at the cost of pushing the title and the reactions
+  // off the screen: cap it so one whole card fits above the fold.
+  const art = Math.min(width - 32, Math.round(height * 0.38));
 
-  const [tab, setTab] = useState<HomeTab>('inbox');
-  const [playlistModalItem, setPlaylistModalItem] = useState<SharedItem | null>(null);
-  const [searchVisible, setSearchVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const handleItemPress = (item: SharedItem) => {
-    void markAsOpened(item.id);
-    // Playlists still open their conversion sheet; a song now gets a screen of
-    // its own rather than being handed straight to a streaming app.
-    if (item.type === 'playlist') { setPlaylistModalItem(item); return; }
-    router.push(`/song/${item.id}`);
-  };
-
-  const filteredItems = items.filter((item) => {
-    if (tab === 'following') {
-      const senderId = item.sender_id ?? item.sender?.id ?? '';
-      return followingIds.has(senderId);
-    }
-    if (tab === 'mixes') {
-      return item.type === 'playlist';
-    }
-    return true;
-  });
-
-  const searchedItems = filteredItems.filter((item) => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    return [
-      item.title,
-      item.artist ?? '',
-      item.sender?.display_name ?? '',
-      item.sender?.username ?? '',
-    ].some((value) => value.toLowerCase().includes(q));
-  });
+  const isDrop = item.recipient_id === null;
+  const isPlaylist = item.type === 'playlist';
+  const action = isPlaylist
+    ? `Add to ${viewerService ? serviceLabel(viewerService) : 'your library'}`
+    : `Play in ${viewerService ? serviceLabel(viewerService) : 'your service'}`;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* App bar */}
+    <View style={s.card}>
+      <View style={s.cardHead}>
+        <Avatar name={item.sender?.display_name ?? '?'} avatarUrl={item.sender?.avatar_url ?? null} size={34} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Txt variant="bodyStrong" numberOfLines={1}>{item.sender?.display_name ?? 'Someone'}</Txt>
+          <Txt variant="caption" color="text3">
+            {`${isDrop ? 'dropped this' : isPlaylist ? 'sent a playlist' : 'sent a song'} · ${timeAgo(item.created_at)}`}
+          </Txt>
+        </View>
+        {isDrop ? (
+          <View style={s.dropTag}>
+            <Ionicons name="radio-outline" size={12} color={colors.accent} />
+            <Txt variant="micro" color="accent">Everyone</Txt>
+          </View>
+        ) : null}
+      </View>
+
+      <TouchableOpacity onPress={() => onOpen(item)} activeOpacity={0.9} accessibilityRole="button">
+        <CoverArt uri={item.cover_image_url} size={art} radius={16} />
+      </TouchableOpacity>
+
+      <View style={s.cardBody}>
+        <Txt variant="title2" numberOfLines={1}>{item.title}</Txt>
+        <Txt variant="callout" color="text3" numberOfLines={1}>
+          {isPlaylist ? `${item.tracks_count ?? 0} tracks` : item.artist}
+        </Txt>
+      </View>
+
+      {item.message ? (
+        <View style={s.note}>
+          <Txt variant="callout" color="text2">{`“${item.message}”`}</Txt>
+        </View>
+      ) : null}
+
+      <View style={s.cardFoot}>
+        <View style={s.reactions}>
+          {REACTIONS.map((emoji) => {
+            const count = counts[emoji] ?? 0;
+            const mine = myReaction === emoji;
+            return (
+              <TouchableOpacity
+                key={emoji}
+                style={[s.reaction, mine && s.reactionMine]}
+                onPress={() => onReact(emoji)}
+                accessibilityRole="button"
+                accessibilityLabel={`React ${emoji}`}
+              >
+                <Txt variant="callout">{emoji}</Txt>
+                {count > 0 ? <Txt variant="caption" color="text3">{String(count)}</Txt> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <TouchableOpacity style={s.play} onPress={() => onOpen(item)} activeOpacity={0.85} accessibilityRole="button">
+          <Ionicons name={isPlaylist ? 'add' : 'play'} size={15} color={colors.accentInk} />
+          <Txt variant="captionStrong" style={{ color: colors.accentInk }} numberOfLines={1}>{action}</Txt>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export default function Home() {
+  const s = useStyles();
+  const router = useRouter();
+  const { user } = useAuth();
+  const { items, unread, loading, refreshing, refresh, markAsOpened, unreadCount } = useSharedItems();
+
+  const itemIds = useMemo(() => items.map((i) => i.id), [items]);
+  const { reactions, myReactions, react } = useReactions(itemIds);
+
+  const [tab, setTab] = useState<Tab>('friends');
+  const [playlistItem, setPlaylistItem] = useState<SharedItem | null>(null);
+
+  const viewerService = (user?.primary_service ?? null) as MusicService | null;
+
+  // Drops come from people you follow, which realtime cannot express as a
+  // filter, so returning to the tab is what picks them up.
+  useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
+
+  const open = useCallback((item: SharedItem) => {
+    if (item.recipient_id) void markAsOpened(item.id);
+    if (item.type === 'playlist') { setPlaylistItem(item); return; }
+    router.push(`/song/${item.id}`);
+  }, [markAsOpened, router]);
+
+  return (
+    <SafeAreaView style={s.root} edges={['top']}>
       <AppBar
         logo
         right={
-          <>
-            <IconBtn name="search-outline" label="Search" onPress={() => setSearchVisible(true)} />
-            <IconBtn name="notifications-outline" label="Activity" badge={unreadCount > 0} onPress={() => router.push('/(tabs)/notifications' as any)} />
-            <IconBtn name="paper-plane-outline" label="Send a song" onPress={() => router.push('/(tabs)/friends' as any)} />
-          </>
-        }
-      />
-
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        {(['inbox', 'following', 'mixes'] as HomeTab[]).map(t => (
-          <TouchableOpacity key={t} style={styles.tabItem} onPress={() => setTab(t)} activeOpacity={0.8}>
-            <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-              {t === 'inbox' ? `Inbox${unreadCount > 0 ? ` ${unreadCount}` : ''}` : t.charAt(0).toUpperCase() + t.slice(1)}
-            </Text>
-            {tab === t && <View style={styles.tabUnderline} />}
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.divider} />
-
-      {/* Feed */}
-      <FlatList
-        data={filteredItems}
-        keyExtractor={i => i.id}
-        refreshing={refreshing}
-        onRefresh={refresh}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}
-        ListHeaderComponent={
-          <FirstShareCard userId={user?.id} onSend={() => router.push('/(tabs)/friends')} />
-        }
-        ListEmptyComponent={
-          loading ? null : (
-            <EmptyState
-              icon="musical-notes-outline"
-              title="No songs yet"
-              body={tab === 'following'
-                ? 'Shares from people you follow will appear here.'
-                : tab === 'mixes'
-                  ? 'Shared playlists and mixes will appear here.'
-                  : 'Send one to start things off, and whatever comes back lands here.'}
-              action={tab === 'inbox'
-                ? { label: 'Send a song', icon: 'paper-plane', onPress: () => router.push('/(tabs)/friends') }
-                : undefined}
-            />
-          )
-        }
-        renderItem={({ item }) => (
-          <FeedRow
-            item={item}
-            onPress={handleItemPress}
-            reactionMap={reactions[item.id] ?? {}}
-            myReaction={myReactions[item.id]}
-            onReact={emoji => react(item.id, emoji)}
-            viewerService={(user?.primary_service as MusicService | null) ?? null}
+          <IconBtn
+            name="notifications-outline"
+            label="Activity"
+            badge={unreadCount > 0}
+            onPress={() => router.push('/(tabs)/notifications')}
           />
-        )}
+        }
       />
+
+      <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
+
+      {tab === 'foryou' ? (
+        <EmptyState
+          icon="compass-outline"
+          title="Discovery is coming"
+          body="For now, everything from the people you follow is under Friends."
+          action={{ label: 'Find people', icon: 'person-add', onPress: () => router.push('/(tabs)/friends') }}
+        />
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(i) => i.id}
+          refreshing={refreshing}
+          onRefresh={refresh}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={s.list}
+          ListHeaderComponent={
+            <>
+              <FirstShareCard userId={user?.id} onSend={() => router.push('/(tabs)/friends')} />
+              <NewForYou items={unread} onOpen={open} />
+            </>
+          }
+          ListEmptyComponent={
+            loading ? null : (
+              <EmptyState
+                icon="musical-notes-outline"
+                title="Nothing here yet"
+                body="Send someone a song to start things off. Whatever comes back lands here."
+                action={{ label: 'Send a song', icon: 'paper-plane', onPress: () => router.push('/(tabs)/friends') }}
+              />
+            )
+          }
+          renderItem={({ item }) => (
+            <FeedCard
+              item={item}
+              onOpen={open}
+              counts={reactions[item.id] ?? {}}
+              myReaction={myReactions[item.id]}
+              onReact={(emoji) => react(item.id, emoji)}
+              viewerService={viewerService}
+            />
+          )}
+        />
+      )}
 
       <PlaylistModal
-        item={playlistModalItem}
-        visible={playlistModalItem !== null}
-        onClose={() => setPlaylistModalItem(null)}
+        item={playlistItem}
+        visible={playlistItem !== null}
+        onClose={() => setPlaylistItem(null)}
       />
-
-      <Modal visible={searchVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSearchVisible(false)}>
-        <View style={styles.searchModal}>
-          <View style={styles.searchModalHeader}>
-            <Text style={styles.searchModalTitle}>Search Feed</Text>
-            <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); }}>
-              <Ionicons name="close" size={22} color={colors.text3} />
-            </TouchableOpacity>
-          </View>
-          <View style={styles.searchModalInputRow}>
-            <Ionicons name="search-outline" size={16} color={colors.text3} />
-            <TextInput
-              style={styles.searchModalInput}
-              placeholder="Search titles, artists, or people…"
-              placeholderTextColor={colors.text4}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoFocus
-            />
-          </View>
-          <FlatList
-            data={searchedItems}
-            keyExtractor={(item) => item.id}
-            keyboardShouldPersistTaps="handled"
-            ListEmptyComponent={<Text style={styles.searchEmptyText}>No matching shares.</Text>}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.searchResultRow}
-                onPress={() => {
-                  setSearchVisible(false);
-                  setSearchQuery('');
-                  void handleItemPress(item);
-                }}
-                activeOpacity={0.8}
-              >
-                <CoverArt uri={item.cover_image_url} size={48} radius={8} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.searchResultTitle} numberOfLines={1}>{item.title}</Text>
-                  <Text style={styles.searchResultMeta} numberOfLines={1}>
-                    {[item.artist, item.sender?.display_name].filter(Boolean).join(' · ')}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
-  container: { flex: 1, backgroundColor: colors.bg },
+const useStyles = makeStyles(({ colors, radius, spacing }) => ({
+  root: { flex: 1, backgroundColor: colors.bg },
+  list: { paddingBottom: 110 },
 
-  // Tabs
-  tabs: { flexDirection: 'row', paddingHorizontal: 20, gap: 22, paddingBottom: 0 },
-  tabItem: { paddingBottom: 8, position: 'relative' },
-  tabText: { fontSize: 15, fontWeight: '500', color: colors.text3 },
-  tabTextActive: { color: colors.text, fontWeight: '700' },
-  tabUnderline: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    height: 2, borderRadius: 1, backgroundColor: colors.accent,
+  // New for you
+  stripBlock: { paddingTop: spacing.lg, gap: spacing.sm },
+  stripLabel: { paddingHorizontal: spacing.lg },
+  strip: { paddingHorizontal: spacing.lg, gap: spacing.md },
+  stripCard: { width: 132, gap: 2 },
+  stripAvatar: {
+    position: 'absolute', left: 6, top: 6,
+    borderRadius: 16, borderWidth: 2, borderColor: colors.bg,
   },
+  stripTitle: { marginTop: spacing.sm },
 
-  divider: { height: 1, backgroundColor: colors.line },
-
-  // Feed
-  feedRowSender: { color: colors.text, fontWeight: '600' },
-  feedRowMeta: { color: colors.text3 },
-
-  feedCard: {
-    marginHorizontal: 16,
-    marginTop: 10,
-    backgroundColor: colors.surface,
-    borderWidth: 1, borderColor: colors.line,
-    borderLeftWidth: 1,
-    borderRadius: 16,
-    padding: 12,
+  // Card
+  card: { paddingHorizontal: spacing.lg, paddingTop: spacing.xl, gap: spacing.md },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2 },
+  dropTag: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    backgroundColor: colors.accentSoft, borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm + 2, paddingVertical: spacing.xs,
   },
-  feedCardUnread: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    backgroundColor: colors.accentSoft,
+  cardBody: { gap: 2 },
+  note: {
+    backgroundColor: colors.surfaceAlt, borderRadius: radius.md,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
   },
-  feedCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginBottom: 10,
+  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  reactions: { flexDirection: 'row', gap: spacing.xs + 2, flex: 1 },
+  reaction: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    paddingHorizontal: spacing.sm + 2, paddingVertical: spacing.sm - 2,
+    borderRadius: radius.pill, backgroundColor: colors.surfaceAlt,
+    borderWidth: 1, borderColor: 'transparent',
   },
-  senderIdentity: { flexDirection: 'row', alignItems: 'center', gap: 9, flex: 1, minWidth: 0 },
-  senderTextWrap: { flex: 1, minWidth: 0 },
-  headerAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, maxWidth: '48%', paddingRight: 6 },
-  shareTypeText: { color: colors.text3, fontSize: 12 },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
-  feedMediaRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  svcOverlay: {
-    position: 'absolute', right: -3, bottom: -3,
-    width: 20, height: 20, borderRadius: 10,
-    backgroundColor: colors.bg,
-    borderWidth: 2, borderColor: colors.bg,
-    alignItems: 'center', justifyContent: 'center',
+  reactionMine: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  play: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs + 2,
+    backgroundColor: colors.accent, borderRadius: radius.pill,
+    paddingHorizontal: spacing.md + 2, paddingVertical: spacing.sm + 1,
+    maxWidth: 170,
   },
-  feedCardTitle: { fontSize: 14, fontWeight: '500', color: colors.text2 },
-  feedCardTitleUnread: { fontWeight: '700', color: colors.text },
-  feedCardArtist: { fontSize: 12, color: colors.text3, marginTop: 2 },
-  feedCardMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 7, flexWrap: 'wrap' },
-  feedChip: {
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 999, backgroundColor: colors.bgElev,
-    borderWidth: 1, borderColor: colors.line,
-  },
-  feedChipText: { fontSize: 10, color: colors.text3 },
-  feedCardService: { fontSize: 11, color: colors.text3, flexShrink: 1 },
-  messageBubble: {
-    marginTop: 10,
-    paddingHorizontal: 12, paddingVertical: 8,
-    backgroundColor: colors.bgElev,
-    borderRadius: 12,
-  },
-  messageBubbleText: { color: colors.text2, fontSize: 13, lineHeight: 18 },
-
-  // Reactions
-  reactionStrip: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8 },
-  existingReactions: { flexDirection: 'row', gap: 5, flexWrap: 'wrap', flex: 1 },
-  reactionPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    paddingHorizontal: 8, paddingVertical: 4,
-    backgroundColor: colors.surface, borderRadius: 999,
-    borderWidth: 1, borderColor: colors.line,
-  },
-  reactionPillActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  reactionEmoji: { fontSize: 14 },
-  reactionCount: { fontSize: 11, color: colors.text3 },
-  noReactionsText: { color: colors.text4, fontSize: 12, paddingVertical: 4 },
-  addReactionBtn: {
-    width: 30, height: 30, borderRadius: 15,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: colors.bgElev, borderWidth: 1, borderColor: colors.line,
-  },
-  emojiPicker: {
-    flexDirection: 'row', gap: 8, marginTop: 4, paddingVertical: 6,
-  },
-  emojiPickerBtn: {
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  emojiPickerBtnActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  emojiPickerEmoji: { fontSize: 18 },
-
-  // Empty
-  empty: { alignItems: 'center', paddingTop: 100, gap: 10, paddingHorizontal: 40 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
-  emptySubtitle: { fontSize: 14, color: colors.text3, textAlign: 'center', lineHeight: 20 },
-
-  searchModal: { flex: 1, backgroundColor: colors.bg },
-  searchModalHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: colors.line,
-  },
-  searchModalTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
-  searchModalInputRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    margin: 16, backgroundColor: colors.surface, borderRadius: 14,
-    paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: colors.line,
-  },
-  searchModalInput: { flex: 1, color: colors.text, fontSize: 14 },
-  searchResultRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line,
-  },
-  searchResultTitle: { color: colors.text, fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  searchResultMeta: { color: colors.text3, fontSize: 12 },
-  searchEmptyText: { color: colors.text4, fontSize: 14, textAlign: 'center', marginTop: 48 },
 }));
