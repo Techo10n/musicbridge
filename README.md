@@ -1,6 +1,6 @@
 # MusicBridge
 
-**Author**: Zechariah Frierson | **Status**: MVP in Development | **Date**: March 2026
+**Author**: Zechariah Frierson | **Status**: TestFlight beta | **Updated**: September 2026
 
 Cross-platform music sharing app. Users on Spotify, Apple Music, and YouTube Music can share songs and playlists — MusicBridge automatically recreates them on the recipient's streaming service.
 
@@ -289,7 +289,7 @@ Current baseline coverage includes utility matching, shared UI primitives, react
 
 ## Architecture
 
-No custom backend server. All logic runs on the client. Supabase handles auth, the database, and RLS. Streaming API calls go directly from the device using stored OAuth tokens.
+No custom backend server. The app talks to Supabase for auth, the database, RLS, and Realtime, and streaming API calls go directly from the device using stored OAuth tokens. The few jobs that need server-side secrets or long runtimes run as Supabase Edge Functions: playlist conversion (`convert-playlist`), Apple Music developer-token signing (`apple-music-auth`), and push delivery (`send-notification`).
 
 - **On-device auth**: Spotify + Google via `expo-auth-session`; Apple Music via native iOS MusicKit / StoreKit in a local Expo module
 - **Tokens in Supabase**: stored in `public.users`, RLS-protected (owner-only)
@@ -411,12 +411,14 @@ Deep links: `youtubemusic://watch?v=<id>&vType=audio`
 | `id` | uuid (FK → auth.users) |
 | `username` | text (unique) |
 | `display_name` | text |
+| `avatar_url`, `bio` | text |
+| `favorite_song` | jsonb |
 | `primary_service` | enum: spotify / apple_music / youtube_music |
 | `spotify_access_token`, `_refresh_token`, `_token_expiry` | text / timestamptz |
 | `apple_music_user_token` | text |
 | `youtube_access_token`, `_refresh_token`, `_token_expiry` | text / timestamptz |
 
-RLS: users can read all rows (friend search), update only their own.
+RLS: owner-only SELECT and UPDATE (migration 010). Other users' public fields (`id`, `username`, `display_name`, `avatar_url`, `bio`, `primary_service`, `favorite_song`, `created_at`) are read through the `public.user_public_profiles` view, which never exposes token columns.
 
 ### `public.push_tokens`
 
@@ -474,7 +476,7 @@ Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets
 
 ## Current Limitations
 
-1. **Spotify developer-mode rate limits** — daily quota is low. The Edge Function backs off up to 15s on 429s then throws `spotify_rate_limit_exceeded`. Resolved by requesting a Spotify quota extension.
+1. **Spotify developer-mode rate limits** — daily quota is low. The Edge Function backs off up to 15s on 429s then throws `spotify_rate_limit_exceeded`. Needs a Spotify quota extension before public launch.
 
 2. **Track matching is approximate** — uses `cleanTitle()` + `cleanArtistName()` + service-specific heuristics. No ISRC matching or duration filtering yet.
 
