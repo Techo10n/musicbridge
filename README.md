@@ -1,6 +1,9 @@
 # MusicBridge
 
-**Author**: Zechariah Frierson | **Status**: MVP in Development | **Date**: March 2026
+**Author**: Zechariah Frierson | **Status**: TestFlight beta | **Updated**: September 2026
+
+> [!NOTE]
+> Active development happens on the [`dev`](https://github.com/Techo10n/musicbridge/tree/dev) branch. `main` still reflects the April 2026 MVP, so parts of this README (for example, the Instagram reel import) describe features that have since changed.
 
 Cross-platform music sharing app. Users on Spotify, Apple Music, and YouTube Music can share songs and playlists — MusicBridge automatically recreates them on the recipient's streaming service.
 
@@ -288,7 +291,7 @@ If all stages miss, the modal shows "Couldn't identify the song" and closes.
 
 ## Current Limitations
 
-1. **Spotify developer-mode rate limits** — daily quota is low. The Edge Function backs off up to 15s on 429s then throws `spotify_rate_limit_exceeded`. Resolved by requesting a Spotify quota extension.
+1. **Spotify developer-mode rate limits** — daily quota is low. The Edge Function backs off up to 15s on 429s then throws `spotify_rate_limit_exceeded`. Needs a Spotify quota extension before public launch.
 
 2. **Track matching is approximate** — uses `cleanTitle()` + `cleanArtistName()` + service-specific heuristics. No ISRC matching or duration filtering yet.
 
