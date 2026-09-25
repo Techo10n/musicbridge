@@ -4,6 +4,7 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { makeStyles, useTheme } from '../../lib/theme';
 import { ShareComposer } from '../../components/ShareComposer';
+import { ConversionPill } from '../../components/ConversionPill';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -80,6 +81,7 @@ export default function TabLayout() {
       <Tabs.Screen name="settings" options={{ href: null }} />
       <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
+    <ConversionPill />
     <ShareComposer visible={composerOpen} onClose={() => setComposerOpen(false)} />
     </>
   );

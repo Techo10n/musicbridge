@@ -6,7 +6,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useSharedItems } from '../../hooks/useSharedItems';
 import { useReactions } from '../../hooks/useReactions';
-import { PlaylistModal } from '../../components/PlaylistModal';
 import { FirstShareCard } from '../../components/FirstShareCard';
 import {
   AppBar, Avatar, CoverArt, EmptyState, IconBtn, SegmentedTabs, Txt,
@@ -160,7 +159,6 @@ export default function Home() {
   const { reactions, myReactions, react } = useReactions(itemIds);
 
   const [tab, setTab] = useState<Tab>('friends');
-  const [playlistItem, setPlaylistItem] = useState<SharedItem | null>(null);
 
   const viewerService = (user?.primary_service ?? null) as MusicService | null;
 
@@ -170,8 +168,7 @@ export default function Home() {
 
   const open = useCallback((item: SharedItem) => {
     if (item.recipient_id) void markAsOpened(item.id);
-    if (item.type === 'playlist') { setPlaylistItem(item); return; }
-    router.push(`/song/${item.id}`);
+    router.push(item.type === 'playlist' ? `/playlist/${item.id}` : `/song/${item.id}`);
   }, [markAsOpened, router]);
 
   return (
@@ -234,11 +231,6 @@ export default function Home() {
         />
       )}
 
-      <PlaylistModal
-        item={playlistItem}
-        visible={playlistItem !== null}
-        onClose={() => setPlaylistItem(null)}
-      />
     </SafeAreaView>
   );
 }

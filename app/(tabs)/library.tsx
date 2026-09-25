@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../hooks/useAuth';
 import { useLibrary } from '../../hooks/useLibrary';
+import { useConversions } from '../../hooks/useConversions';
 import { EmptyPlaylistError, ShareDraft, toTrackPayload } from '../../lib/sharing';
 import { LibraryArtist, LibraryPlaylist, LibraryTrack } from '../../types';
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
@@ -33,6 +34,64 @@ function normalizeTrackKey(title: string, artist: string): string {
   return `${normalizeSearch(title).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()}::${normalizeSearch(artist).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()}`;
 }
 
+/** Playlists being added to your service, and the ones that just finished. */
+function ConversionsSection() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const router = useRouter();
+  const { conversions, dismiss } = useConversions();
+
+  const runs = Object.values(conversions);
+  if (runs.length === 0) return null;
+
+  return (
+    <>
+      <SectionTitle title="Conversions" />
+      <View style={styles.listSection}>
+        {runs.map((run, i) => {
+          const running = run.state === 'waiting' || run.state === 'processing';
+          return (
+            <TouchableOpacity
+              key={run.itemId}
+              style={[styles.row, i < runs.length - 1 && styles.rowSep]}
+              onPress={() => router.push(`/playlist/${run.itemId}`)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.allSongsIcon}>
+                <Ionicons
+                  name={running ? 'sync' : run.state === 'done' ? 'checkmark' : 'alert'}
+                  size={22}
+                  color={colors.accentInk}
+                />
+              </View>
+              <View style={styles.rowInfo}>
+                <Text style={styles.rowTitle} numberOfLines={1}>{run.title}</Text>
+                <Text style={styles.rowMetaText}>
+                  {running
+                    ? `Adding · ${run.processed} of ${run.total}`
+                    : run.state === 'done'
+                      ? `Added${run.matched != null ? ` · ${run.matched} of ${run.total}` : ''}`
+                      : 'Did not finish'}
+                </Text>
+              </View>
+              {!running ? (
+                <TouchableOpacity
+                  onPress={() => dismiss(run.itemId)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Dismiss ${run.title}`}
+                >
+                  <Ionicons name="close" size={18} color={colors.text3} />
+                </TouchableOpacity>
+              ) : null}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </>
+  );
+}
+
 export default function LibraryScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -47,7 +106,7 @@ export default function LibraryScreen() {
   const [sortMode, setSortMode] = useState<SortMode>('recent');
   const [selectedPlaylist, setSelectedPlaylist] = useState<LibraryPlaylist | null>(null);
   const [selectedPlaylistTracks, setSelectedPlaylistTracks] = useState<LibraryTrack[] | null>(null);
-  const [playlistModalVisible, setPlaylistModalVisible] = useState(false);
+  const [detailVisible, setDetailVisible] = useState(false);
   const [playlistTrackIndex, setPlaylistTrackIndex] = useState<Record<string, LibraryTrack[]>>({});
   const [shareDraft, setShareDraft] = useState<ShareDraft | null>(null);
   const [preparingShare, setPreparingShare] = useState(false);
@@ -100,11 +159,11 @@ export default function LibraryScreen() {
   const openPlaylist = (playlist: LibraryPlaylist, tracks: LibraryTrack[] | null = null) => {
     setSelectedPlaylist(playlist);
     setSelectedPlaylistTracks(tracks);
-    setPlaylistModalVisible(true);
+    setDetailVisible(true);
   };
 
   const closePlaylist = () => {
-    setPlaylistModalVisible(false);
+    setDetailVisible(false);
     setSelectedPlaylistTracks(null);
   };
 
@@ -374,6 +433,8 @@ export default function LibraryScreen() {
           contentContainerStyle={{ paddingBottom: 100 }}
         >
 
+          <ConversionsSection />
+
           {/* Playlists */}
           {showPlaylists && playlists.length > 0 && (
             <>
@@ -500,7 +561,7 @@ export default function LibraryScreen() {
 
       <LibraryPlaylistDetailModal
         playlist={selectedPlaylist}
-        visible={playlistModalVisible}
+        visible={detailVisible}
         onClose={closePlaylist}
         preloadedTracks={selectedPlaylistTracks}
       />

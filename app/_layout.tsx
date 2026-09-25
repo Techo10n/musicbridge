@@ -17,6 +17,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { getSpotifyReconnectRequired } from '../lib/spotify';
 import { ThemeProvider, useTheme } from '../lib/theme';
 import { ToastProvider } from '../components/ui';
+import { ConversionsProvider } from '../hooks/useConversions';
 
 void SplashScreen.preventAutoHideAsync().catch(() => {
   // Already hidden or unavailable (e.g. web) — nothing to do.
@@ -112,6 +113,10 @@ function RootLayoutNav({ fontsReady }: { fontsReady: boolean }) {
           name="song/[id]"
           options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         />
+        <Stack.Screen
+          name="playlist/[id]"
+          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+        />
       </Stack>
     </View>
   );
@@ -131,7 +136,9 @@ export default function RootLayout() {
       <ThemeProvider>
         <ToastProvider>
           <AuthProvider>
-            <RootLayoutNav fontsReady={fontsReady} />
+            <ConversionsProvider>
+              <RootLayoutNav fontsReady={fontsReady} />
+            </ConversionsProvider>
           </AuthProvider>
         </ToastProvider>
       </ThemeProvider>
