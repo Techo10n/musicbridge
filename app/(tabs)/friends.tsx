@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator, FlatList, ScrollView, Text, TextInput, TouchableOpacity, View,
-} from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
@@ -9,13 +7,20 @@ import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { ShareComposer } from '../../components/ShareComposer';
 import { UserProfileModal } from '../../components/UserProfileModal';
-import { Avatar, AppBar, IconBtn, TasteBar, ServiceDot, useToast } from '../../components/ui';
+import { InviteSheet } from '../../components/InviteSheet';
+import {
+  AppBar, Avatar, EmptyState, IconBtn, ListRow, SegmentedTabs, ServiceDot, TasteBar, Txt, useToast,
+} from '../../components/ui';
 import { User } from '../../types';
+import { Relationship, relationshipFor } from '../../lib/friends';
 import { makeStyles, useTheme } from '../../lib/theme';
 
-type PeopleTab = 'following' | 'followers' | 'suggested';
+type Tab = 'friends' | 'requests' | 'suggested';
 type SharedTasteRow = { sender_id: string; title: string | null; artist: string | null };
+
 const SHARED_ITEMS_PAGE_SIZE = 500;
+/** Below this many known songs across both people, a percentage is noise. */
+const MIN_TASTE_DATA = 4;
 
 function norm(value: string | null | undefined): string {
   return (value ?? '')
@@ -29,9 +34,7 @@ function norm(value: string | null | undefined): string {
 function jaccardScore(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let overlap = 0;
-  for (const entry of a) {
-    if (b.has(entry)) overlap += 1;
-  }
+  for (const entry of a) if (b.has(entry)) overlap += 1;
   const union = new Set([...a, ...b]).size;
   return union > 0 ? overlap / union : 0;
 }
@@ -61,479 +64,387 @@ async function fetchSharedTasteRows(userIds: string[]): Promise<SharedTasteRow[]
   return rows;
 }
 
-export default function People() {
-  const styles = useStyles();
+// ─── Person row ───────────────────────────────────────────────────────────────
+
+function PersonRow({
+  person, relationship, match, onPress, onAdd, onSend,
+}: {
+  person: User;
+  relationship: Relationship;
+  /** Null when there is not enough listening in common to say anything. */
+  match: number | null | undefined;
+  onPress: () => void;
+  onAdd: () => void;
+  onSend?: () => void;
+}) {
+  const s = useStyles();
   const { colors } = useTheme();
-  const toast = useToast();
-  const { user: currentUser } = useAuth();
-  const {
-    following,
-    followers,
-    mutualFollows,
-    loading,
-    followUser,
-    unfollowUser,
-    isFollowing,
-    searchUsers,
-    getSuggestedUsers,
-    refresh,
-  } = useFollows();
-
-  const [activeTab, setActiveTab] = useState<PeopleTab>('following');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<User[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [shareRecipient, setShareRecipient] = useState<User | null>(null);
-  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
-  const [suggestedUsers, setSuggestedUsers] = useState<User[]>([]);
-  const [matchScores, setMatchScores] = useState<Record<string, number>>({});
-
-  const handleSearch = useCallback(async () => {
-    if (!searchQuery.trim()) { setSearchResults([]); return; }
-    setSearching(true);
-    try {
-      const results = await searchUsers(searchQuery.trim());
-      setSearchResults(results);
-    } finally { setSearching(false); }
-  }, [searchQuery, searchUsers]);
-
-  useEffect(() => {
-    const isEmpty = !searchQuery.trim();
-    // An empty box clears on the next tick; a real query waits out the debounce.
-    const timeoutId = setTimeout(() => {
-      if (isEmpty) {
-        setSearchResults([]);
-        setSearching(false);
-        return;
-      }
-      void handleSearch();
-    }, isEmpty ? 0 : 200);
-
-    return () => { clearTimeout(timeoutId); };
-  }, [handleSearch, searchQuery]);
-
-  useEffect(() => {
-    void (async () => {
-      const suggestions = await getSuggestedUsers();
-      setSuggestedUsers(suggestions);
-    })();
-  }, [following.length, followers.length, getSuggestedUsers]);
-
-  useEffect(() => {
-    if (!currentUser?.id) return;
-
-    const targets = [...following, ...followers, ...suggestedUsers, ...searchResults];
-    const uniqueTargets = Array.from(new Map(targets.map((u) => [u.id, u])).values());
-
-    let cancelled = false;
-
-    const computeMatchScores = async () => {
-      if (uniqueTargets.length === 0) {
-        if (!cancelled) setMatchScores({});
-        return;
-      }
-      const userIds = [currentUser.id, ...uniqueTargets.map((u) => u.id)];
-      let data: SharedTasteRow[] = [];
-      try {
-        data = await fetchSharedTasteRows(userIds);
-      } catch (err) {
-        console.error('[People] taste match fetch failed:', err);
-        return;
-      }
-      if (cancelled) return;
-
-      const shareMap = new Map<string, { artists: Set<string>; titles: Set<string> }>();
-      const ensureEntry = (userId: string) => {
-        if (!shareMap.has(userId)) {
-          shareMap.set(userId, { artists: new Set<string>(), titles: new Set<string>() });
-        }
-        return shareMap.get(userId)!;
-      };
-
-      for (const entry of data ?? []) {
-        const bucket = ensureEntry(entry.sender_id as string);
-        const artist = norm((entry as { artist?: string | null }).artist);
-        const title = norm((entry as { title?: string | null }).title);
-        if (artist) bucket.artists.add(artist);
-        if (title) bucket.titles.add(title);
-      }
-
-      const currentBucket = ensureEntry(currentUser.id);
-      const currentFavArtist = norm(currentUser.favorite_song?.artist);
-      const currentFavTitle = norm(currentUser.favorite_song?.title);
-      if (currentFavArtist) currentBucket.artists.add(currentFavArtist);
-      if (currentFavTitle) currentBucket.titles.add(currentFavTitle);
-
-      const nextScores: Record<string, number> = {};
-
-      for (const target of uniqueTargets) {
-        const bucket = ensureEntry(target.id);
-        const targetFavArtist = norm(target.favorite_song?.artist);
-        const targetFavTitle = norm(target.favorite_song?.title);
-        if (targetFavArtist) bucket.artists.add(targetFavArtist);
-        if (targetFavTitle) bucket.titles.add(targetFavTitle);
-
-        const artistScore = jaccardScore(currentBucket.artists, bucket.artists);
-        const titleScore = jaccardScore(currentBucket.titles, bucket.titles);
-        const sameService = currentUser.primary_service && target.primary_service === currentUser.primary_service ? 1 : 0;
-        const favoriteArtistMatch = currentFavArtist && targetFavArtist && currentFavArtist === targetFavArtist ? 1 : 0;
-        const favoriteTitleMatch = currentFavTitle && targetFavTitle && currentFavTitle === targetFavTitle ? 1 : 0;
-        const dataPoints = currentBucket.artists.size + currentBucket.titles.size + bucket.artists.size + bucket.titles.size;
-        const baseline = dataPoints > 0 ? 32 : 24;
-
-        nextScores[target.id] = clampScore(
-          baseline
-          + artistScore * 34
-          + titleScore * 18
-          + sameService * 8
-          + favoriteArtistMatch * 6
-          + favoriteTitleMatch * 10,
-        );
-      }
-
-      if (!cancelled) {
-        setMatchScores(nextScores);
-      }
-    };
-
-    void computeMatchScores();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser, followers, following, searchResults, suggestedUsers]);
-
-  const handleFollow = async (userId: string) => {
-    try { await followUser(userId); await refresh(); }
-    catch (err) { toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not follow' }); }
-  };
-  const handleUnfollow = async (userId: string) => {
-    try { await unfollowUser(userId); await refresh(); }
-    catch (err) { toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not unfollow' }); }
-  };
-
-  const listData = activeTab === 'following'
-    ? [...following].sort((a, b) => (matchScores[b.id] ?? 0) - (matchScores[a.id] ?? 0))
-    : activeTab === 'followers'
-      ? [...followers].sort((a, b) => (matchScores[b.id] ?? 0) - (matchScores[a.id] ?? 0))
-      : [];
-  const hasStreak = (userId: string) => (matchScores[userId] ?? 0) >= 80;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <AppBar
-        title="People"
-        right={<IconBtn name="person-add-outline" label="Find people" onPress={() => setActiveTab('suggested')} />}
-      />
-
-      {/* Search */}
-      <View style={styles.searchRow}>
-        <View style={styles.searchPill}>
-          <Ionicons name="search-outline" size={16} color={colors.text3} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by username…"
-            placeholderTextColor={colors.text4}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
-            returnKeyType="search"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {searching && <ActivityIndicator size="small" color={colors.accent} />}
-        </View>
-      </View>
-
-      {/* Search results overlay */}
-      {searchResults.length > 0 && (
-        <View style={styles.searchResults}>
-          {searchResults.map(u => (
-            <PersonRow
-              key={u.id}
-              user={u}
-              isFollowing={isFollowing(u.id)}
-              isMutual={isMutual(u.id, mutualFollows)}
-              onFollow={handleFollow}
-              onUnfollow={handleUnfollow}
-              onShare={isMutual(u.id, mutualFollows) ? () => setShareRecipient(u) : undefined}
-              matchPct={matchScores[u.id]}
-              onViewProfile={() => setViewingUserId(u.id)}
-            />
-          ))}
-        </View>
-      )}
-
-      {/* Tab bar — border-bottom style matching design */}
-      <View style={styles.tabBar}>
-        {(['following', 'followers', 'suggested'] as PeopleTab[]).map(t => {
-          const isActive = activeTab === t;
-          return (
-            <TouchableOpacity
-              key={t}
-              style={styles.tab}
-              onPress={() => setActiveTab(t)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
-                {t === 'following'
-                  ? <><Text style={[styles.tabText, isActive && styles.tabTextActive]}>Following </Text><Text style={{ color: colors.text3, fontWeight: '500' }}>{following.length > 0 ? following.length : ''}</Text></>
-                  : t === 'followers'
-                  ? <><Text style={[styles.tabText, isActive && styles.tabTextActive]}>Followers </Text><Text style={{ color: colors.text3, fontWeight: '500' }}>{followers.length > 0 ? followers.length : ''}</Text></>
-                  : 'Suggested'}
-              </Text>
-              {isActive && <View style={styles.tabUnderline} />}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {loading ? (
-        <View style={styles.loadingCenter}>
-          <ActivityIndicator color={colors.accent} size="large" />
-        </View>
-      ) : activeTab === 'suggested' ? (
-        <SuggestedSection
-          users={suggestedUsers}
-          matchScores={matchScores}
-          onFollow={handleFollow}
-          onViewProfile={u => setViewingUserId(u.id)}
-        />
-      ) : (
-        <>
-          {listData.length > 0 && (
-            <View style={styles.sectionLabel}>
-              <Text style={styles.sectionLabelText}>
-                {activeTab === 'following' ? 'Top taste matches' : 'Your followers'}
-              </Text>
-            </View>
+    <ListRow
+      leading={<Avatar name={person.display_name} avatarUrl={person.avatar_url} size={48} />}
+      title={person.display_name}
+      subtitle={`@${person.username}`}
+      onPress={onPress}
+      extra={
+        <View style={s.meta}>
+          {person.primary_service ? <ServiceDot service={person.primary_service} /> : null}
+          {match != null ? (
+            <>
+              <TasteBar pct={match} />
+              <Txt variant="caption" color="text3">{`${match}% match`}</Txt>
+            </>
+          ) : (
+            <Txt variant="caption" color="text4">Not enough in common yet</Txt>
           )}
-          <FlatList
-            data={listData}
-            keyExtractor={u => u.id}
-            contentContainerStyle={{ paddingBottom: 100 }}
-            showsVerticalScrollIndicator={false}
-            ItemSeparatorComponent={() => <View style={styles.sep} />}
-            ListEmptyComponent={
-              <View style={styles.empty}>
-                <Text style={styles.emptyText}>
-                  {activeTab === 'following' ? 'Not following anyone yet — search above' : 'Nobody following you yet'}
-                </Text>
-              </View>
-            }
-            renderItem={({ item }) => (
-              <PersonRow
-                user={item}
-                isFollowing={isFollowing(item.id)}
-                isMutual={isMutual(item.id, mutualFollows)}
-                onFollow={handleFollow}
-                onUnfollow={handleUnfollow}
-                onShare={isMutual(item.id, mutualFollows) ? () => setShareRecipient(item) : undefined}
-                matchPct={matchScores[item.id]}
-                streak={hasStreak(item.id) ? Math.floor((matchScores[item.id] ?? 0) / 10) : undefined}
-                onViewProfile={() => setViewingUserId(item.id)}
-              />
-            )}
-          />
-        </>
-      )}
+        </View>
+      }
+      trailing={
+        <View style={s.actions}>
+          {relationship === 'friends' && onSend ? (
+            <TouchableOpacity
+              style={s.sendBtn}
+              onPress={onSend}
+              accessibilityRole="button"
+              accessibilityLabel={`Send a song to ${person.display_name}`}
+            >
+              <Ionicons name="paper-plane-outline" size={16} color={colors.text2} />
+            </TouchableOpacity>
+          ) : null}
 
-      <ShareComposer
-        visible={shareRecipient !== null}
-        recipient={shareRecipient}
-        onClose={() => setShareRecipient(null)}
-      />
-      <UserProfileModal userId={viewingUserId} onClose={() => setViewingUserId(null)} />
-    </SafeAreaView>
+          {relationship === 'friends' ? (
+            <View style={s.stateTag}>
+              <Ionicons name="checkmark" size={13} color={colors.text3} />
+              <Txt variant="captionStrong" color="text3">Friends</Txt>
+            </View>
+          ) : relationship === 'pending' ? (
+            <View style={s.stateTag}>
+              <Txt variant="captionStrong" color="text3">Waiting</Txt>
+            </View>
+          ) : (
+            <TouchableOpacity style={s.addBtn} onPress={onAdd} accessibilityRole="button">
+              <Txt variant="captionStrong" style={{ color: colors.accentInk }}>
+                {relationship === 'request' ? 'Add back' : 'Add'}
+              </Txt>
+            </TouchableOpacity>
+          )}
+        </View>
+      }
+    />
   );
 }
 
-function isMutual(userId: string, mutuals: User[]) {
-  return mutuals.some(m => m.id === userId);
-}
-
-// ─── PersonRow ────────────────────────────────────────────────────────────────
-function PersonRow({
-  user, isFollowing, isMutual, onFollow, onUnfollow, onShare, matchPct, streak, onViewProfile,
-}: {
-  user: User;
-  isFollowing: boolean;
-  isMutual: boolean;
-  onFollow: (id: string) => void;
-  onUnfollow: (id: string) => void;
-  onShare?: () => void;
-  matchPct?: number;
-  streak?: number;
-  onViewProfile?: () => void;
-}) {
-  const styles = useStyles();
+/** Always-present way out of an empty friends list. */
+function InviteRow({ onPress }: { onPress: () => void }) {
+  const s = useStyles();
   const { colors } = useTheme();
-  const svc = (user as any).primary_service as string | undefined;
   return (
-    <TouchableOpacity style={styles.personRow} onPress={onViewProfile} activeOpacity={0.8}>
-      <Avatar name={user.display_name} avatarUrl={user.avatar_url} size={48} />
-      <View style={styles.personInfo}>
-        <View style={styles.personNameRow}>
-          <Text style={styles.personName} numberOfLines={1}>{user.display_name}</Text>
-          {streak != null && <Text style={styles.streakBadge}>🔥{streak}</Text>}
-        </View>
-        <View style={styles.personMeta}>
-          {svc && <ServiceDot service={svc} size={8} />}
-          <Text style={styles.personUsername} numberOfLines={1}>@{user.username}</Text>
-          {isMutual && <Text style={styles.mutualBadge} numberOfLines={1}>· mutual</Text>}
-        </View>
-        {matchPct != null && (
-          <View style={styles.matchRow}>
-            <TasteBar pct={matchPct} />
-            <Text style={styles.matchPct}>{matchPct}% match</Text>
-          </View>
-        )}
+    <TouchableOpacity style={s.inviteRow} onPress={onPress} activeOpacity={0.85} accessibilityRole="button">
+      <View style={s.inviteIcon}>
+        <Ionicons name="person-add" size={17} color={colors.accentInk} />
       </View>
-      <View style={styles.personActions}>
-        {onShare && (
-          <TouchableOpacity style={styles.sendBtn} onPress={onShare} activeOpacity={0.8} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="paper-plane-outline" size={16} color={colors.text2} />
-            <Text style={styles.sendBtnText}>Send</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity
-          style={[styles.followBtn, isFollowing && styles.followingBtn]}
-          onPress={() => isFollowing ? onUnfollow(user.id) : onFollow(user.id)}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.followBtnText, isFollowing && styles.followingBtnText]}>
-            {isFollowing ? 'Following' : 'Follow'}
-          </Text>
-        </TouchableOpacity>
+      <View style={{ flex: 1 }}>
+        <Txt variant="bodyStrong">Add a friend</Txt>
+        <Txt variant="caption" color="text3">Send them your link</Txt>
       </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.text3} />
     </TouchableOpacity>
   );
 }
 
-// ─── SuggestedSection ─────────────────────────────────────────────────────────
-function SuggestedSection({
-  users,
-  matchScores,
-  onFollow,
-  onViewProfile,
-}: {
-  users: User[];
-  matchScores: Record<string, number>;
-  onFollow: (id: string) => void;
-  onViewProfile: (u: User) => void;
-}) {
-  const styles = useStyles();
-  if (users.length === 0) {
-    return (
-      <View style={styles.empty}>
-        <Text style={styles.emptyText}>No suggestions right now. Try searching for people directly.</Text>
-      </View>
-    );
-  }
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export default function Friends() {
+  const s = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
+  const { user } = useAuth();
+  const {
+    mutualFollows, requests, pending, loading,
+    followUser, searchUsers, getSuggestedUsers, refresh,
+  } = useFollows();
+
+  const [tab, setTab] = useState<Tab>('friends');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<User[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [suggested, setSuggested] = useState<User[]>([]);
+  const [matches, setMatches] = useState<Record<string, number | null>>({});
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [sendTo, setSendTo] = useState<User | null>(null);
+
+  // ── Search ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const isEmpty = !query.trim();
+    const timer = setTimeout(() => {
+      if (isEmpty) { setResults(null); setSearching(false); return; }
+      void (async () => {
+        setSearching(true);
+        try {
+          setResults(await searchUsers(query.trim()));
+        } finally {
+          setSearching(false);
+        }
+      })();
+    }, isEmpty ? 0 : 250);
+    return () => clearTimeout(timer);
+  }, [query, searchUsers]);
+
+  // ── Suggestions ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const people = await getSuggestedUsers(12);
+        if (!cancelled) setSuggested(people);
+      } catch {
+        if (!cancelled) setSuggested([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [getSuggestedUsers]);
+
+  // ── Taste match ──────────────────────────────────────────────────────────
+  const people = useMemo(
+    () => [...mutualFollows, ...requests, ...pending, ...suggested, ...(results ?? [])],
+    [mutualFollows, requests, pending, suggested, results],
+  );
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const targets = Array.from(new Map(people.map((p) => [p.id, p])).values());
+    if (targets.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      let rows: SharedTasteRow[];
+      try {
+        rows = await fetchSharedTasteRows([user.id, ...targets.map((t) => t.id)]);
+      } catch (err) {
+        console.error('[friends] taste match fetch failed:', err);
+        return;
+      }
+      if (cancelled) return;
+
+      const bucketOf = new Map<string, { artists: Set<string>; titles: Set<string> }>();
+      const ensure = (id: string) => {
+        if (!bucketOf.has(id)) bucketOf.set(id, { artists: new Set<string>(), titles: new Set<string>() });
+        return bucketOf.get(id)!;
+      };
+
+      for (const row of rows) {
+        const bucket = ensure(row.sender_id);
+        const artist = norm(row.artist);
+        const title = norm(row.title);
+        if (artist) bucket.artists.add(artist);
+        if (title) bucket.titles.add(title);
+      }
+
+      const mine = ensure(user.id);
+      const myFavArtist = norm(user.favorite_song?.artist);
+      const myFavTitle = norm(user.favorite_song?.title);
+      if (myFavArtist) mine.artists.add(myFavArtist);
+      if (myFavTitle) mine.titles.add(myFavTitle);
+
+      const next: Record<string, number | null> = {};
+      for (const target of targets) {
+        const theirs = ensure(target.id);
+        const theirFavArtist = norm(target.favorite_song?.artist);
+        const theirFavTitle = norm(target.favorite_song?.title);
+        if (theirFavArtist) theirs.artists.add(theirFavArtist);
+        if (theirFavTitle) theirs.titles.add(theirFavTitle);
+
+        // Below a handful of known songs between the two of you, a percentage
+        // is an artefact of the sample size. Say so rather than invent one:
+        // this used to add a flat 24-32 so that nobody ever scored low, which
+        // made the number mean nothing.
+        const dataPoints = mine.artists.size + mine.titles.size + theirs.artists.size + theirs.titles.size;
+        if (dataPoints < MIN_TASTE_DATA) { next[target.id] = null; continue; }
+
+        const sameService = user.primary_service && target.primary_service === user.primary_service ? 1 : 0;
+        next[target.id] = clampScore(
+          jaccardScore(mine.artists, theirs.artists) * 62
+          + jaccardScore(mine.titles, theirs.titles) * 24
+          + sameService * 6
+          + (myFavArtist && myFavArtist === theirFavArtist ? 8 : 0),
+        );
+      }
+
+      if (!cancelled) setMatches(next);
+    })();
+
+    return () => { cancelled = true; };
+  }, [user, people]);
+
+  // ── Actions ──────────────────────────────────────────────────────────────
+  const add = async (target: User) => {
+    try {
+      await followUser(target.id);
+      await refresh();
+      toast.show({ kind: 'success', message: `Added ${target.display_name}` });
+    } catch (err) {
+      toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not add them' });
+    }
+  };
+
+  const relationshipOf = useCallback(
+    (id: string) => relationshipFor(id, { friends: mutualFollows, requests, pending }),
+    [mutualFollows, requests, pending],
+  );
+
+  const listFor = (t: Tab): User[] =>
+    t === 'friends' ? [...mutualFollows, ...pending] : t === 'requests' ? requests : suggested;
+
+  const shown = results ?? listFor(tab);
+
+  const tabs = useMemo(() => [
+    { id: 'friends' as const, label: 'Friends', count: mutualFollows.length },
+    { id: 'requests' as const, label: 'Requests', count: requests.length },
+    { id: 'suggested' as const, label: 'Suggested' },
+  ], [mutualFollows.length, requests.length]);
+
+  const emptyFor = (t: Tab) =>
+    t === 'requests'
+      ? {
+          icon: 'mail-outline' as const,
+          title: 'No requests',
+          body: 'When someone adds you, they turn up here so you can add them back.',
+        }
+      : t === 'suggested'
+        ? {
+            icon: 'sparkles-outline' as const,
+            title: 'Nobody to suggest yet',
+            body: 'Museaic is new for you. Invite someone and suggestions follow from there.',
+          }
+        : {
+            icon: 'people-outline' as const,
+            title: 'No friends yet',
+            body: 'Sharing takes two. Send someone your link and you can start swapping songs.',
+          };
+
   return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
-      <View style={styles.sectionLabel}>
-        <Text style={styles.sectionLabelText}>You might know</Text>
+    <SafeAreaView style={s.root} edges={['top']}>
+      <AppBar
+        title="People"
+        right={<IconBtn name="person-add-outline" label="Add a friend" onPress={() => setInviteOpen(true)} />}
+      />
+
+      <View style={s.searchRow}>
+        <View style={s.searchPill}>
+          <Ionicons name="search-outline" size={17} color={colors.text3} />
+          <TextInput
+            style={s.searchInput}
+            placeholder="Search by username"
+            placeholderTextColor={colors.text4}
+            value={query}
+            onChangeText={setQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {searching ? <ActivityIndicator size="small" color={colors.text3} /> : null}
+          {query.length > 0 && !searching ? (
+            <TouchableOpacity onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="Clear search" accessibilityRole="button">
+              <Ionicons name="close-circle" size={17} color={colors.text4} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
-      {[...users]
-        .sort((a, b) => (matchScores[b.id] ?? 0) - (matchScores[a.id] ?? 0))
-        .slice(0, 8)
-        .map(u => (
-        <TouchableOpacity key={u.id} style={styles.personRow} onPress={() => onViewProfile(u)} activeOpacity={0.8}>
-          <Avatar name={u.display_name} avatarUrl={u.avatar_url} size={44} />
-          <View style={styles.personInfo}>
-            <Text style={styles.personName}>{u.display_name}</Text>
-            <Text style={styles.personUsername}>@{u.username}</Text>
-            {matchScores[u.id] != null && (
-              <View style={styles.matchRow}>
-                <TasteBar pct={matchScores[u.id]} />
-                <Text style={styles.matchPct}>{matchScores[u.id]}% match</Text>
-              </View>
-            )}
-          </View>
-          <TouchableOpacity style={styles.followBtn} onPress={() => onFollow(u.id)} activeOpacity={0.8}>
-            <Text style={styles.followBtnText}>Follow</Text>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
+
+      {results === null ? (
+        <SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />
+      ) : (
+        <Txt variant="micro" color="text3" style={s.resultsLabel}>
+          {shown.length === 0 ? 'No matches' : `${shown.length} ${shown.length === 1 ? 'result' : 'results'}`}
+        </Txt>
+      )}
+
+      {loading && shown.length === 0 ? (
+        <View style={s.loading}><ActivityIndicator color={colors.accent} size="large" /></View>
+      ) : (
+        <FlatList
+          data={shown}
+          keyExtractor={(p) => p.id}
+          contentContainerStyle={s.list}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={results === null ? <InviteRow onPress={() => setInviteOpen(true)} /> : null}
+          ListEmptyComponent={
+            results !== null ? (
+              <EmptyState
+                compact
+                icon="search-outline"
+                title="Nobody by that name"
+                body="Usernames are exact. Try the whole thing, or send them your link instead."
+                action={{ label: 'Send my link', icon: 'share-outline', onPress: () => setInviteOpen(true) }}
+              />
+            ) : (
+              <EmptyState
+                {...emptyFor(tab)}
+                action={{ label: 'Send my link', icon: 'share-outline', onPress: () => setInviteOpen(true) }}
+              />
+            )
+          }
+          renderItem={({ item }) => (
+            <PersonRow
+              person={item}
+              relationship={relationshipOf(item.id)}
+              match={matches[item.id]}
+              onPress={() => setViewing(item.id)}
+              onAdd={() => void add(item)}
+              onSend={() => setSendTo(item)}
+            />
+          )}
+        />
+      )}
+
+      <InviteSheet visible={inviteOpen} onClose={() => setInviteOpen(false)} username={user?.username} />
+      <UserProfileModal userId={viewing} onClose={() => setViewing(null)} />
+      <ShareComposer visible={sendTo !== null} recipient={sendTo} onClose={() => setSendTo(null)} />
+    </SafeAreaView>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
-  container: { flex: 1, backgroundColor: colors.bg },
-
-  searchRow: { paddingHorizontal: 20, paddingBottom: 12 },
+  root: { flex: 1, backgroundColor: colors.bg },
+  searchRow: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md },
   searchPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: colors.surface, borderRadius: 999,
-    paddingHorizontal: 14, paddingVertical: 11,
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: colors.surfaceAlt, borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg, minHeight: 44,
+  },
+  searchInput: { flex: 1, ...type.body, color: colors.text },
+  resultsLabel: { paddingHorizontal: spacing.xl, paddingBottom: spacing.sm },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  list: { paddingBottom: 110 },
+
+  meta: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs + 2 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  sendBtn: {
+    width: 34, height: 34, borderRadius: 17,
+    borderWidth: 1, borderColor: colors.line,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  addBtn: {
+    backgroundColor: colors.accent, borderRadius: radius.pill,
+    paddingVertical: spacing.sm - 1, paddingHorizontal: spacing.lg - 2,
+  },
+  stateTag: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.line,
+    paddingVertical: spacing.sm - 1, paddingHorizontal: spacing.md,
+  },
+
+  inviteRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    marginHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.sm,
+    padding: spacing.lg,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
     borderWidth: 1, borderColor: colors.line,
   },
-  searchInput: { flex: 1, color: colors.text, fontSize: 14 },
-
-  searchResults: {
-    marginHorizontal: 16, marginBottom: 8,
-    backgroundColor: colors.surface, borderRadius: 14,
-    overflow: 'hidden', borderWidth: 1, borderColor: colors.line,
+  inviteIcon: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
   },
-
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 1, borderBottomColor: colors.line,
-    marginBottom: 0,
-  },
-  tab: {
-    flex: 1, paddingVertical: 12, alignItems: 'center',
-    position: 'relative',
-  },
-  tabActive: {},
-  tabText: { fontSize: 14, fontWeight: '500', color: colors.text3 },
-  tabTextActive: { color: colors.text, fontWeight: '700' },
-  tabUnderline: {
-    position: 'absolute', bottom: -1, left: '20%', right: '20%',
-    height: 2, backgroundColor: colors.accent, borderRadius: 1,
-  },
-
-  sectionLabel: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 },
-  sectionLabelText: {
-    fontSize: 11, fontWeight: '600', color: colors.text3,
-    textTransform: 'uppercase', letterSpacing: 0.8,
-  },
-
-  loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  sep: { height: 1, backgroundColor: colors.line, marginLeft: 76 },
-  empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 40 },
-  emptyText: { color: colors.text3, fontSize: 14, textAlign: 'center', lineHeight: 20 },
-
-  // Person row
-  personRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 12, gap: 12,
-  },
-  personInfo: { flex: 1, minWidth: 0 },
-  personNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  personName: { fontSize: 15, fontWeight: '600', color: colors.text, flexShrink: 1 },
-  streakBadge: { fontSize: 12 },
-  personMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  personUsername: { fontSize: 12, color: colors.text3, flexShrink: 1 },
-  mutualBadge: { fontSize: 11, color: colors.accent, flexShrink: 0 },
-  matchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
-  matchPct: { fontSize: 11, color: colors.text3, fontVariant: ['tabular-nums'] },
-
-  personActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sendBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 10, paddingVertical: 7,
-    borderRadius: 999, borderWidth: 1, borderColor: colors.line,
-  },
-  sendBtnText: { color: colors.text2, fontSize: 12, fontWeight: '600' },
-  followBtn: {
-    backgroundColor: colors.accent, borderRadius: 999,
-    paddingVertical: 7, paddingHorizontal: 16,
-  },
-  followingBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.lineStrong },
-  followBtnText: { color: colors.accentInk, fontSize: 13, fontWeight: '700' },
-  followingBtnText: { color: colors.text3 },
 }));

@@ -69,7 +69,9 @@ musicbridge/
 │       ├── home.tsx            Feed with the album art as the hero: a "new for you" strip of
 │       │                       unopened shares, then direct shares and public drops from people you
 │       │                       follow, with reactions always visible. Friends / For you tabs.
-│       ├── friends.tsx         People tab with auto-search, suggested follows, and data-based taste match scores
+│       ├── friends.tsx         People, in friends language: Friends / Requests / Suggested, an
+│       │                       add-a-friend card, and a taste match that says "not enough in
+│       │                       common yet" rather than inventing a number
 │       ├── library.tsx         User's streaming library with sort controls, an All Songs pseudo-playlist, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
 │       ├── notifications.tsx   Notification inbox for recent shares and new followers
 │       ├── profile.tsx         Profile + avatar picker, data-derived taste tags, share profile, favorite-song search
@@ -95,6 +97,7 @@ musicbridge/
 │   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
 │   ├── ShareComposer.tsx       Pick something, pick who, send. The only way a share is composed.
+│   ├── InviteSheet.tsx         Share or copy your profile link
 │   ├── MusicServiceButton.tsx  Connect/disconnect row for one streaming service
 │   ├── OnboardingStep.tsx      One-question-per-screen scaffold: progress dots, title, footer
 │   ├── FirstShareCard.tsx      One-time prompt on Home, dismissed per user
@@ -118,6 +121,7 @@ musicbridge/
 │   │                           may name a color.
 │   ├── services.ts             Streaming service names and helpers (serviceLabel, serviceLabelShort)
 │   ├── sharing.ts              The one path that writes a share; owns the service-id rules
+│   ├── friends.ts              Translates the directed follow graph into friends language
 │   ├── authProviders.ts        Which sign-in buttons this build offers
 │   └── utils.ts                withTimeout(), cleanArtistName(), cleanTitle(), timeAgo(), monthWeekLabel()
 ├── modules/
@@ -133,6 +137,7 @@ musicbridge/
 │   ├── authProviders.test.ts  Which sign-in buttons a build offers
 │   ├── username.test.ts       Username sanitizing and the rules migration 014 enforces
 │   ├── sharing.test.ts        Service-id rules, one row per recipient, refusals
+│   ├── friends.test.ts        Friend / request / waiting, and what each button says
 │   ├── shareComposer.test.tsx Picking content, picking people, sending
 │   ├── useReactions.test.ts   Reaction hook state, optimistic updates, rollback
 │   └── notifications.test.ts  Push notification helper behavior
@@ -218,6 +223,34 @@ does nothing — mirror the change into the native files by hand (see the vault'
 bit dark mode specifically: `Info.plist` pinned `UIUserInterfaceStyle = Light`, which makes
 `useColorScheme()` report light no matter what the device is set to, so **System** appeared broken.
 The key is now removed, but any build made before that still needs rebuilding to pick it up.
+
+## Friends
+
+The `follows` table is a directed graph, but the app talks about friends. `lib/friends.ts` is the one
+place that translates, so every screen names the same state the same way:
+
+| Edges | Name | Button |
+|---|---|---|
+| Both directions | Friends | `Friends` |
+| They added you only | Request | `Add back` |
+| You added them only | Pending | `Waiting` |
+| Neither | — | `Add` |
+
+Only friends can be sent to, which was true before but invisible: there was no way to see that
+someone had added you, so the restriction looked arbitrary. Requests are now their own tab.
+
+**Taste match reports nothing when it knows nothing.** It used to add a flat 24 to 32 points so that
+nobody ever scored low, which made the percentage meaningless. Below a handful of songs known between
+two people, the row says "not enough in common yet" instead of a number.
+
+**Invites are a link.** `InviteSheet` shares or copies `museaic.app/@username`. A QR code was tried
+and removed: it needs `react-native-svg`, whose TypeScript source Metro would not resolve in this
+project, and Share plus Copy already cover getting a link to someone. Contact matching is not built
+either, and cannot be until there is something to match against — `public.users` holds no phone
+number or email, and email lives in `auth.users` where clients cannot read it. Adding that is a
+privacy decision, not just a feature.
+
+---
 
 ## Sharing
 

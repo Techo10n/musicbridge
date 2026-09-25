@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { User } from '../types';
 import { useAuth } from './useAuth';
+import { splitFollowGraph } from '../lib/friends';
 import { sendPushNotification } from '../lib/notifications';
 
 export function useFollows() {
@@ -156,15 +157,16 @@ export function useFollows() {
       .slice(0, limit);
   }, [followingIds, user?.primary_service, userId]);
 
-  /** Users who both follow you AND you follow back — the only people you can share with */
-  const mutualFollows = following.filter((u) =>
-    followers.some((f) => f.id === u.id),
-  );
+  // The follow graph is directed; `lib/friends.ts` names the three states the
+  // way the UI does, so every screen agrees on what "friends" means.
+  const { friends: mutualFollows, requests, pending } = splitFollowGraph({ following, followers });
 
   return {
     following,
     followers,
     mutualFollows,
+    requests,
+    pending,
     followingIds,
     loading,
     followUser,

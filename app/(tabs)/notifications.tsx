@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, SectionList, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -49,6 +49,9 @@ export default function ActivityScreen() {
   const [followRows, setFollowRows] = useState<FollowRow[]>([]);
   const [loadingFollows, setLoadingFollows] = useState(true);
   const [filter, setFilter] = useState<FilterType>('all');
+  // Read once, on mount: calling Date.now() while rendering is impure, and the
+  // boundary should not shift under the user as they read the list.
+  const [openedAt] = useState(() => Date.now());
 
   const loadFollowActivity = useCallback(async () => {
     if (!userId) { setFollowRows([]); setLoadingFollows(false); return; }
@@ -122,6 +125,19 @@ export default function ActivityScreen() {
     return all;
   }, [items, followRows, filter]);
 
+  // "New" is anything from the last day, which is what someone opening this
+  // screen actually means by new. Everything older is one undifferentiated pile.
+  const sections = useMemo(() => {
+    const dayAgo = openedAt - 86_400_000;
+    const isNew = (n: NotifItem) => n.unread || new Date(n.created_at).getTime() > dayAgo;
+    const fresh = notifications.filter(isNew);
+    const earlier = notifications.filter((n) => !isNew(n));
+    return [
+      ...(fresh.length ? [{ title: 'New', data: fresh }] : []),
+      ...(earlier.length ? [{ title: 'Earlier', data: earlier }] : []),
+    ];
+  }, [notifications, openedAt]);
+
   const loading = loadingShares || loadingFollows;
 
   return (
@@ -137,16 +153,23 @@ export default function ActivityScreen() {
           <ActivityIndicator color={colors.accent} size="large" />
         </View>
       ) : (
-        <FlatList
-          data={notifications}
+        <SectionList
+          sections={sections}
           keyExtractor={(n) => n.id}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
+          stickySectionHeadersEnabled={false}
+          renderSectionHeader={({ section }) => (
+            <Txt variant="micro" color="text3" style={s.sectionHeader}>{section.title}</Txt>
+          )}
+          ListFooterComponent={<SuggestedTail />}
           ListEmptyComponent={
             <EmptyState
               icon="notifications-outline"
               title="Nothing here yet"
-              body={filter === 'follows' ? 'When someone follows you, it shows up here.' : 'Songs friends send you and new followers land here.'}
+              body={filter === 'follows'
+                ? 'When someone adds you, it turns up here.'
+                : 'Songs friends send you, and people who add you, land here.'}
             />
           }
           renderItem={({ item: notif }) => (
@@ -216,8 +239,36 @@ function NotifRow({
   );
 }
 
+/**
+ * Somewhere to go when the list is short. Activity is the screen people check
+ * when nothing is happening, which is exactly when suggestions are useful.
+ */
+function SuggestedTail() {
+  const s = useStyles();
+  const router = useRouter();
+  const { requests, mutualFollows } = useFollows();
+
+  if (requests.length > 0 || mutualFollows.length > 2) return null;
+
+  return (
+    <View style={s.tail}>
+      <Txt variant="micro" color="text3" style={s.tailLabel}>Quiet in here</Txt>
+      <EmptyState
+        compact
+        icon="people-outline"
+        title="Find a few more people"
+        body="Activity fills up once you have friends sending you things."
+        action={{ label: 'Find people', icon: 'person-add', onPress: () => router.push('/(tabs)/friends') }}
+      />
+    </View>
+  );
+}
+
 const useStyles = makeStyles(({ colors, radius, spacing }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
+  sectionHeader: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.sm },
+  tail: { paddingTop: spacing.xxl, gap: spacing.sm },
+  tailLabel: { paddingHorizontal: spacing.xl },
   filters: { paddingBottom: spacing.md, paddingTop: spacing.xs },
   loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   row: {
