@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { ActivityIndicator, FlatList, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,7 +7,6 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useFollows } from '../../hooks/useFollows';
 import { ShareComposer } from '../../components/ShareComposer';
-import { UserProfileModal } from '../../components/UserProfileModal';
 import { InviteSheet } from '../../components/InviteSheet';
 import {
   AppBar, Avatar, EmptyState, IconBtn, ListRow, SegmentedTabs, ServiceDot, TasteBar, Txt, useToast,
@@ -14,34 +14,12 @@ import {
 import { User } from '../../types';
 import { Relationship, relationshipFor } from '../../lib/friends';
 import { makeStyles, useTheme } from '../../lib/theme';
+import { buildTasteProfile, normalizeName, sameServiceBonus, tasteMatch } from '../../lib/taste';
 
 type Tab = 'friends' | 'requests' | 'suggested';
 type SharedTasteRow = { sender_id: string; title: string | null; artist: string | null };
 
 const SHARED_ITEMS_PAGE_SIZE = 500;
-/** Below this many known songs across both people, a percentage is noise. */
-const MIN_TASTE_DATA = 4;
-
-function norm(value: string | null | undefined): string {
-  return (value ?? '')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function jaccardScore(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let overlap = 0;
-  for (const entry of a) if (b.has(entry)) overlap += 1;
-  const union = new Set([...a, ...b]).size;
-  return union > 0 ? overlap / union : 0;
-}
-
-function clampScore(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
 
 async function fetchSharedTasteRows(userIds: string[]): Promise<SharedTasteRow[]> {
   const rows: SharedTasteRow[] = [];
@@ -156,6 +134,7 @@ function InviteRow({ onPress }: { onPress: () => void }) {
 
 export default function Friends() {
   const s = useStyles();
+  const router = useRouter();
   const { colors } = useTheme();
   const toast = useToast();
   const { user } = useAuth();
@@ -171,7 +150,6 @@ export default function Friends() {
   const [suggested, setSuggested] = useState<User[]>([]);
   const [matches, setMatches] = useState<Record<string, number | null>>({});
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [viewing, setViewing] = useState<string | null>(null);
   const [sendTo, setSendTo] = useState<User | null>(null);
 
   // ── Search ───────────────────────────────────────────────────────────────
@@ -227,48 +205,18 @@ export default function Friends() {
       }
       if (cancelled) return;
 
-      const bucketOf = new Map<string, { artists: Set<string>; titles: Set<string> }>();
-      const ensure = (id: string) => {
-        if (!bucketOf.has(id)) bucketOf.set(id, { artists: new Set<string>(), titles: new Set<string>() });
-        return bucketOf.get(id)!;
-      };
-
-      for (const row of rows) {
-        const bucket = ensure(row.sender_id);
-        const artist = norm(row.artist);
-        const title = norm(row.title);
-        if (artist) bucket.artists.add(artist);
-        if (title) bucket.titles.add(title);
-      }
-
-      const mine = ensure(user.id);
-      const myFavArtist = norm(user.favorite_song?.artist);
-      const myFavTitle = norm(user.favorite_song?.title);
-      if (myFavArtist) mine.artists.add(myFavArtist);
-      if (myFavTitle) mine.titles.add(myFavTitle);
+      const rowsFor = (id: string) => rows.filter((r) => r.sender_id === id);
+      const mine = buildTasteProfile(rowsFor(user.id), user.favorite_song);
 
       const next: Record<string, number | null> = {};
       for (const target of targets) {
-        const theirs = ensure(target.id);
-        const theirFavArtist = norm(target.favorite_song?.artist);
-        const theirFavTitle = norm(target.favorite_song?.title);
-        if (theirFavArtist) theirs.artists.add(theirFavArtist);
-        if (theirFavTitle) theirs.titles.add(theirFavTitle);
-
-        // Below a handful of known songs between the two of you, a percentage
-        // is an artefact of the sample size. Say so rather than invent one:
-        // this used to add a flat 24-32 so that nobody ever scored low, which
-        // made the number mean nothing.
-        const dataPoints = mine.artists.size + mine.titles.size + theirs.artists.size + theirs.titles.size;
-        if (dataPoints < MIN_TASTE_DATA) { next[target.id] = null; continue; }
-
-        const sameService = user.primary_service && target.primary_service === user.primary_service ? 1 : 0;
-        next[target.id] = clampScore(
-          jaccardScore(mine.artists, theirs.artists) * 62
-          + jaccardScore(mine.titles, theirs.titles) * 24
-          + sameService * 6
-          + (myFavArtist && myFavArtist === theirFavArtist ? 8 : 0),
-        );
+        const theirs = buildTasteProfile(rowsFor(target.id), target.favorite_song);
+        next[target.id] = tasteMatch(mine, theirs, {
+          sameService: sameServiceBonus(user.primary_service, target.primary_service),
+          sameFavoriteArtist:
+            normalizeName(user.favorite_song?.artist) !== ''
+            && normalizeName(user.favorite_song?.artist) === normalizeName(target.favorite_song?.artist),
+        }).score;
       }
 
       if (!cancelled) setMatches(next);
@@ -391,7 +339,7 @@ export default function Friends() {
               person={item}
               relationship={relationshipOf(item.id)}
               match={matches[item.id]}
-              onPress={() => setViewing(item.id)}
+              onPress={() => router.push(`/user/${item.username}`)}
               onAdd={() => void add(item)}
               onSend={() => setSendTo(item)}
             />
@@ -400,7 +348,6 @@ export default function Friends() {
       )}
 
       <InviteSheet visible={inviteOpen} onClose={() => setInviteOpen(false)} username={user?.username} />
-      <UserProfileModal userId={viewing} onClose={() => setViewing(null)} />
       <ShareComposer visible={sendTo !== null} recipient={sendTo} onClose={() => setSendTo(null)} />
     </SafeAreaView>
   );

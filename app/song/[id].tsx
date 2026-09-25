@@ -199,12 +199,17 @@ export default function SongScreen() {
         {item.artist ? <Txt variant="body" color="text3" align="center">{item.artist}</Txt> : null}
 
         {item.sender ? (
-          <View style={s.sender}>
+          <TouchableOpacity
+            style={s.sender}
+            onPress={() => router.push(`/user/${item.sender!.username}`)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${item.sender.display_name}'s profile`}
+          >
             <Avatar name={item.sender.display_name} avatarUrl={item.sender.avatar_url} size={28} />
             <Txt variant="caption" color="text3">
-              {`Sent by ${item.sender.display_name} · ${timeAgo(item.created_at)}`}
+              {`${item.recipient_id === null ? 'Dropped by' : 'Sent by'} ${item.sender.display_name} · ${timeAgo(item.created_at)}`}
             </Txt>
-          </View>
+          </TouchableOpacity>
         ) : null}
 
         {item.message ? (

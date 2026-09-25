@@ -18,9 +18,10 @@ import { extractYouTubeTrackInfo } from '../../lib/youtubeMusic';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
 import { supabase } from '../../lib/supabase';
 import { AppBar, IconBtn, CoverArt, EmptyState, ServiceDot, SectionTitle, useToast } from '../../components/ui';
+import { TasteGrid } from '../../components/TasteGrid';
 import { makeStyles, serviceColor, useTheme } from '../../lib/theme';
 import { serviceLabel } from '../../lib/services';
-import { monthWeekLabel, timeAgo } from '../../lib/utils';
+import { timeAgo } from '../../lib/utils';
 
 
 export default function Profile() {
@@ -326,28 +327,37 @@ export default function Profile() {
           </TouchableOpacity>
         )}
 
-        {/* ── Wrapped stats card ── */}
-        {stats.wrappedStats && (
-          <View style={styles.wrappedCard}>
-            <View style={styles.wrappedCardHeader}>
-              <Text style={styles.wrappedCardTitle}>{new Date().getFullYear()} so far</Text>
-              <Text style={styles.wrappedCardSub}>{monthWeekLabel()}</Text>
-            </View>
-            <View style={styles.wrappedGrid}>
-              {[
-                { k: 'top track', v: stats.wrappedStats.topTrackTitle ?? '—' },
-                { k: 'top genre', v: stats.wrappedStats.topGenre ?? '—' },
-                { k: 'saved', v: String(stats.wrappedStats.savedCount) },
-                { k: 'playlists', v: String(stats.wrappedStats.playlistCount) },
-              ].map(({ k, v }) => (
-                <View key={k} style={styles.wrappedStat}>
-                  <Text style={styles.wrappedStatLabel}>{k}</Text>
-                  <Text style={styles.wrappedStatValue} numberOfLines={1}>{v}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
+        {/* ── Taste grid ── */}
+        <SectionTitle title="Your taste" />
+        <TasteGrid
+          loading={stats.loading}
+          cells={[
+            {
+              label: 'Top artist',
+              value: stats.topArtists[0]?.name ?? null,
+              coverUrl: stats.topArtists[0]?.imageUrl,
+              icon: 'person',
+            },
+            {
+              label: 'Top song',
+              value: stats.topTracks[0]?.title ?? null,
+              coverUrl: stats.topTracks[0]?.coverUrl,
+              icon: 'musical-note',
+            },
+            {
+              label: 'Favourite',
+              value: user.favorite_song?.title ?? null,
+              coverUrl: user.favorite_song?.cover_url,
+              icon: 'heart',
+            },
+            {
+              label: 'Top genre',
+              value: stats.tasteTags[0] ?? null,
+              icon: 'pricetag',
+            },
+          ]}
+          emptyAction={{ label: 'Connect a service', onPress: () => router.push('/(tabs)/settings') }}
+        />
 
         {/* ── Pinned playlists ── */}
         {stats.pinnedPlaylists.length > 0 && (
