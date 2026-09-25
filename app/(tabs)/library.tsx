@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Image, Modal,
+  ActivityIndicator, FlatList, Image, Modal,
   RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -204,8 +204,14 @@ export default function LibraryScreen() {
     }
   };
 
+  /**
+   * There is no artist page yet, and an alert saying so is not worth a tap.
+   * Searching the library for the artist answers the question people actually
+   * have here — "what of theirs do I already have?" — with data already loaded.
+   */
   const handleArtistPress = (artist: LibraryArtist) => {
-    Alert.alert('Artist page unavailable', `${artist.name} artist pages are not currently available.`);
+    setSearchQuery(artist.name);
+    setSearchVisible(true);
   };
 
   const indexedPlaylistSongs = useMemo(() => playlists.flatMap((playlist) => (

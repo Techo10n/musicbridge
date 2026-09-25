@@ -60,15 +60,14 @@
 - Unified search across all connected services at once
 - Offline mode — cache recently shared items for browsing without a connection
 
-## Placeholder UI Follow-ups
+## Follow-ups
 
-- Story options menu — replace the placeholder alert with report/share/mute actions
-- Story replies — persist replies or route them into a direct-message thread
-- User profile notifications — allow notification preferences per followed user
-- User profile options menu — add share, report, mute, and block actions
-- Friend Blend — build the cross-platform two-person blend playlist flow
-- Artist pages — open followed artists from Library search and artist chips
-- Block list management — replace the empty alert with a real blocked-users screen
-- Terms of Service screen/link — add the real legal document destination
-- Privacy Policy screen/link — add the real legal document destination
-- App Store rating link — wire to the production store listing once available
+- Blocking — a block list, plus report/mute on someone's profile. Nothing exists today.
+- Artist pages — followed artists currently search the library by name instead
+- Per-person notification preferences — mute one sender rather than every share
+- Reaction notifications — `send-notification` knows `new_share` and `new_follow` only
+- Self-serve account deletion — an Edge Function, so the row stops being a mail draft
+- Friend Blend — the cross-platform two-person blend playlist flow
+
+The legal, support and rating rows are wired and gated on `EXPO_PUBLIC_*` config; what they need is
+the documents and the store listing, not code.

@@ -48,6 +48,9 @@ export interface User {
   bio: string | null;
   favorite_song: FavoriteSong | null;
   primary_service: MusicService | null;
+  /** Push preferences, enforced server-side by send-notification. */
+  notify_shares?: boolean;
+  notify_follows?: boolean;
   created_at: string;
   // Music service tokens (sensitive — only accessible server-side or with RLS)
   spotify_access_token?: string | null;

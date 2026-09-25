@@ -125,6 +125,23 @@ Deno.serve(async (req) => {
       data = { type: 'new_follower' };
     }
 
+    // Respect the recipient's preference before touching their devices. This
+    // has to happen here: the switch lives on their account, and the sender's
+    // client has no business knowing about it.
+    const { data: prefs } = await supabase
+      .from('users')
+      .select('notify_shares, notify_follows')
+      .eq('id', recipient_id)
+      .single();
+
+    const wanted = notification_type === 'new_share'
+      ? prefs?.notify_shares ?? true
+      : prefs?.notify_follows ?? true;
+
+    if (!wanted) {
+      return new Response(JSON.stringify({ sent: 0, reason: 'muted_by_recipient' }), { status: 200 });
+    }
+
     // Fetch all push tokens for the recipient
     const { data: tokenRows, error: tokensError } = await supabase
       .from('push_tokens')

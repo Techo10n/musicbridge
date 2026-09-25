@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch,
-  Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator, Alert, Keyboard, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet,
+  Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
@@ -18,29 +17,21 @@ import * as AppleMusic from '../../lib/appleMusic';
 import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { APPEARANCE_OPTIONS, makeStyles, serviceColor, useAppearance, useTheme } from '../../lib/theme';
 import { serviceLabel } from '../../lib/services';
+import { setListeningHistoryPref, useListeningHistoryPref } from '../../lib/listeningHistory';
+import { appStoreUrl, appVersion, privacyUrl, supportMailto, termsUrl } from '../../lib/support';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
-type SettingsPrefs = {
-  publicProfile: boolean;
-  showListening: boolean;
-  allowReactions: boolean;
-  notifShares: boolean;
-  notifFollows: boolean;
-  notifReactions: boolean;
-  notifStories: boolean;
+/**
+ * Push preferences. These live on `public.users` rather than in AsyncStorage
+ * because the thing that honours them is the send-notification edge function,
+ * which never sees this device. The old local-only copies of these switches
+ * changed nothing at all.
+ */
+type NotificationPrefs = {
+  notify_shares: boolean;
+  notify_follows: boolean;
 };
 
-const defaultPrefs: SettingsPrefs = {
-  publicProfile: true,
-  showListening: true,
-  allowReactions: true,
-  notifShares: true,
-  notifFollows: true,
-  notifReactions: true,
-  notifStories: true,
-};
-
-const settingsKey = (userId: string) => `musicbridge_settings_${userId}`;
 const SERVICES: MusicService[] = ['spotify', 'apple_music', 'youtube_music'];
 
 function Row({
@@ -96,51 +87,33 @@ export default function Settings() {
   const [changingPhoto, setChangingPhoto] = useState(false);
   const [loadingService, setLoadingService] = useState<MusicService | null>(null);
 
-  // Privacy toggles
-  const [publicProfile, setPublicProfile] = useState(true);
-  const [showListening, setShowListening] = useState(true);
-  const [allowReactions, setAllowReactions] = useState(true);
+  // Shared with Profile, which shows the same switch above recent tracks.
+  const showListening = useListeningHistoryPref();
 
-  // Notification toggles
-  const [notifShares, setNotifShares] = useState(true);
-  const [notifFollows, setNotifFollows] = useState(true);
-  const [notifReactions, setNotifReactions] = useState(true);
-  const [notifStories, setNotifStories] = useState(true);
+  const [notifs, setNotifs] = useState<NotificationPrefs>({ notify_shares: true, notify_follows: true });
 
-  const applyPrefs = (prefs: SettingsPrefs) => {
-    setPublicProfile(prefs.publicProfile);
-    setShowListening(prefs.showListening);
-    setAllowReactions(prefs.allowReactions);
-    setNotifShares(prefs.notifShares);
-    setNotifFollows(prefs.notifFollows);
-    setNotifReactions(prefs.notifReactions);
-    setNotifStories(prefs.notifStories);
-  };
-
-  const currentPrefs = (): SettingsPrefs => ({
-    publicProfile,
-    showListening,
-    allowReactions,
-    notifShares,
-    notifFollows,
-    notifReactions,
-    notifStories,
-  });
-
-  const savePrefs = async (nextPrefs: SettingsPrefs) => {
+  /**
+   * Moves the switch first, then writes. If the write fails the switch goes
+   * back, because a toggle that stays where you put it while the server
+   * disagrees is how people end up muting nothing.
+   */
+  const updateNotif = async <K extends keyof NotificationPrefs>(key: K, value: boolean) => {
     if (!user?.id) return;
-    try {
-      await AsyncStorage.setItem(settingsKey(user.id), JSON.stringify(nextPrefs));
-    } catch (err) {
-      console.error('[Settings] save preferences failed:', err);
+    const previous = notifs[key];
+    setNotifs((prev) => ({ ...prev, [key]: value }));
+    const { error } = await supabase.from('users').update({ [key]: value }).eq('id', user.id);
+    if (error) {
+      setNotifs((prev) => ({ ...prev, [key]: previous }));
       toast.show({ kind: 'error', message: 'Could not save that preference' });
     }
   };
 
-  const updatePref = <K extends keyof SettingsPrefs>(key: K, value: SettingsPrefs[K]) => {
-    const next = { ...currentPrefs(), [key]: value };
-    applyPrefs(next);
-    void savePrefs(next);
+  const openLink = async (url: string, failure: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      toast.show({ kind: 'error', message: failure });
+    }
   };
 
   const openEdit = () => {
@@ -165,16 +138,23 @@ export default function Settings() {
 
   useEffect(() => {
     if (!user?.id) return;
+    const userId = user.id;
     let cancelled = false;
     void (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(settingsKey(user.id));
-        if (cancelled || !raw) return;
-        const parsed = JSON.parse(raw) as Partial<SettingsPrefs>;
-        applyPrefs({ ...defaultPrefs, ...parsed });
-      } catch (err) {
-        console.error('[Settings] load preferences failed:', err);
+      const { data, error } = await supabase
+        .from('users')
+        .select('notify_shares, notify_follows')
+        .eq('id', userId)
+        .single();
+      if (cancelled) return;
+      if (error) {
+        console.error('[Settings] load notification preferences failed:', error);
+        return;
       }
+      setNotifs({
+        notify_shares: data.notify_shares ?? true,
+        notify_follows: data.notify_follows ?? true,
+      });
     })();
     return () => { cancelled = true; };
   }, [user?.id]);
@@ -268,11 +248,24 @@ export default function Settings() {
     }
   };
 
+  // Deletion is a written request rather than a button: it removes shares other
+  // people received, so it is handled by a human who can confirm it is wanted.
+  const deleteRequest = supportMailto('Delete my Museaic account', user?.username);
+
   const handleDeleteAccount = () => {
-    Alert.alert('Delete Account', 'This permanently removes your account and all data. This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => Alert.alert('Contact Support', 'Email support@museaic.app to delete your account.') },
-    ]);
+    if (!deleteRequest) return;
+    Alert.alert(
+      'Delete Account',
+      'This permanently removes your account and everything you have shared. It cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Request deletion',
+          style: 'destructive',
+          onPress: () => void openLink(deleteRequest, 'Could not open your mail app'),
+        },
+      ],
+    );
   };
 
   const handleChangePassword = async () => {
@@ -304,13 +297,13 @@ export default function Settings() {
     }
   };
 
-  const showUnavailable = (feature: string) => {
-    Alert.alert(feature, `${feature} is not currently available.`);
-  };
-
   if (!user) return null;
 
   const primarySvc = user.primary_service as MusicService | null;
+  const terms = termsUrl();
+  const privacy = privacyUrl();
+  const storeUrl = appStoreUrl();
+  const feedback = supportMailto('Museaic feedback', user.username);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -392,33 +385,63 @@ export default function Settings() {
 
         {/* ── Privacy ── */}
         <Section title="Privacy">
-          <Row icon="earth-outline" label="Public Profile" toggle toggleVal={publicProfile} onToggle={(v) => updatePref('publicProfile', v)} />
-          <Row icon="musical-note-outline" label="Show Listening Activity" toggle toggleVal={showListening} onToggle={(v) => updatePref('showListening', v)} />
-          <Row icon="happy-outline" label="Allow Reactions" toggle toggleVal={allowReactions} onToggle={(v) => updatePref('allowReactions', v)} />
-          <Row icon="lock-closed-outline" label="Block List" onPress={() => Alert.alert('Block List', 'No blocked users.')} />
+          <View style={styles.serviceSectionIntro}>
+            <Text style={styles.serviceSectionText}>
+              Listening activity shows your recent plays on your profile. It is off until you turn it on.
+            </Text>
+          </View>
+          <Row
+            icon="musical-note-outline"
+            label="Show Listening Activity"
+            toggle
+            toggleVal={showListening}
+            onToggle={(v) => { void setListeningHistoryPref(user.id, v); }}
+          />
         </Section>
 
         {/* ── Notifications ── */}
         <Section title="Notifications">
-          <Row icon="paper-plane-outline" label="New Shares" toggle toggleVal={notifShares} onToggle={(v) => updatePref('notifShares', v)} />
-          <Row icon="person-add-outline" label="New Followers" toggle toggleVal={notifFollows} onToggle={(v) => updatePref('notifFollows', v)} />
-          <Row icon="happy-outline" label="Reactions" toggle toggleVal={notifReactions} onToggle={(v) => updatePref('notifReactions', v)} />
-          <Row icon="radio-outline" label="Stories" toggle toggleVal={notifStories} onToggle={(v) => updatePref('notifStories', v)} />
+          <Row
+            icon="paper-plane-outline"
+            label="New Shares"
+            toggle
+            toggleVal={notifs.notify_shares}
+            onToggle={(v) => { void updateNotif('notify_shares', v); }}
+          />
+          <Row
+            icon="person-add-outline"
+            label="New Followers"
+            toggle
+            toggleVal={notifs.notify_follows}
+            onToggle={(v) => { void updateNotif('notify_follows', v); }}
+          />
         </Section>
 
         {/* ── App ── */}
+        {/* Rows appear only where there is somewhere to go. A permanent row that
+            opens "not currently available" reads as a broken feature. */}
         <Section title="App">
-          <Row icon="information-circle-outline" label="About Museaic" onPress={() => Alert.alert('Museaic', 'v1.0.0 — Made with ♥')} />
-          <Row icon="document-text-outline" label="Terms of Service" onPress={() => showUnavailable('Terms of Service')} />
-          <Row icon="shield-outline" label="Privacy Policy" onPress={() => showUnavailable('Privacy Policy')} />
-          <Row icon="star-outline" label="Rate the App" onPress={() => showUnavailable('Rate the App')} />
-          <Row icon="chatbubble-outline" label="Send Feedback" onPress={() => Alert.alert('Feedback', 'Email hello@museaic.app')} />
+          <Row icon="information-circle-outline" label="Version" value={appVersion()} noChevron />
+          {terms ? (
+            <Row icon="document-text-outline" label="Terms of Service" onPress={() => void openLink(terms, 'Could not open Terms of Service')} />
+          ) : null}
+          {privacy ? (
+            <Row icon="shield-outline" label="Privacy Policy" onPress={() => void openLink(privacy, 'Could not open the Privacy Policy')} />
+          ) : null}
+          {storeUrl ? (
+            <Row icon="star-outline" label="Rate the App" onPress={() => void openLink(storeUrl, 'Could not open the App Store')} />
+          ) : null}
+          {feedback ? (
+            <Row icon="chatbubble-outline" label="Send Feedback" onPress={() => void openLink(feedback, 'Could not open your mail app')} />
+          ) : null}
         </Section>
 
         {/* ── Danger zone ── */}
-        <Section title="Account Actions">
-          <Row icon="trash-outline" label="Delete Account" onPress={handleDeleteAccount} danger />
-        </Section>
+        {deleteRequest ? (
+          <Section title="Account Actions">
+            <Row icon="trash-outline" label="Delete Account" onPress={handleDeleteAccount} danger />
+          </Section>
+        ) : null}
 
       </ScrollView>
 

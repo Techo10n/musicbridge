@@ -1,7 +1,6 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
 import { supabase } from './supabase';
 import {
   SpotifyTrack,
@@ -356,8 +355,9 @@ export async function searchTracks(userId: string, query: string): Promise<Spoti
     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) {
       const errText = await res.text();
+      // Logged, not shown: this used to raise an alert containing the request
+      // URL, which put an internal endpoint in front of the user mid-search.
       console.error(`[Spotify SearchTracks] Error: ${res.status} ${res.statusText}`, errText);
-      Alert.alert('Search API Error', `URL: ${url}\nError: ${res.status}\nMessage: ${errText}`);
       return [];
     }
     const data = await res.json() as { tracks?: { items: SpotifyTrack[] } };

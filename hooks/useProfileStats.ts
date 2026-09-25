@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './useAuth';
+import {
+  loadListeningHistoryPref, setListeningHistoryPref, useListeningHistoryPref,
+} from '../lib/listeningHistory';
 import * as Spotify from '../lib/spotify';
 import * as AppleMusic from '../lib/appleMusic';
 import * as YouTube from '../lib/youtubeMusic';
 import { MusicService, TopTrack, RecentTrack, WrappedStats, LibraryPlaylist } from '../types';
 
 const getPinnedKey = (userId: string) => `profile_pinned_playlists_${userId}`;
-const getHistoryOptInKey = (userId: string) => `profile_history_opt_in_${userId}`;
 const MAX_PINNED = 3;
 
 export interface ProfileStats {
@@ -38,7 +40,8 @@ export function useProfileStats() {
   const [tasteTags, setTasteTags] = useState<string[]>([]);
   const [wrappedStats, setWrappedStats] = useState<WrappedStats | null>(null);
   const [pinnedPlaylists, setPinnedPlaylists] = useState<LibraryPlaylist[]>([]);
-  const [historyOptIn, setHistoryOptIn] = useState(false);
+  // Shared with Settings, which shows the same switch. See lib/listeningHistory.
+  const historyOptIn = useListeningHistoryPref();
   const [loading, setLoading] = useState(true);
 
   const hasFetched = useRef(false);
@@ -78,21 +81,11 @@ export function useProfileStats() {
 
   const loadHistoryPref = useCallback(async () => {
     if (!user) return;
-    try {
-      const val = await AsyncStorage.getItem(getHistoryOptInKey(user.id));
-      setHistoryOptIn(val === 'true');
-    } catch (err) {
-      console.warn('[useProfileStats] loadHistoryPref error:', err);
-    }
+    await loadListeningHistoryPref(user.id);
   }, [user]);
 
   const setHistoryOptInPref = useCallback(async (enabled: boolean) => {
-    setHistoryOptIn(enabled);
-    try {
-      await AsyncStorage.setItem(getHistoryOptInKey(user?.id ?? 'unknown'), enabled ? 'true' : 'false');
-    } catch (err) {
-      console.warn('[useProfileStats] setHistoryOptInPref error:', err);
-    }
+    await setListeningHistoryPref(user?.id ?? 'unknown', enabled);
   }, [user]);
 
   // ─── Taste tags from genres ───────────────────────────────────────────────────

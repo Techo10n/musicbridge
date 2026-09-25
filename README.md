@@ -75,7 +75,7 @@ musicbridge/
 │       ├── library.tsx         User's streaming library with sort controls, an All Songs pseudo-playlist, clickable empty filters, deduped playlist-track-backed search, and placeholder artist-page actions
 │       ├── notifications.tsx   Notification inbox for recent shares and new followers
 │       ├── profile.tsx         Profile + avatar picker, data-derived taste tags, share profile, favorite-song search
-│       ├── settings.tsx        Settings screen with keyboard-aware profile editing, streaming service management, avatar upload, password reset, persisted toggles, and placeholder legal/rating rows
+│       ├── settings.tsx        Settings screen with keyboard-aware profile editing, streaming service management, avatar upload, password reset, appearance, server-backed notification toggles, and configured legal/support rows
 │       └── share.tsx           Placeholder route backing the center tab pill; redirects to People
 ├── components/
 │   ├── ui/                     The design system's primitives — screens compose from these only
@@ -116,6 +116,8 @@ musicbridge/
 │   ├── appleMusic.ts           Native Apple Music auth + Apple Music API
 │   ├── youtubeMusic.ts
 │   ├── notifications.ts        Register/unregister tokens, sendPushNotification helper
+│   ├── listeningHistory.ts     Shared opt-in store for showing recent plays, read by Settings and Profile
+│   ├── support.ts              Configured Terms/Privacy/App Store/support destinations and the running app version
 │   ├── theme.tsx               The design system: light/dark palettes, spacing/radius/type/elevation
 │   │                           scales, ThemeProvider, useTheme(), makeStyles(). The only file that
 │   │                           may name a color.
@@ -507,6 +509,29 @@ Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets
 
 ---
 
+## Settings
+
+Every row in Settings does something. Two rules keep it that way.
+
+**A preference is stored where it is enforced.** The two notification switches write
+`notify_shares` and `notify_follows` on `public.users` (migration 016), and the `send-notification`
+Edge Function checks them before it reads the recipient's push tokens. Storing them on the device
+could not work: the function runs on a server and the recipient may have several devices. The switch
+moves first and rolls back if the write fails, so it never sits somewhere the server disagrees with.
+
+Show Listening Activity is the exception, and it is local by design — it governs whether this app
+reads the user's play history at all, so nothing needs to leave the phone. It lives in
+`lib/listeningHistory.ts` as a subscribable store rather than component state, because Settings and
+Profile both draw that switch and two copies drifted apart.
+
+**A row with no destination is not drawn.** Terms of Service, Privacy Policy, Rate the App, Send
+Feedback and Delete Account appear only when the matching `EXPO_PUBLIC_*` variable in `.env.example`
+is set. A permanent row that opens "not currently available" reads as a broken feature, which is
+worse than an absent one. Account deletion opens a pre-filled mail draft rather than a button: a
+deletion also removes shares other people received, so a human confirms it.
+
+---
+
 ## Current Limitations
 
 1. **Spotify developer-mode rate limits** — daily quota is low. The Edge Function backs off up to 15s on 429s then throws `spotify_rate_limit_exceeded`. Needs a Spotify quota extension before public launch.
@@ -520,3 +545,11 @@ Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` as Supabase secrets
 5. **Track IDs not pre-resolved cross-service** — only the sender's service ID is stored at share time. Each recipient's Edge Function independently re-searches.
 
 6. **Followed artists — Spotify only** — YouTube Music and Apple Music have no equivalent API endpoint.
+
+7. **No artist page** — tapping a followed artist searches your library for their name instead.
+
+8. **No blocking** — there is no block list, so the only remedy for an unwanted sender is to stop following them.
+
+9. **Reactions raise no notification** — `send-notification` knows `new_share` and `new_follow` only, so there is no reaction switch in Settings to correspond to.
+
+10. **Account deletion is a support request** — there is no self-serve delete; the row opens a mail draft.
