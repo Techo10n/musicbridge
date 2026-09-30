@@ -1,14 +1,16 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import { GoogleSignin, isErrorWithCode, statusCodes } from '@react-native-google-signin/google-signin';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { googleClientIds } from '../lib/authProviders';
+import { AUTH_CANCELLED, getGoogleIdToken } from '../lib/googleSignIn';
 import { unregisterPushToken } from '../lib/notifications';
 import { MusicService, User } from '../types';
 
 /** Thrown when the user backs out of a provider sheet. Callers stay silent. */
-export const AUTH_CANCELLED = 'auth_cancelled';
+// Defined in lib/googleSignIn so that module can throw it without importing
+// this one. Re-exported because screens have always imported it from here.
+export { AUTH_CANCELLED };
 
 interface AuthContextType {
   session: Session | null;
@@ -214,27 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     // here without them means the gate was bypassed rather than misconfigured.
     if (!ids) throw new Error('Google sign-in is not configured in this build');
 
-    GoogleSignin.configure({
-      iosClientId: ids.iosClientId,
-      // Supabase verifies the id token against the provider's authorized client
-      // id, which is the *web* client. Omitting it yields a token Supabase
-      // rejects with "audience mismatch", despite the native sheet succeeding.
-      webClientId: ids.webClientId,
-    });
-
-    let idToken: string | null;
-    try {
-      await GoogleSignin.hasPlayServices();
-      const result = await GoogleSignin.signIn();
-      idToken = result.data?.idToken ?? null;
-    } catch (err) {
-      if (isErrorWithCode(err) && err.code === statusCodes.SIGN_IN_CANCELLED) {
-        throw new Error(AUTH_CANCELLED);
-      }
-      throw err;
-    }
-
-    if (!idToken) throw new Error('Google did not return an identity token');
+    const idToken = await getGoogleIdToken(ids);
 
     const { error } = await supabase.auth.signInWithIdToken({
       provider: 'google',
