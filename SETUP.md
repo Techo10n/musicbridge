@@ -48,6 +48,37 @@
 4. Copy your credentials from **Settings → API**:
    - `EXPO_PUBLIC_SUPABASE_URL` = Project URL
    - `EXPO_PUBLIC_SUPABASE_ANON_KEY` = anon / public key
+5. **Authentication → URL Configuration**
+   - **Site URL** — must not be left as the default `http://localhost:3000`. It is where every
+     link in every auth email lands, so the default silently breaks all of them.
+   - **Redirect URLs** — add `museaic://**`, which the Google sign-in flow returns through.
+6. **Authentication → Email Templates** — strip the link out of **Confirm signup** *and*
+   **Magic Link**. See below for why, and what to paste.
+
+#### Email templates must contain the code, not a link
+
+Sign-in is a six-digit code: `signInWithOtp` sends the mail, the user types the number, and
+`verifyOtp` exchanges it. The stock templates instead offer `{{ .ConfirmationURL }}`, a magic link,
+and **that link cannot ever work in this app**:
+
+- `lib/supabase.ts` sets `detectSessionInUrl: false`, which React Native requires.
+- Nothing listens for an inbound `museaic://callback`. The Google flow captures its redirect inside
+  `WebBrowser.openAuthSessionAsync`, which only sees it during that call.
+
+So a magic link is a dead control shipped inside an email. Delete it rather than repairing it.
+Paste this as the body of **both** templates — Supabase sends *Confirm signup* to an address it has
+not seen before and *Magic Link* to one it has, so fixing only one leaves every new signup broken:
+
+```html
+<h2>Your Museaic code</h2>
+<p>Enter this code in the app to sign in:</p>
+<p style="font-size:28px;letter-spacing:6px;font-weight:600">{{ .Token }}</p>
+<p>It expires in one hour. If you didn't ask for it, you can ignore this email.</p>
+```
+
+The **Reset Password** template still uses a link, because `resetPasswordForEmail` in
+`app/(tabs)/settings.tsx` has no code-based equivalent. That link needs a Site URL pointing at a real
+web page to work at all — see [[gotchas]] in the vault.
 
 ---
 
