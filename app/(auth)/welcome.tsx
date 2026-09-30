@@ -36,7 +36,7 @@ export default function Welcome() {
       <View style={s.hero}>
         <Wordmark size={44} />
         <Txt variant="body" color="text3" align="center" style={s.tagline}>
-          Send a song to anyone. It opens on whatever they already use.
+          Any song, to anyone, on any app.
         </Txt>
       </View>
 
