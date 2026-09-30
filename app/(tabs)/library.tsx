@@ -13,12 +13,20 @@ import { EmptyPlaylistError, ShareDraft, toTrackPayload } from '../../lib/sharin
 import { LibraryArtist, LibraryPlaylist, LibraryTrack } from '../../types';
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
 import { ShareComposer } from '../../components/ShareComposer';
-import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, useToast } from '../../components/ui';
+import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, SortMenu, useToast } from '../../components/ui';
 import { serviceLabelShort } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
 
 type FilterChip = 'all' | 'playlists' | 'songs' | 'artists';
 type SortMode = 'recent' | 'name' | 'count';
+
+// One list, so the trigger and the sheet cannot disagree about what a mode is
+// called. 'count' reads as "Most songs" because that is what it does here.
+const SORT_OPTIONS: readonly { id: SortMode; label: string }[] = [
+  { id: 'recent', label: 'Recent' },
+  { id: 'name', label: 'A\u2013Z' },
+  { id: 'count', label: 'Most songs' },
+];
 
 const PLAYLIST_SEARCH_PRELOAD_LIMIT = 35;
 
@@ -383,39 +391,29 @@ export default function LibraryScreen() {
         }
       />
 
-      {/* Filter rail */}
-      <ScrollView
-        horizontal
-        style={styles.filterRailScroll}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRail}
-      >
-        {filterOptions.map((option) => (
-          <View key={option.id} style={styles.filterChipWrap}>
-            <Chip
-              label={option.label}
-              active={filter === option.id}
-              onPress={() => setFilter(option.id)}
-            />
-          </View>
-        ))}
-      </ScrollView>
-
-      <View style={styles.sortRail}>
-        {([
-          ['recent', 'Recent'],
-          ['name', 'Name'],
-          ['count', 'Count'],
-        ] as [SortMode, string][]).map(([mode, label]) => (
-          <TouchableOpacity
-            key={mode}
-            style={[styles.sortChip, sortMode === mode && styles.sortChipActive]}
-            onPress={() => setSortMode(mode)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.sortChipText, sortMode === mode && styles.sortChipTextActive]}>{label}</Text>
-          </TouchableOpacity>
-        ))}
+      {/* Filter rail, with sort pinned to its right. Sort used to be a second
+          row of pills below this one, which spent vertical space listing
+          options instead of showing the active one. */}
+      <View style={styles.railRow}>
+        <ScrollView
+          horizontal
+          style={styles.filterRailScroll}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRail}
+        >
+          {filterOptions.map((option) => (
+            <View key={option.id} style={styles.filterChipWrap}>
+              <Chip
+                label={option.label}
+                active={filter === option.id}
+                onPress={() => setFilter(option.id)}
+              />
+            </View>
+          ))}
+        </ScrollView>
+        <View style={styles.sortSlot}>
+          <SortMenu value={sortMode} options={SORT_OPTIONS} onChange={setSortMode} />
+        </View>
       </View>
 
       {loading && !playlists.length ? (
@@ -444,10 +442,7 @@ export default function LibraryScreen() {
           {/* Playlists */}
           {showPlaylists && playlists.length > 0 && (
             <>
-              <SectionTitle
-                title="Playlists"
-                right={<Text style={styles.sortLabel}>{sortMode === 'recent' ? 'Recent' : sortMode === 'name' ? 'A-Z' : 'Most songs'}</Text>}
-              />
+              <SectionTitle title="Playlists" />
               <View style={styles.listSection}>
                 {sortedPlaylists.map((p, i) => (
                   <TouchableOpacity
@@ -631,7 +626,9 @@ export default function LibraryScreen() {
 const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
   filterRailScroll: {
-    flexGrow: 0,
+    // flex 1 so the chips take the space left over by the sort button.
+    flex: 1,
+    flexGrow: 1,
     maxHeight: 52,
   },
 
@@ -645,27 +642,10 @@ const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   },
 
   sortLabel: { fontSize: 13, color: colors.text3, fontWeight: '500' },
-  sortRail: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-  },
-  sortChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.line,
-  },
-  sortChipActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  sortChipText: { color: colors.text3, fontSize: 12, fontWeight: '600' },
-  sortChipTextActive: { color: colors.accentInk },
+  railRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  // The chips scroll under the sort button rather than beside it, so a long
+  // filter list never pushes sort off the screen.
+  sortSlot: { paddingRight: 16, paddingTop: 4, paddingLeft: 8 },
 
   listSection: {
     marginHorizontal: 16,

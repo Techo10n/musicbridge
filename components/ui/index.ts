@@ -6,6 +6,8 @@ export { Field } from './Field';
 export { CodeInput } from './CodeInput';
 export type { FieldProps } from './Field';
 export { Sheet } from './Sheet';
+export { SortMenu } from './SortMenu';
+export type { SortMenuProps, SortOption } from './SortMenu';
 export { ToastProvider, useToast, TAB_BAR_CLEARANCE } from './Toast';
 export type { ToastOptions } from './Toast';
 export { EmptyState } from './EmptyState';
