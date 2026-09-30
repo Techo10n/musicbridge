@@ -118,6 +118,7 @@ musicbridge/
 │   ├── notifications.ts        Register/unregister tokens, sendPushNotification helper
 │   ├── listeningHistory.ts     Shared opt-in store for showing recent plays, read by Settings and Profile
 │   ├── support.ts              Configured Terms/Privacy/App Store/support destinations and the running app version
+│   ├── googleSignIn.ts         Native Google sheet behind a lazy require, so a missing pod costs one button not the app
 │   ├── theme.tsx               The design system: light/dark palettes, spacing/radius/type/elevation
 │   │                           scales, ThemeProvider, useTheme(), makeStyles(). The only file that
 │   │                           may name a color.
