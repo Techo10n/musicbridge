@@ -66,3 +66,36 @@ export function googleClientIds(): GoogleClientIds | null {
 export function enabledSocialProviders(): SocialProvider[] {
   return (['apple', 'google'] as const).filter(isProviderEnabled);
 }
+
+/**
+ * How many characters the emailed sign-in code has.
+ *
+ * Supabase makes this configurable per project (Authentication → Providers →
+ * Email → OTP Length, 6 to 10). The app used to assume six, so a project set
+ * to eight emailed a code that did not fit the boxes and could never be
+ * submitted. Set EXPO_PUBLIC_OTP_LENGTH to match the project.
+ *
+ * Anything outside Supabase's own range is ignored rather than honoured: a
+ * typo should not render an unusable field.
+ */
+export function otpLength(): number {
+  const parsed = Number(process.env.EXPO_PUBLIC_OTP_LENGTH);
+  if (!Number.isInteger(parsed) || parsed < 6 || parsed > 10) return 6;
+  return parsed;
+}
+
+const NUMBER_WORDS: Record<number, string> = {
+  6: 'six', 7: 'seven', 8: 'eight', 9: 'nine', 10: 'ten',
+};
+
+/**
+ * "a six-digit code", "an eight-digit code" — article included, because
+ * "eight" is the one spelled length that takes "an" and both sign-in screens
+ * would otherwise have to know that.
+ */
+export function otpCodePhrase(): string {
+  const length = otpLength();
+  const word = NUMBER_WORDS[length] ?? String(length);
+  const article = word.startsWith('e') ? 'an' : 'a';
+  return `${article} ${word}-digit code`;
+}

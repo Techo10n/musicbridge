@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
+import { otpCodePhrase } from '../../lib/authProviders';
 import { useAuth } from '../../hooks/useAuth';
 import { OnboardingStep } from '../../components/OnboardingStep';
 import { Button, Field, useToast } from '../../components/ui';
@@ -35,7 +36,7 @@ export default function EmailStep() {
   return (
     <OnboardingStep
       title="What's your email?"
-      subtitle="We'll send you a six-digit code. No password to remember."
+      subtitle={`We'll send you ${otpCodePhrase()}. No password to remember.`}
       onBack={() => router.back()}
       footer={<Button label="Send code" fullWidth loading={sending} onPress={submit} />}
     >

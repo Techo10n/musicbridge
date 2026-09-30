@@ -15,9 +15,13 @@ export interface CodeInputProps {
 }
 
 /**
- * Six boxes backed by one hidden field. Tapping anywhere focuses the field, so
- * paste and the iOS one-time-code suggestion both work on the whole value
- * rather than per box.
+ * One box per character, backed by a single hidden field. Tapping anywhere
+ * focuses that field, so paste and the iOS one-time-code suggestion both act on
+ * the whole value rather than per box.
+ *
+ * The boxes share the available width instead of each being a fixed 46pt.
+ * Supabase's OTP length is configurable up to ten, and ten fixed boxes ran off
+ * the side of the screen with no way to see or submit the last of them.
  */
 export function CodeInput({
   value, onChange, onComplete, length = 6, autoFocus, editable = true, testID,
@@ -67,14 +71,18 @@ export function CodeInput({
 }
 
 const useStyles = makeStyles(({ colors, radius, spacing }) => ({
-  row: { flexDirection: 'row', gap: spacing.sm + 2, justifyContent: 'center' },
+  row: { flexDirection: 'row', gap: spacing.xs + 2, justifyContent: 'center' },
   box: {
-    width: 46, height: 56, borderRadius: radius.md,
+    // Shares the row rather than claiming a fixed width, so a longer code still
+    // fits. maxWidth keeps a six-digit code looking as it always has.
+    flex: 1, maxWidth: 46, minWidth: 0, height: 56, borderRadius: radius.md,
     backgroundColor: colors.surface,
-    borderWidth: 1, borderColor: colors.line,
+    // The width never changes with focus: the boxes now share the row, so
+    // thickening one border would reflow every box beside it.
+    borderWidth: 2, borderColor: colors.line,
     alignItems: 'center', justifyContent: 'center',
   },
-  boxActive: { borderColor: colors.accent, borderWidth: 2 },
+  boxActive: { borderColor: colors.accent },
   // Kept mounted and on-screen-but-invisible; display:none would drop focus.
   hidden: { position: 'absolute', opacity: 0, height: 1, width: 1 },
 }));

@@ -4,19 +4,22 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { OnboardingStep } from '../../components/OnboardingStep';
 import { Button, CodeInput, Txt, useToast } from '../../components/ui';
+import { otpCodePhrase, otpLength } from '../../lib/authProviders';
 
 export default function CodeStep() {
   const router = useRouter();
   const toast = useToast();
   const { email } = useLocalSearchParams<{ email: string }>();
   const { verifyEmailCode, sendEmailCode } = useAuth();
+  // Supabase's OTP length is per-project, so it cannot be hardcoded here.
+  const codeLength = otpLength();
 
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async (value: string = code) => {
-    if (value.length < 6 || !email) return;
+    if (value.length < codeLength || !email) return;
     setVerifying(true);
     setError(null);
     try {
@@ -43,13 +46,13 @@ export default function CodeStep() {
   return (
     <OnboardingStep
       title="Check your email"
-      subtitle={`We sent a six-digit code to ${email ?? 'your inbox'}.`}
+      subtitle={`We sent ${otpCodePhrase()} to ${email ?? 'your inbox'}.`}
       onBack={() => router.back()}
       footer={
-        <Button label="Continue" fullWidth loading={verifying} disabled={code.length < 6} onPress={() => submit()} />
+        <Button label="Continue" fullWidth loading={verifying} disabled={code.length < codeLength} onPress={() => submit()} />
       }
     >
-      <CodeInput value={code} onChange={setCode} onComplete={submit} autoFocus editable={!verifying} />
+      <CodeInput value={code} onChange={setCode} onComplete={submit} length={codeLength} autoFocus editable={!verifying} />
 
       {error ? <Txt variant="caption" color="danger" align="center">{error}</Txt> : null}
 

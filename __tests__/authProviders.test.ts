@@ -84,3 +84,62 @@ describe('Google needs its native client ids, not just the provider name', () =>
     expect(loadWith('google', 'ios', {}).googleClientIds()).toBeNull();
   });
 });
+
+describe('otpLength', () => {
+  // Supabase's email OTP length is configurable per project. When the app
+  // assumed six and the project was set to eight, the code simply did not fit
+  // in the boxes and no amount of typing could submit it.
+  const loadOtp = (value?: string) => {
+    jest.resetModules();
+    if (value === undefined) delete process.env.EXPO_PUBLIC_OTP_LENGTH;
+    else process.env.EXPO_PUBLIC_OTP_LENGTH = value;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return (require('../lib/authProviders') as typeof import('../lib/authProviders')).otpLength();
+  };
+
+  afterAll(() => { delete process.env.EXPO_PUBLIC_OTP_LENGTH; });
+
+  it('defaults to six, which is what a fresh Supabase project sends', () => {
+    expect(loadOtp()).toBe(6);
+  });
+
+  it('takes the configured length', () => {
+    expect(loadOtp('8')).toBe(8);
+  });
+
+  it('ignores a value Supabase could not have produced, rather than drawing an unusable field', () => {
+    expect(loadOtp('0')).toBe(6);
+    expect(loadOtp('99')).toBe(6);
+    expect(loadOtp('abc')).toBe(6);
+    expect(loadOtp('')).toBe(6);
+  });
+
+  it('accepts the whole range Supabase allows', () => {
+    expect(loadOtp('10')).toBe(10);
+  });
+});
+
+describe('otpCodePhrase', () => {
+  const loadPhrase = (value?: string) => {
+    jest.resetModules();
+    if (value === undefined) delete process.env.EXPO_PUBLIC_OTP_LENGTH;
+    else process.env.EXPO_PUBLIC_OTP_LENGTH = value;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return (require('../lib/authProviders') as typeof import('../lib/authProviders')).otpCodePhrase();
+  };
+
+  afterAll(() => { delete process.env.EXPO_PUBLIC_OTP_LENGTH; });
+
+  it('spells the length out, so the copy cannot contradict the boxes', () => {
+    expect(loadPhrase()).toBe('a six-digit code');
+    expect(loadPhrase('7')).toBe('a seven-digit code');
+  });
+
+  it('says "an" before eight, which is the whole reason this is not inlined', () => {
+    expect(loadPhrase('8')).toBe('an eight-digit code');
+  });
+
+  it('agrees with otpLength when the configured value is rejected', () => {
+    expect(loadPhrase('99')).toBe('a six-digit code');
+  });
+});
