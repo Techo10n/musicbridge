@@ -39,7 +39,7 @@ export function CodeInput({
 
   return (
     <Pressable onPress={() => input.current?.focus()} accessibilityLabel="Verification code" testID={testID}>
-      <View style={s.row}>
+      <View style={[s.row, length > 6 && s.rowTight]}>
         {Array.from({ length }).map((_, i) => {
           const char = value[i];
           const isCursor = editable && focused && i === value.length;
@@ -71,7 +71,9 @@ export function CodeInput({
 }
 
 const useStyles = makeStyles(({ colors, radius, spacing }) => ({
-  row: { flexDirection: 'row', gap: spacing.xs + 2, justifyContent: 'center' },
+  row: { flexDirection: 'row', gap: spacing.sm + 2, justifyContent: 'center' },
+  // Longer codes trade gap for box width rather than overflowing the screen.
+  rowTight: { gap: spacing.xs + 2 },
   box: {
     // Shares the row rather than claiming a fixed width, so a longer code still
     // fits. maxWidth keeps a six-digit code looking as it always has.
