@@ -1,9 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import * as WebBrowser from 'expo-web-browser';
-import * as AuthSession from 'expo-auth-session';
+import { GoogleSignin, isErrorWithCode, statusCodes } from '@react-native-google-signin/google-signin';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { googleClientIds } from '../lib/authProviders';
 import { unregisterPushToken } from '../lib/notifications';
 import { MusicService, User } from '../types';
 
@@ -198,45 +198,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     }
   }, []);
 
+  /**
+   * Google through the native iOS sheet, not a browser.
+   *
+   * The web flow (`signInWithOAuth`) sent the user to Supabase's hosted
+   * callback, so Google's consent screen read "Sign in to
+   * <project-ref>.supabase.co" — an unexplained string in the middle of
+   * signing in to Museaic. Taking the id token natively and handing it to
+   * `signInWithIdToken` shows the app's own name, skips the browser entirely,
+   * and matches what Apple sign-in above already does.
+   */
   const signInWithGoogle = useCallback(async () => {
-    const redirectTo = AuthSession.makeRedirectUri({ scheme: 'museaic', path: 'callback' });
+    const ids = googleClientIds();
+    // The welcome screen does not draw the button without these, so reaching
+    // here without them means the gate was bypassed rather than misconfigured.
+    if (!ids) throw new Error('Google sign-in is not configured in this build');
 
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo, skipBrowserRedirect: true },
+    GoogleSignin.configure({
+      iosClientId: ids.iosClientId,
+      // Supabase verifies the id token against the provider's authorized client
+      // id, which is the *web* client. Omitting it yields a token Supabase
+      // rejects with "audience mismatch", despite the native sheet succeeding.
+      webClientId: ids.webClientId,
     });
-    if (error) throw error;
-    if (!data?.url) throw new Error('Supabase did not return a Google sign-in URL');
 
-    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-    if (result.type !== 'success') throw new Error(AUTH_CANCELLED);
-
-    // How the session comes back depends on the client's flowType, which is
-    // not pinned here: the implicit flow puts tokens in the URL fragment, PKCE
-    // puts a code on the query string. Handle both so changing that setting
-    // later cannot silently break sign-in.
-    const url = new URL(result.url);
-    const fragment = new URLSearchParams(url.hash.replace(/^#/, ''));
-
-    const denied = url.searchParams.get('error_description') ?? fragment.get('error_description');
-    if (denied) throw new Error(denied);
-
-    const accessToken = fragment.get('access_token');
-    const refreshToken = fragment.get('refresh_token');
-    if (accessToken && refreshToken) {
-      const { error: sessionError } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      if (sessionError) throw sessionError;
-      return;
+    let idToken: string | null;
+    try {
+      await GoogleSignin.hasPlayServices();
+      const result = await GoogleSignin.signIn();
+      idToken = result.data?.idToken ?? null;
+    } catch (err) {
+      if (isErrorWithCode(err) && err.code === statusCodes.SIGN_IN_CANCELLED) {
+        throw new Error(AUTH_CANCELLED);
+      }
+      throw err;
     }
 
-    const code = url.searchParams.get('code');
-    if (!code) throw new Error('Google sign-in returned no session');
+    if (!idToken) throw new Error('Google did not return an identity token');
 
-    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-    if (exchangeError) throw exchangeError;
+    const { error } = await supabase.auth.signInWithIdToken({
+      provider: 'google',
+      token: idToken,
+    });
+    if (error) throw error;
   }, []);
 
   const sendEmailCode = useCallback(async (email: string) => {

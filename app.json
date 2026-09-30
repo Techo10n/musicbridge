@@ -72,7 +72,8 @@
             "backgroundColor": "#15130F"
           }
         }
-      ]
+      ],
+      "@react-native-google-signin/google-signin"
     ],
     "extra": {
       "router": {

@@ -155,6 +155,30 @@ If you later reintroduce a separate public browser-based MusicKit JS page, treat
 
 ---
 
+### 5. Google sign-in (native)
+
+The Google button uses the iOS sign-in sheet, not a browser. The web flow was replaced because
+Google's consent screen named the Supabase project domain — "Sign in to `<ref>.supabase.co`" — which
+is a string the user has no way to recognise.
+
+1. **Supabase → Authentication → Providers → Google** — enable it, and paste in the id and secret of
+   a **Web application** OAuth client from Google Cloud. This client is never opened; it exists so
+   Supabase has an audience to verify the native token against.
+2. **`.env.local`** — set `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` to that same web client id.
+3. **`EXPO_PUBLIC_GOOGLE_CLIENT_ID`** is the iOS client, already set for YouTube Music. Native sign-in
+   reuses it deliberately: its reverse is the `com.googleusercontent.apps.*` URL scheme in
+   `ios/musicbridge/Info.plist`, and a second copy under its own variable could drift from the plist.
+4. Rebuild — `npx expo run:ios`. The module is native, so a JS reload will not pick it up.
+
+The button stays hidden until both ids are present, so a half-configured build shows no Google
+option rather than one that throws when tapped.
+
+> This repo commits `ios/`, so the package's Expo config plugin never runs. The URL scheme was
+> already present from YouTube Music, and `pod install` has been run. A future native dependency
+> will need the same hand-mirroring — see the vault's `gotchas`.
+
+---
+
 ## TestFlight Build
 
 1. In Apple Developer, create or confirm the explicit App ID `com.techolon.musicbridge` and enable MusicKit.

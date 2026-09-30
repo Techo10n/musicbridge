@@ -341,16 +341,22 @@ Sign-in is passwordless. Three routes, all landing in the same place:
 | Route | Mechanism | Needs |
 |---|---|---|
 | Apple | Native sheet via `expo-apple-authentication`, then `signInWithIdToken` | Sign In with Apple on the App ID, and the bundle id in Supabase's authorized client IDs. No client secret: Supabase verifies the token against Apple's public keys. |
-| Google | `signInWithOAuth` opened with `expo-web-browser`, returning to `museaic://callback` | A **Web application** OAuth client whose redirect URI is the Supabase callback. The iOS client used for YouTube Music cannot be reused. |
+| Google | Native sheet via `@react-native-google-signin/google-signin`, then `signInWithIdToken` | Two client ids: `EXPO_PUBLIC_GOOGLE_CLIENT_ID` (the iOS client YouTube Music already uses) and `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (the **Web application** client pasted into Supabase, which is the audience Supabase verifies against). |
 | Email | Six-digit code via `signInWithOtp` / `verifyOtp` | Nothing beyond Supabase's built-in email auth. |
 
 Which of the two social buttons render is controlled by `EXPO_PUBLIC_AUTH_PROVIDERS`, so a build
 whose Supabase project has no provider configured never shows a button that would fail when tapped.
+Google additionally requires both client ids, checked by `googleClientIds()` in `lib/authProviders.ts`.
 Apple is iOS-only, because only the native flow is set up. Email + password still works for accounts
 that predate this, behind "Sign in with a password instead" on the welcome screen.
 
-The Google callback reads both a fragment (`access_token`, the implicit flow the client currently
-uses) and a query `code` (PKCE), so pinning `flowType` later cannot silently break sign-in.
+Google goes through the iOS sign-in sheet rather than a browser. The web flow it replaced sent the
+user to Supabase's hosted callback, so Google's consent screen read "Sign in to
+`<project-ref>.supabase.co`" — an unrecognisable string in the middle of signing in to Museaic.
+Taking the id token natively shows the app's own name, removes a browser round-trip, and makes
+Google work the way Apple already did. Nothing now depends on `museaic://callback` arriving as a
+deep link, which the app has never been able to handle: `detectSessionInUrl` is false, as React
+Native requires.
 
 **Onboarding is a gate, not a suggestion.** `app/_layout.tsx` routes on two facts: an account with no
 `primary_service` has nowhere to open songs, and one whose `username_claimed` is false is holding the
