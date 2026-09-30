@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SortMenu } from '../components/ui/SortMenu';
 import { ThemeProvider } from '../lib/theme';
@@ -37,14 +37,15 @@ describe('SortMenu', () => {
     expect(screen.getByText('Most songs')).toBeTruthy();
   });
 
-  it('reports the choice and closes', () => {
+  it('reports the choice and closes', async () => {
     const onChange = setup('recent');
     fireEvent.press(screen.getByTestId('sort-trigger'));
     fireEvent.press(screen.getByText('Most songs'));
 
+    // Reported immediately, so the list re-sorts behind the closing sheet.
     expect(onChange).toHaveBeenCalledWith('count');
-    // Closed: the non-selected options are gone again.
-    expect(screen.queryByText('A–Z')).toBeNull();
+    // The sheet outlives the tap by one exit animation, then unmounts.
+    await waitFor(() => expect(screen.queryByText('A\u2013Z')).toBeNull());
   });
 
   it('marks which option is active, so the list is not a guess', () => {

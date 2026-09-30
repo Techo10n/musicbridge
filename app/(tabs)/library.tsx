@@ -270,6 +270,14 @@ export default function LibraryScreen() {
   const showSongs = filter === 'all' || filter === 'songs';
   const showArtists = filter === 'all' || filter === 'artists';
   const showSongsSection = showSongs;
+  // Sort lives in a section header. Which header depends on what the filter
+  // left on screen, because the control has to stay reachable under every one.
+  const sortAnchor: 'playlists' | 'songs' | 'artists' | null =
+    (showPlaylists && playlists.length > 0) ? 'playlists'
+      : showSongsSection ? 'songs'
+        : (showArtists && followedArtists.length > 0) ? 'artists'
+          : null;
+  const sortControl = <SortMenu value={sortMode} options={SORT_OPTIONS} onChange={setSortMode} />;
   const filterOptions: { id: FilterChip; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: playlists.length + sortedSongs.length + followedArtists.length },
     { id: 'playlists', label: 'Playlists', count: playlists.length },
@@ -391,30 +399,23 @@ export default function LibraryScreen() {
         }
       />
 
-      {/* Filter rail, with sort pinned to its right. Sort used to be a second
-          row of pills below this one, which spent vertical space listing
-          options instead of showing the active one. */}
-      <View style={styles.railRow}>
-        <ScrollView
-          horizontal
-          style={styles.filterRailScroll}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterRail}
-        >
-          {filterOptions.map((option) => (
-            <View key={option.id} style={styles.filterChipWrap}>
-              <Chip
-                label={option.label}
-                active={filter === option.id}
-                onPress={() => setFilter(option.id)}
-              />
-            </View>
-          ))}
-        </ScrollView>
-        <View style={styles.sortSlot}>
-          <SortMenu value={sortMode} options={SORT_OPTIONS} onChange={setSortMode} />
-        </View>
-      </View>
+      {/* Filter rail */}
+      <ScrollView
+        horizontal
+        style={styles.filterRailScroll}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterRail}
+      >
+        {filterOptions.map((option) => (
+          <View key={option.id} style={styles.filterChipWrap}>
+            <Chip
+              label={option.label}
+              active={filter === option.id}
+              onPress={() => setFilter(option.id)}
+            />
+          </View>
+        ))}
+      </ScrollView>
 
       {loading && !playlists.length ? (
         <View style={styles.loadingCenter}>
@@ -442,7 +443,10 @@ export default function LibraryScreen() {
           {/* Playlists */}
           {showPlaylists && playlists.length > 0 && (
             <>
-              <SectionTitle title="Playlists" />
+              <SectionTitle
+                title="Playlists"
+                right={sortAnchor === 'playlists' ? sortControl : undefined}
+              />
               <View style={styles.listSection}>
                 {sortedPlaylists.map((p, i) => (
                   <TouchableOpacity
@@ -481,7 +485,9 @@ export default function LibraryScreen() {
             <>
               <SectionTitle
                 title="Songs"
-                right={<Text style={styles.sortLabel}>{allSongsTracks.length} songs</Text>}
+                right={sortAnchor === 'songs' ? sortControl : (
+                  <Text style={styles.sortLabel}>{allSongsTracks.length} songs</Text>
+                )}
               />
               <View style={styles.listSection}>
                 {filter === 'songs' ? (
@@ -529,7 +535,10 @@ export default function LibraryScreen() {
           {/* Followed artists */}
           {showArtists && followedArtists.length > 0 && (
             <>
-              <SectionTitle title="Followed Artists" />
+              <SectionTitle
+                title="Followed Artists"
+                right={sortAnchor === 'artists' ? sortControl : undefined}
+              />
               <FlatList
                 data={sortedArtists}
                 horizontal
@@ -626,9 +635,7 @@ export default function LibraryScreen() {
 const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   container: { flex: 1, backgroundColor: colors.bg },
   filterRailScroll: {
-    // flex 1 so the chips take the space left over by the sort button.
-    flex: 1,
-    flexGrow: 1,
+    flexGrow: 0,
     maxHeight: 52,
   },
 
@@ -642,10 +649,6 @@ const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
   },
 
   sortLabel: { fontSize: 13, color: colors.text3, fontWeight: '500' },
-  railRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  // The chips scroll under the sort button rather than beside it, so a long
-  // filter list never pushes sort off the screen.
-  sortSlot: { paddingRight: 16, paddingTop: 4, paddingLeft: 8 },
 
   listSection: {
     marginHorizontal: 16,

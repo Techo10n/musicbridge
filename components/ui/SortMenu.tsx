@@ -48,8 +48,8 @@ export function SortMenu<T extends string>({ value, options, onChange, title = '
         accessibilityLabel={`Sort by ${current?.label ?? value}. Change`}
         testID="sort-trigger"
       >
-        <Txt variant="caption" color="text2">{current?.label ?? value}</Txt>
-        <Ionicons name="chevron-down" size={13} color={colors.text3} />
+        <Txt variant="caption" color="text3">{current?.label ?? value}</Txt>
+        <Ionicons name="chevron-down" size={12} color={colors.text3} />
       </TouchableOpacity>
 
       <Sheet visible={open} onClose={() => setOpen(false)} title={title} maxHeight="50%">
@@ -75,16 +75,10 @@ export function SortMenu<T extends string>({ value, options, onChange, title = '
   );
 }
 
-const useStyles = makeStyles(({ colors, radius, spacing }) => ({
-  trigger: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    // 7 + 16 line height + 7 + 2 border = 32, the height of a Chip, so the
-    // trigger sits level with the filter row rather than 2pt shy of it.
-    paddingVertical: 7, paddingHorizontal: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surface,
-    borderWidth: 1, borderColor: colors.line,
-  },
+const useStyles = makeStyles(({ colors, spacing }) => ({
+  // Plain text, not a pill: it sits in a section header beside the title, where
+  // a bordered control would compete with the heading for attention.
+  trigger: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   option: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingVertical: spacing.md, paddingHorizontal: spacing.lg,
