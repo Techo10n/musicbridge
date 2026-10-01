@@ -10,12 +10,10 @@ import { relationshipFor } from '../../lib/friends';
 import {
   buildTasteProfile, normalizeName, sameServiceBonus, tasteMatch, tasteSummary, TasteMatch,
 } from '../../lib/taste';
-import { serviceLabel } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
 import { timeAgo } from '../../lib/utils';
 import { SharedItem, User } from '../../types';
 import { ShareComposer } from '../../components/ShareComposer';
-import { TasteGrid } from '../../components/TasteGrid';
 import {
   AppBar, Avatar, Button, CoverArt, EmptyState, ListRow, SectionTitle, ServiceChip, Skeleton, Txt, useToast,
 } from '../../components/ui';
@@ -154,7 +152,7 @@ export default function UserProfile() {
           <Avatar name={person.display_name} avatarUrl={person.avatar_url} size={92} ring="accent" />
           <Txt variant="title1" align="center">{person.display_name}</Txt>
           {person.bio ? <Txt variant="callout" color="text3" align="center">{person.bio}</Txt> : null}
-          {person.primary_service ? <ServiceChip service={person.primary_service} /> : null}
+          {person.primary_service ? <ServiceChip service={person.primary_service} style={s.centred} /> : null}
         </View>
 
         {!isMe ? (
@@ -190,36 +188,6 @@ export default function UserProfile() {
             </View>
           </View>
         ) : null}
-
-        <SectionTitle title="Their taste" />
-        <TasteGrid
-          cells={[
-            {
-              label: 'Favourite',
-              value: person.favorite_song?.title ?? null,
-              coverUrl: person.favorite_song?.cover_url,
-              icon: 'heart',
-            },
-            {
-              label: 'Latest share',
-              value: shares[0]?.title ?? null,
-              coverUrl: shares[0]?.cover_image_url,
-              icon: 'musical-note',
-            },
-            {
-              label: 'Listens on',
-              value: person.primary_service ? serviceLabel(person.primary_service) : null,
-              icon: 'headset',
-            },
-            {
-              label: 'Shared',
-              value: shares.length > 0
-                ? `${shares.length}${shares.length === 12 ? '+' : ''} ${shares.length === 1 ? 'song' : 'songs'}`
-                : null,
-              icon: 'albums',
-            },
-          ]}
-        />
 
         <SectionTitle title="Recent" />
         {shares.length === 0 ? (
@@ -259,6 +227,7 @@ const useStyles = makeStyles(({ colors, radius, spacing }) => ({
   header: { alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.xxl, paddingTop: spacing.md },
   actions: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
   grow: { flex: 1 },
+  centred: { alignSelf: 'center' },
   matchCard: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.lg,
     marginHorizontal: spacing.lg, padding: spacing.lg,

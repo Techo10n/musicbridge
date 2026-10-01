@@ -62,11 +62,12 @@
 
 ## Parked
 
-- **Taste grid on your own profile** — removed 2026-10-01. The 2x2 of top artist, top song,
-  favourite and top genre is built (`components/TasteGrid`) and still runs on *other* people's
-  profiles, where comparing taste is the point. On your own it told you things you already know.
-  Bring it back when there is something there you could not have guessed: a change over time, a
-  comparison against friends, or a genuine discovery.
+- **Taste grid** — removed from every profile on 2026-10-01, and the component deleted rather than
+  left unused. Restore `components/TasteGrid.tsx` from the commit that removed it. The 2x2 of top
+  artist, top song, favourite and top genre mostly told you things you already knew. Bring it back
+  when it can show something you could not have guessed: a change over time, a comparison against a
+  friend, or a genuine discovery. The taste-match percentage on someone else's profile is a separate
+  thing and is still there.
 
 ## Follow-ups
 

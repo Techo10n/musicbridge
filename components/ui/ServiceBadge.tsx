@@ -1,4 +1,4 @@
-import { View } from 'react-native';
+import { StyleProp, View, ViewStyle } from 'react-native';
 import { makeStyles, serviceColor, useTheme } from '../../lib/theme';
 import { serviceLabel, serviceLabelShort } from '../../lib/services';
 import { MusicService } from '../../types';
@@ -16,10 +16,16 @@ export function ServiceDot({ service, size = 8 }: { service: MusicService | stri
 }
 
 /** Dot + name in a chip. `suffix` adds a muted tag, e.g. "Yours". */
-export function ServiceChip({ service, short, suffix }: { service: MusicService | string; short?: boolean; suffix?: string }) {
+export function ServiceChip({ service, short, suffix, style }: {
+  service: MusicService | string;
+  short?: boolean;
+  suffix?: string;
+  /** For centred headers: the chip hugs the left by default. */
+  style?: StyleProp<ViewStyle>;
+}) {
   const s = useStyles();
   return (
-    <View style={s.chip}>
+    <View style={[s.chip, style]}>
       <ServiceDot service={service} />
       <Txt variant="captionStrong" color="text2">{short ? serviceLabelShort(service) : serviceLabel(service)}</Txt>
       {suffix ? <Txt variant="captionStrong" color="accent">{suffix}</Txt> : null}
