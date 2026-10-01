@@ -79,17 +79,3 @@
 
 The legal, support and rating rows are wired and gated on `EXPO_PUBLIC_*` config; what they need is
 the documents and the store listing, not code.
-
-
-## Custom notes from me
-
-- in the "send" modal, instead of add a message at the bottom, it should be a search for users, and only when you click on a user to send to, the option to add a message should appear/be accessible
-- a lot of the tabs (for you, people, etc.) have purple pill buttons under centered text, but the buttons are left-aligned. center the buttons.\
-- remove the taste section of the profile. log it to be a potential future feature.
-- we need to redesign the home page. the album covers are way too big, and it looks bad that they're left-aligned because theyre so big. also, the reactions can be collapsed into a single emoji button
-- rename the "play in [service]" button to "open in [service]"
-- purple send button in the navbar:
-  - redesign it to be similar to youtube. make it a circle, and ensure that the top and bottom line up with the top of the other icons, and the bottom of the text of the other icons
-  - make the paper plane icon rounded, like the rest of the app
-- make the send modal default to the playlists screen, and make the other tab list all songs in the users library, keeping the search bar at the top
-- redesign the library to look like the send modal. no card backgrounds, no colored dot for the streaming service, no send icon. just the album cover, name, number of tracks, and arrow.

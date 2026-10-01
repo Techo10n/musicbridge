@@ -9,6 +9,7 @@ const mockSearchTracks = jest.fn();
 const mockGetUserPlaylists = jest.fn();
 const mockGetRecentlyPlayed = jest.fn();
 const mockGetPlaylistTracks = jest.fn();
+const mockStreamSavedTracks = jest.fn();
 
 // lib/sharing imports the Supabase client, which refuses to construct without
 // env vars. sendShare itself is mocked, so a stub is enough.
@@ -22,6 +23,7 @@ jest.mock('../lib/spotify', () => ({
   searchTracks: (...a: unknown[]) => mockSearchTracks(...a),
   getUserPlaylists: (...a: unknown[]) => mockGetUserPlaylists(...a),
   getRecentlyPlayed: (...a: unknown[]) => mockGetRecentlyPlayed(...a),
+  streamSavedTracks: (...a: unknown[]) => mockStreamSavedTracks(...a),
 }));
 jest.mock('../lib/appleMusic', () => ({
   searchTracks: jest.fn(),
@@ -87,6 +89,9 @@ beforeEach(() => {
     { id: 't1', title: 'a', artist: 'b', coverUrl: '', service: 'spotify' },
   ]);
   mockSendShare.mockResolvedValue({ itemIds: ['row1'] });
+  mockStreamSavedTracks.mockImplementation(async (_u: string, onPage: (p: unknown[]) => void) => {
+    onPage([{ id: 'sv1', title: 'Saved One', artist: 'Someone', coverUrl: '', service: 'spotify' }]);
+  });
 });
 // Real timers throughout: the loading skeleton runs an Animated.loop that never
 // settles under fake timers, so act() would hang waiting for it.
@@ -218,5 +223,63 @@ describe('ShareComposer', () => {
       fireEvent.press(r.getByText('Send'));
     });
     expect(mockSendShare).toHaveBeenCalledWith('me', expect.anything(), ['u2'], null);
+  });
+});
+
+describe('ShareComposer, picking what to send', () => {
+  it('opens on playlists rather than an empty search', async () => {
+    const r = open();
+    await waitFor(() => expect(r.getByText('Night Drive')).toBeTruthy());
+    expect(mockGetUserPlaylists).toHaveBeenCalled();
+  });
+
+  it('has a songs tab listing the library, not recently played', async () => {
+    const r = open();
+    await waitFor(() => expect(r.getByText('Night Drive')).toBeTruthy());
+    fireEvent.press(r.getByText('Songs'));
+    await waitFor(() => expect(r.getByText('Saved One')).toBeTruthy());
+    expect(mockGetRecentlyPlayed).not.toHaveBeenCalled();
+  });
+
+  it('still searches the service from the field at the top', async () => {
+    const r = open();
+    await waitFor(() => expect(r.getByText('Night Drive')).toBeTruthy());
+    fireEvent.changeText(r.getByPlaceholderText('Search Spotify'), 'apoc');
+    await waitFor(() => expect(r.getByText('Apocalypse')).toBeTruthy());
+  });
+});
+
+describe('ShareComposer, picking who to send to', () => {
+  const chooseSomething = async (r: ReturnType<typeof open>) => {
+    await waitFor(() => expect(r.getByText('Night Drive')).toBeTruthy());
+    fireEvent.press(r.getByText('Night Drive'));
+    await waitFor(() => expect(r.getByText('Sam Lee')).toBeTruthy());
+  };
+
+  it('offers a search over people', async () => {
+    const r = open();
+    await chooseSomething(r);
+    fireEvent.changeText(r.getByPlaceholderText('Search people'), 'ash');
+    await waitFor(() => expect(r.queryByText('Sam Lee')).toBeNull());
+    expect(r.getByText('Ash Ray')).toBeTruthy();
+  });
+
+  it('hides the message field until someone is chosen', async () => {
+    const r = open();
+    await chooseSomething(r);
+    expect(r.queryByPlaceholderText('Add a message')).toBeNull();
+
+    fireEvent.press(r.getByText('Sam Lee'));
+    await waitFor(() => expect(r.getByPlaceholderText('Add a message')).toBeTruthy());
+  });
+
+  it('takes the message away again when the last recipient is removed', async () => {
+    const r = open();
+    await chooseSomething(r);
+    fireEvent.press(r.getByText('Sam Lee'));
+    await waitFor(() => expect(r.getByPlaceholderText('Add a message')).toBeTruthy());
+
+    fireEvent.press(r.getByText('Sam Lee'));
+    await waitFor(() => expect(r.queryByPlaceholderText('Add a message')).toBeNull());
   });
 });

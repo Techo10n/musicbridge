@@ -12,12 +12,17 @@ import { EVERYONE, EmptyPlaylistError, ShareDraft, sendShare, toTrackPayload } f
 import { extractYouTubeTrackInfo } from '../lib/youtubeMusic';
 import { cleanTitle } from '../lib/utils';
 import { makeStyles, useTheme } from '../lib/theme';
-import { LibraryPlaylist, MusicService, User } from '../types';
+import { LibraryPlaylist, LibraryTrack, MusicService, User } from '../types';
 import {
   Avatar, Button, CoverArt, EmptyState, ListRow, Sheet, Skeleton, Txt, useToast,
 } from './ui';
 
-type Source = 'search' | 'recent' | 'playlists';
+/**
+ * What the content list is showing. `search` is not a tab — it takes over
+ * whenever the field at the top has text in it, and hands back to the active
+ * tab when that clears.
+ */
+type Source = 'playlists' | 'songs';
 
 /** A pickable thing, before it becomes a ShareDraft. */
 interface Candidate {
@@ -58,13 +63,14 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
   const service = (user?.primary_service ?? null) as MusicService | null;
 
   const [draft, setDraft] = useState<ShareDraft | null>(initialDraft ?? null);
-  const [source, setSource] = useState<Source>('search');
+  const [source, setSource] = useState<Source>('playlists');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Candidate[]>([]);
   const [loadingResults, setLoadingResults] = useState(false);
   const [preparing, setPreparing] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set(recipient ? [recipient.id] : []));
   const [message, setMessage] = useState('');
+  const [peopleQuery, setPeopleQuery] = useState('');
   const [sending, setSending] = useState(false);
 
   // Reset to the caller's starting point every time the sheet opens.
@@ -89,9 +95,10 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
       setDraft(startDraft ?? null);
       setSelected(new Set(startRecipient ? [startRecipient.id] : []));
       setMessage('');
+      setPeopleQuery('');
       setQuery('');
       setResults([]);
-      setSource('search');
+      setSource('playlists');
     });
     void refresh();
     return () => { cancelled = true; };
@@ -143,15 +150,23 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
     }
   }, [service, user]);
 
-  const loadRecent = useCallback(async (): Promise<Candidate[]> => {
+  /** Everything in the user's library, which is where "Songs" comes from. */
+  const loadSongs = useCallback(async (): Promise<Candidate[]> => {
     if (!user || !service) return [];
-    const recent = service === 'apple_music'
-      ? await AppleMusic.getRecentlyPlayed(user.id, 20)
-      : service === 'spotify'
-        ? await Spotify.getRecentlyPlayed(user.id, 20)
-        : [];
-    return recent.map((t, i) => ({
-      key: `r:${t.id}:${i}`,
+    let tracks: LibraryTrack[] = [];
+    if (service === 'spotify') {
+      // Liked Songs is paged; the first page is enough to pick from, and
+      // waiting for every page would stall the sheet on a large library.
+      const pages: LibraryTrack[] = [];
+      await Spotify.streamSavedTracks(user.id, (page) => { pages.push(...page); }, () => pages.length >= 100);
+      tracks = pages;
+    } else if (service === 'apple_music') {
+      tracks = await AppleMusic.getSavedSongs(user.id);
+    } else {
+      tracks = await YouTubeMusic.getLikedMusic(user.id);
+    }
+    return tracks.map((t, i) => ({
+      key: `l:${t.id}:${i}`,
       kind: 'song',
       title: t.title,
       subtitle: t.artist,
@@ -181,11 +196,8 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
   // One effect drives every source, so only one request is ever in flight.
   useEffect(() => {
     if (!visible || draft) return;
-    const isSearch = source === 'search';
-    if (isSearch && !query.trim()) {
-      const clear = setTimeout(() => { setResults([]); setLoadingResults(false); }, 0);
-      return () => clearTimeout(clear);
-    }
+    // A query overrides the tab; clearing it hands back to whichever tab is on.
+    const isSearch = query.trim().length > 0;
 
     let cancelled = false;
     const timer = setTimeout(() => {
@@ -193,7 +205,7 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
         setLoadingResults(true);
         try {
           const next = isSearch ? await loadSearch(query)
-            : source === 'recent' ? await loadRecent()
+            : source === 'songs' ? await loadSongs()
             : await loadPlaylists();
           if (!cancelled) setResults(next);
         } catch (err) {
@@ -210,7 +222,7 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
     return () => { cancelled = true; clearTimeout(timer); };
   // `toast` is stable from its provider; listing it would restart searches.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, draft, source, query, loadSearch, loadRecent, loadPlaylists]);
+  }, [visible, draft, source, query, loadSearch, loadSongs, loadPlaylists]);
 
   // ── Choosing ───────────────────────────────────────────────────────────────
   const choose = async (candidate: Candidate) => {
@@ -288,11 +300,18 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
     }
   };
 
+  // Mutual follows, narrowed by the people search.
+  const people = useMemo(() => {
+    const q = peopleQuery.trim().toLowerCase();
+    if (!q) return mutualFollows;
+    return mutualFollows.filter((f) =>
+      f.display_name.toLowerCase().includes(q) || f.username.toLowerCase().includes(q));
+  }, [mutualFollows, peopleQuery]);
+
   const sources: { id: Source; label: string }[] = useMemo(() => [
-    { id: 'search', label: 'Search' },
-    ...(service === 'youtube_music' ? [] : [{ id: 'recent' as const, label: 'Recent' }]),
     { id: 'playlists', label: 'Playlists' },
-  ], [service]);
+    { id: 'songs', label: 'Songs' },
+  ], []);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (!service) {
@@ -327,13 +346,32 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
             ) : null}
           </View>
 
+          <View style={s.searchRow}>
+            <Ionicons name="search-outline" size={17} color={colors.text3} />
+            <TextInput
+              style={s.searchInput}
+              placeholder="Search people"
+              placeholderTextColor={colors.text4}
+              value={peopleQuery}
+              onChangeText={setPeopleQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {peopleQuery ? (
+              <TouchableOpacity onPress={() => setPeopleQuery('')} hitSlop={8} accessibilityLabel="Clear">
+                <Ionicons name="close-circle" size={17} color={colors.text4} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
           <FlatList
-            data={mutualFollows}
+            data={people}
             keyExtractor={(f) => f.id}
             style={s.list}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            ListHeaderComponent={
+            ListHeaderComponent={peopleQuery.trim() ? null : (
               <ListRow
                 leading={
                   <View style={s.everyoneIcon}>
@@ -351,13 +389,15 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
                   />
                 }
               />
-            }
+            )}
             ListEmptyComponent={
               <EmptyState
                 compact
                 icon="people-outline"
-                title="No one to send to yet"
-                body="You can send to people who follow you back. Follow someone and ask them to follow you."
+                title={peopleQuery.trim() ? 'No one by that name' : 'No one to send to yet'}
+                body={peopleQuery.trim()
+                  ? 'You can only send to people who follow you back.'
+                  : 'You can send to people who follow you back. Follow someone and ask them to follow you.'}
               />
             }
             renderItem={({ item: friend }) => {
@@ -381,15 +421,19 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
           />
 
           <View style={s.footer}>
-            <TextInput
-              style={s.note}
-              placeholder="Add a message"
-              placeholderTextColor={colors.text4}
-              value={message}
-              onChangeText={setMessage}
-              maxLength={200}
-              editable={!sending}
-            />
+            {/* A note with nobody to read it is noise, and it took up the spot
+                where the recipient list wants the room. */}
+            {selected.size > 0 ? (
+              <TextInput
+                style={s.note}
+                placeholder="Add a message"
+                placeholderTextColor={colors.text4}
+                value={message}
+                onChangeText={setMessage}
+                maxLength={200}
+                editable={!sending}
+              />
+            ) : null}
             <Button
               label={selected.has(EVERYONE) ? 'Drop it' : selected.size > 1 ? `Send to ${selected.size}` : 'Send'}
               icon="paper-plane"
@@ -408,7 +452,7 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
               placeholder={`Search ${serviceLabel(service)}`}
               placeholderTextColor={colors.text4}
               value={query}
-              onChangeText={(t) => { setQuery(t); if (source !== 'search') setSource('search'); }}
+              onChangeText={setQuery}
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="search"
@@ -420,7 +464,7 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
             {sources.map((entry) => (
               <TouchableOpacity
                 key={entry.id}
-                onPress={() => { setSource(entry.id); if (entry.id !== 'search') setQuery(''); }}
+                onPress={() => { setSource(entry.id); setQuery(''); }}
                 style={[s.sourceChip, source === entry.id && s.sourceChipOn]}
                 accessibilityRole="button"
                 accessibilityState={{ selected: source === entry.id }}
@@ -454,11 +498,11 @@ export function ShareComposer({ visible, onClose, draft: initialDraft, recipient
               ) : (
                 <EmptyState
                   compact
-                  icon={source === 'search' ? 'search-outline' : 'albums-outline'}
-                  title={source === 'search' && !query.trim() ? 'What do you want to send?' : 'Nothing here'}
-                  body={source === 'search' && !query.trim()
-                    ? `Search ${serviceLabel(service)}, or pick from Recent and Playlists.`
-                    : 'Try a different search.'}
+                  icon={query.trim() ? 'search-outline' : 'albums-outline'}
+                  title={query.trim() ? 'Nothing here' : 'What do you want to send?'}
+                  body={query.trim()
+                    ? 'Try a different search.'
+                    : `Pick a playlist or a song, or search ${serviceLabel(service)}.`}
                 />
               )
             }

@@ -9,11 +9,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../hooks/useAuth';
 import { useLibrary } from '../../hooks/useLibrary';
 import { useConversions } from '../../hooks/useConversions';
-import { EmptyPlaylistError, ShareDraft, toTrackPayload } from '../../lib/sharing';
+import { ShareDraft } from '../../lib/sharing';
 import { LibraryArtist, LibraryPlaylist, LibraryTrack } from '../../types';
 import { LibraryPlaylistDetailModal } from '../../components/LibraryPlaylistDetailModal';
 import { ShareComposer } from '../../components/ShareComposer';
-import { AppBar, Avatar, Chip, CoverArt, IconBtn, SectionTitle, ServiceDot, SortMenu, useToast } from '../../components/ui';
+import { AppBar, Avatar, Chip, CoverArt, IconBtn, ListRow, SectionTitle, SortMenu } from '../../components/ui';
 import { serviceLabelShort } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
 
@@ -55,7 +55,7 @@ function ConversionsSection() {
   return (
     <>
       <SectionTitle title="Conversions" />
-      <View style={styles.listSection}>
+      <View style={styles.list}>
         {runs.map((run, i) => {
           const running = run.state === 'waiting' || run.state === 'processing';
           return (
@@ -103,7 +103,6 @@ function ConversionsSection() {
 export default function LibraryScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
-  const toast = useToast();
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const primaryService = user?.primary_service ?? null;
@@ -117,7 +116,6 @@ export default function LibraryScreen() {
   const [detailVisible, setDetailVisible] = useState(false);
   const [playlistTrackIndex, setPlaylistTrackIndex] = useState<Record<string, LibraryTrack[]>>({});
   const [shareDraft, setShareDraft] = useState<ShareDraft | null>(null);
-  const [preparingShare, setPreparingShare] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const fetchedLibraryKey = useRef<string | null>(null);
@@ -191,32 +189,6 @@ export default function LibraryScreen() {
   // A playlist share stores its tracks rather than a reference, so they have to
   // be read before the composer opens. `sendShare` refuses an empty list, but
   // failing here means the user never gets as far as picking a recipient.
-  const sharePlaylist = async (playlist: LibraryPlaylist) => {
-    if (preparingShare) return;
-    setPreparingShare(true);
-    try {
-      const tracks = await getPlaylistTracks(playlist.id);
-      if (tracks.length === 0) throw new EmptyPlaylistError(playlist.name);
-      setShareDraft({
-        kind: 'playlist',
-        title: playlist.name,
-        coverUrl: playlist.coverUrl,
-        service: playlist.service,
-        playlistId: playlist.id,
-        tracks: tracks.map(toTrackPayload),
-      });
-    } catch (err) {
-      toast.show({ kind: 'error', message: err instanceof Error ? err.message : 'Could not read that playlist' });
-    } finally {
-      setPreparingShare(false);
-    }
-  };
-
-  /**
-   * There is no artist page yet, and an alert saying so is not worth a tap.
-   * Searching the library for the artist answers the question people actually
-   * have here — "what of theirs do I already have?" — with data already loaded.
-   */
   const handleArtistPress = (artist: LibraryArtist) => {
     setSearchQuery(artist.name);
     setSearchVisible(true);
@@ -447,34 +419,17 @@ export default function LibraryScreen() {
                 title="Playlists"
                 right={sortAnchor === 'playlists' ? sortControl : undefined}
               />
-              <View style={styles.listSection}>
+              <View style={styles.list}>
                 {sortedPlaylists.map((p, i) => (
-                  <TouchableOpacity
+                  <ListRow
                     key={p.id}
-                    style={[styles.row, i < sortedPlaylists.length - 1 && styles.rowSep]}
+                    leading={<CoverArt uri={p.coverUrl} size={52} radius={10} />}
+                    title={p.name}
+                    subtitle={p.trackCount > 0 ? `${p.trackCount} tracks` : serviceLabelShort(p.service)}
                     onPress={() => openPlaylist(p)}
-                    activeOpacity={0.8}
-                  >
-                    <CoverArt uri={p.coverUrl} size={56} radius={10} />
-                    <View style={styles.rowInfo}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{p.name}</Text>
-                      <View style={styles.rowMeta}>
-                        <ServiceDot service={p.service} size={8} />
-                        <Text style={styles.rowMetaText}>
-                          {p.trackCount > 0 ? `${p.trackCount} tracks` : serviceLabelShort(p.service)}
-                        </Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.rowAction}
-                      onPress={() => void sharePlaylist(p)}
-                      disabled={preparingShare}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
-                    </TouchableOpacity>
-                    <Ionicons name="chevron-forward" size={16} color={colors.text3} />
-                  </TouchableOpacity>
+                    separator={i < sortedPlaylists.length - 1}
+                    trailing={<Ionicons name="chevron-forward" size={16} color={colors.text3} />}
+                  />
                 ))}
               </View>
             </>
@@ -489,44 +444,32 @@ export default function LibraryScreen() {
                   <Text style={styles.sortLabel}>{allSongsTracks.length} songs</Text>
                 )}
               />
-              <View style={styles.listSection}>
+              <View style={styles.list}>
                 {filter === 'songs' ? (
                   sortedSongs.map((row, i) => (
-                    <View key={`${row.kind}-${row.track.id}-${i}`} style={[styles.row, i < sortedSongs.length - 1 && styles.rowSep]}>
-                      <CoverArt uri={row.track.coverUrl} size={44} radius={8} />
-                      <View style={styles.rowInfo}>
-                        <Text style={styles.rowTitle} numberOfLines={1}>{row.track.title}</Text>
-                        <Text style={styles.rowMetaText} numberOfLines={1}>
-                          {row.kind === 'playlist'
-                            ? `${row.track.artist} · ${(row.track as LibraryTrack & { playlistName?: string }).playlistName}`
-                            : row.track.artist}
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        style={styles.rowAction}
-                        onPress={() => shareSong(row.track)}
-                        disabled={preparingShare}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Ionicons name="paper-plane-outline" size={18} color={colors.text3} />
-                      </TouchableOpacity>
-                    </View>
+                    <ListRow
+                      key={`${row.kind}-${row.track.id}-${i}`}
+                      leading={<CoverArt uri={row.track.coverUrl} size={44} radius={8} />}
+                      title={row.track.title}
+                      subtitle={row.kind === 'playlist'
+                        ? `${row.track.artist} · ${(row.track as LibraryTrack & { playlistName?: string }).playlistName}`
+                        : row.track.artist}
+                      onPress={() => shareSong(row.track)}
+                      separator={i < sortedSongs.length - 1}
+                    />
                   ))
                 ) : (
-                  <TouchableOpacity
-                    style={styles.row}
+                  <ListRow
+                    leading={
+                      <View style={styles.allSongsIcon}>
+                        <Ionicons name="albums" size={24} color={colors.accentInk} />
+                      </View>
+                    }
+                    title="All Songs"
+                    subtitle={`${allSongsTracks.length} songs across your library`}
                     onPress={() => openPlaylist(allSongsPlaylist, allSongsTracks)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.allSongsIcon}>
-                      <Ionicons name="albums" size={24} color={colors.accentInk} />
-                    </View>
-                    <View style={styles.rowInfo}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>All Songs</Text>
-                      <Text style={styles.rowMetaText}>{allSongsTracks.length} songs across your library</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={colors.text3} />
-                  </TouchableOpacity>
+                    trailing={<Ionicons name="chevron-forward" size={16} color={colors.text3} />}
+                  />
                 )}
               </View>
             </>
@@ -650,14 +593,10 @@ const useStyles = makeStyles(({ colors, radius, spacing, type }) => ({
 
   sortLabel: { fontSize: 13, color: colors.text3, fontWeight: '500' },
 
-  listSection: {
-    marginHorizontal: 16,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1, borderColor: colors.line,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
+  // Flat rows on the page background, like the send sheet. The card that used
+  // to wrap these added a border and a fill around content that already reads
+  // as a list, and made every section look like a separate surface.
+  list: { marginBottom: 8 },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 14, paddingVertical: 11,
