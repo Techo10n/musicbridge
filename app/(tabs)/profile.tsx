@@ -18,7 +18,6 @@ import { extractYouTubeTrackInfo } from '../../lib/youtubeMusic';
 import { pickAndUploadAvatar } from '../../lib/avatarUpload';
 import { supabase } from '../../lib/supabase';
 import { AppBar, IconBtn, CoverArt, EmptyState, ServiceDot, SectionTitle, useToast } from '../../components/ui';
-import { TasteGrid } from '../../components/TasteGrid';
 import { makeStyles, serviceColor, useTheme } from '../../lib/theme';
 import { serviceLabel } from '../../lib/services';
 import { timeAgo } from '../../lib/utils';
@@ -326,38 +325,6 @@ export default function Profile() {
             <Text style={styles.favBannerEmptyText}>Set a favorite song</Text>
           </TouchableOpacity>
         )}
-
-        {/* ── Taste grid ── */}
-        <SectionTitle title="Your taste" />
-        <TasteGrid
-          loading={stats.loading}
-          cells={[
-            {
-              label: 'Top artist',
-              value: stats.topArtists[0]?.name ?? null,
-              coverUrl: stats.topArtists[0]?.imageUrl,
-              icon: 'person',
-            },
-            {
-              label: 'Top song',
-              value: stats.topTracks[0]?.title ?? null,
-              coverUrl: stats.topTracks[0]?.coverUrl,
-              icon: 'musical-note',
-            },
-            {
-              label: 'Favourite',
-              value: user.favorite_song?.title ?? null,
-              coverUrl: user.favorite_song?.cover_url,
-              icon: 'heart',
-            },
-            {
-              label: 'Top genre',
-              value: stats.tasteTags[0] ?? null,
-              icon: 'pricetag',
-            },
-          ]}
-          emptyAction={{ label: 'Connect a service', onPress: () => router.push('/(tabs)/settings') }}
-        />
 
         {/* ── Pinned playlists ── */}
         {stats.pinnedPlaylists.length > 0 && (

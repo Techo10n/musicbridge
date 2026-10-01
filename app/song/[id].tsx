@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useReactions } from '../../hooks/useReactions';
+import { ReactionBar } from '../../components/ReactionBar';
 import { supabase } from '../../lib/supabase';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
@@ -19,7 +20,6 @@ import {
   Avatar, Button, CoverArt, EmptyState, ServiceDot, Skeleton, Txt, useToast,
 } from '../../components/ui';
 
-const REACTIONS = ['🔥', '❤️', '🤯', '😮'];
 
 /** The id the sender stored for a service, when they stored one. */
 function storedIdFor(item: SharedItem, service: MusicService): string | null {
@@ -218,24 +218,7 @@ export default function SongScreen() {
           </View>
         ) : null}
 
-        <View style={s.reactions}>
-          {REACTIONS.map((emoji) => {
-            const count = counts[emoji] ?? 0;
-            const mine = myReaction === emoji;
-            return (
-              <TouchableOpacity
-                key={emoji}
-                style={[s.reaction, mine && s.reactionMine]}
-                onPress={() => react(item.id, emoji)}
-                accessibilityRole="button"
-                accessibilityLabel={`React ${emoji}`}
-              >
-                <Txt variant="body">{emoji}</Txt>
-                {count > 0 ? <Txt variant="caption" color="text3">{String(count)}</Txt> : null}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <ReactionBar counts={counts} mine={myReaction} onReact={(emoji) => react(item.id, emoji)} />
 
         {viewerService ? (
           <Button

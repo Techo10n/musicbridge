@@ -60,6 +60,14 @@
 - Unified search across all connected services at once
 - Offline mode — cache recently shared items for browsing without a connection
 
+## Parked
+
+- **Taste grid on your own profile** — removed 2026-10-01. The 2x2 of top artist, top song,
+  favourite and top genre is built (`components/TasteGrid`) and still runs on *other* people's
+  profiles, where comparing taste is the point. On your own it told you things you already know.
+  Bring it back when there is something there you could not have guessed: a change over time, a
+  comparison against friends, or a genuine discovery.
+
 ## Follow-ups
 
 - Blocking — a block list, plus report/mute on someone's profile. Nothing exists today.
