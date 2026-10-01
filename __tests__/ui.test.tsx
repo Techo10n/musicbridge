@@ -1,5 +1,5 @@
 import { act, fireEvent, render } from '@testing-library/react-native';
-import { Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import {
   Button, Chip, EmptyState, SegmentedTabs, ServiceDot, TasteBar, ToastProvider, useToast, initialsFor,
 } from '../components/ui';
@@ -116,6 +116,25 @@ describe('EmptyState', () => {
     expect(getByText('Invite a friend.')).toBeTruthy();
     fireEvent.press(getByText('Invite'));
     expect(onPress).toHaveBeenCalled();
+  });
+
+  /**
+   * Button defaults to alignSelf 'flex-start', which beats the container's
+   * alignItems. The action therefore hung off the left under centred text.
+   */
+  it('centres its actions under the centred text', () => {
+    const { getAllByRole } = render(
+      <EmptyState
+        title="No one yet"
+        action={{ label: 'Invite', onPress: jest.fn() }}
+        secondaryAction={{ label: 'Later', onPress: jest.fn() }}
+      />,
+    );
+    const buttons = getAllByRole('button');
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(StyleSheet.flatten(button.props.style).alignSelf).toBe('center');
+    }
   });
 });
 

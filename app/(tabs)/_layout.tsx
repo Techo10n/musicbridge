@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { makeStyles, useTheme } from '../../lib/theme';
 import { ShareComposer } from '../../components/ShareComposer';
 import { ConversionPill } from '../../components/ConversionPill';
@@ -25,8 +25,11 @@ function ShareTabButton({ onPress }: { onPress: () => void }) {
   const { colors } = useTheme();
   return (
     <TouchableOpacity style={s.shareBtnWrapper} onPress={onPress} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Share a song">
-      <View style={s.sharePill}>
-        <Ionicons name="paper-plane" size={18} color={colors.accentInk} />
+      <View style={s.shareCircle}>
+        {/* Feather rather than Ionicons: its strokes have rounded caps and
+            joins, which matches the rest of the app. Ionicons' paper-plane is
+            a hard-edged solid. */}
+        <Feather name="send" size={17} color={colors.accentInk} />
       </View>
     </TouchableOpacity>
   );
@@ -87,10 +90,14 @@ export default function TabLayout() {
   );
 }
 
-const useStyles = makeStyles(({ colors, radius }) => ({
-  shareBtnWrapper: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 8 },
-  sharePill: {
-    width: 48, height: 34, borderRadius: radius.md - 2,
+const useStyles = makeStyles(({ colors }) => ({
+  // 9, not the bar's own 10: measured against a screenshot, the icons' glyphs
+  // start a point above where the padding alone would put them.
+  shareBtnWrapper: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 9 },
+  shareCircle: {
+    // 34 is the measured distance from the top of a tab icon to the bottom of
+    // its label, so the circle spans exactly the other tabs' full height.
+    width: 34, height: 34, borderRadius: 17,
     backgroundColor: colors.accent,
     alignItems: 'center', justifyContent: 'center',
   },

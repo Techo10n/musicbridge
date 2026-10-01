@@ -36,7 +36,7 @@ export function EmptyState({ icon, art, title, body, action, secondaryAction, co
         <Button label={action.label} icon={action.icon} onPress={action.onPress} style={s.action} />
       ) : null}
       {secondaryAction ? (
-        <Button label={secondaryAction.label} onPress={secondaryAction.onPress} variant="ghost" size="sm" />
+        <Button label={secondaryAction.label} onPress={secondaryAction.onPress} variant="ghost" size="sm" style={s.action2} />
       ) : null}
     </View>
   );
@@ -52,5 +52,8 @@ const useStyles = makeStyles(({ colors, spacing }) => ({
     marginBottom: spacing.xs,
   },
   body: { maxWidth: 300 },
-  action: { marginTop: spacing.md },
+  // Button defaults to alignSelf 'flex-start', which overrides the container's
+  // alignItems, so the action sat against the left edge under centred text.
+  action: { marginTop: spacing.md, alignSelf: 'center' },
+  action2: { alignSelf: 'center' },
 }));

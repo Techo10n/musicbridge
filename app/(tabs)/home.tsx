@@ -81,7 +81,7 @@ function FeedCard({
   const isPlaylist = item.type === 'playlist';
   const action = isPlaylist
     ? `Add to ${viewerService ? serviceLabel(viewerService) : 'your library'}`
-    : `Play in ${viewerService ? serviceLabel(viewerService) : 'your service'}`;
+    : `Open in ${viewerService ? serviceLabel(viewerService) : 'your service'}`;
 
   return (
     <View style={s.card}>
