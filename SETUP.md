@@ -188,9 +188,11 @@ option rather than one that throws when tapped.
 
 ```bash
 npx eas login
-npx eas build --platform ios --profile production
-npx eas submit --platform ios
+npx eas env:push production --path .env.local --force  # whenever .env.local gains a key
+npx eas build --platform ios --profile production --auto-submit
 ```
+
+`eas.json` carries the App Store Connect app id (`ascAppId`), so the build submits itself to TestFlight.
 
 After Apple processes the build, open App Store Connect → your app → TestFlight, create an internal testing group, and add yourself or selected App Store Connect users.
 
