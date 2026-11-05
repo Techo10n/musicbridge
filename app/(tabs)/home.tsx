@@ -13,7 +13,7 @@ import {
   AppBar, Avatar, CoverArt, EmptyState, IconBtn, SegmentedTabs, ServiceDot, Txt,
 } from '../../components/ui';
 import { serviceLabel } from '../../lib/services';
-import { makeStyles, useTheme } from '../../lib/theme';
+import { makeStyles, mixHex, useTheme } from '../../lib/theme';
 import { timeAgo } from '../../lib/utils';
 import { MusicService, SharedItem } from '../../types';
 
@@ -78,9 +78,13 @@ function FeedCard({
   viewerService: MusicService | null;
 }) {
   const s = useStyles();
-  const { colors } = useTheme();
-  // The stage takes the cover's own color, so each card carries its record's mood.
-  const stageBg = { backgroundColor: useCoverColor(item.cover_image_url) ?? colors.surfaceAlt };
+  const { colors, isDark } = useTheme();
+  // The stage takes the cover's own color, so each card carries its record's
+  // mood, pulled toward the palette so a loud cover doesn't shout.
+  const coverColor = useCoverColor(item.cover_image_url);
+  const stageBg = {
+    backgroundColor: coverColor ? mixHex(coverColor, colors.surfaceAlt, isDark ? COVER_TINT.dark : COVER_TINT.light) : colors.surfaceAlt,
+  };
 
   const isDrop = item.recipient_id === null;
   const isPlaylist = item.type === 'playlist';
@@ -149,6 +153,11 @@ function FeedCard({
 }
 
 const COVER = 128;
+/**
+ * The cover color's share of the stage; the rest is the theme's stage color.
+ * Dark mode pulls harder, because a pastel cover glows against a dark card.
+ */
+const COVER_TINT = { light: 0.6, dark: 0.4 };
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
