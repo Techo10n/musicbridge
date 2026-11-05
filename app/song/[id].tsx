@@ -3,8 +3,6 @@ import { Linking, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
-import { useReactions } from '../../hooks/useReactions';
-import { ReactionBar } from '../../components/ReactionBar';
 import { supabase } from '../../lib/supabase';
 import * as Spotify from '../../lib/spotify';
 import * as AppleMusic from '../../lib/appleMusic';
@@ -15,7 +13,7 @@ import { makeStyles } from '../../lib/theme';
 import { withTimeout } from '../../lib/utils';
 import { MusicService, SharedItem } from '../../types';
 import { ShareComposer } from '../../components/ShareComposer';
-import { DetailBar, DetailHero, FromSender } from '../../components/ShareDetail';
+import { DetailBar, DetailHero } from '../../components/ShareDetail';
 import { Button, EmptyState, IconBtn, Skeleton, Txt, useToast } from '../../components/ui';
 
 
@@ -43,9 +41,6 @@ export default function SongScreen() {
   const [opening, setOpening] = useState<MusicService | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
 
-  const { reactions, myReactions, react } = useReactions(id ? [id] : []);
-  const myReaction = id ? myReactions[id] : undefined;
-  const counts = (id ? reactions[id] : undefined) ?? {};
 
   const viewerService = (user?.primary_service ?? null) as MusicService | null;
 
@@ -212,10 +207,6 @@ export default function SongScreen() {
             )}
           </Txt>
         </View>
-
-        <FromSender item={item} onOpenProfile={(u) => router.push(`/user/${u}`)}>
-          <ReactionBar counts={counts} mine={myReaction} onReact={(emoji) => react(item.id, emoji)} />
-        </FromSender>
       </ScrollView>
 
       <ShareComposer

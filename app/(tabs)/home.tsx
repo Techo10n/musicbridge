@@ -136,7 +136,7 @@ function FeedCard({
         ) : null}
 
         <View style={s.foot}>
-          <ReactionBar counts={counts} mine={myReaction} onReact={onReact} collapsed />
+          <ReactionBar counts={counts} mine={myReaction} onReact={onReact} />
           <TouchableOpacity
             style={s.action}
             onPress={() => onOpen(item)}

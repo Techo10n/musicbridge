@@ -63,7 +63,7 @@ musicbridge/
 │   │   ├── people.tsx          Invite link and suggested follows; skippable
 │   │   └── permissions.tsx     Notifications checklist; skippable
 │   ├── song/
-│   │   └── [id].tsx            A shared song: art, one open button, sender and note, reactions
+│   │   └── [id].tsx            A shared song: art, title, and one open button
 │   ├── playlist/
 │   │   └── [id].tsx            A shared playlist: one button that adds, tracks progress, then opens
 │   └── (tabs)/
@@ -98,7 +98,7 @@ musicbridge/
 │   │   └── core.tsx            Avatar, Chip, SectionTitle, Wordmark, AppBar, IconBtn, CoverArt, TasteBar
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
 │   ├── ShareComposer.tsx       Pick something, pick who, send. The only way a share is composed.
-│   ├── ShareDetail.tsx         The shared frame of the song and playlist sheets: bar, hero, sections, sender
+│   ├── ShareDetail.tsx         The shared frame of the song and playlist sheets: bar, hero, section
 │   ├── InviteSheet.tsx         Share or copy your profile link
 │   ├── MusicServiceButton.tsx  Connect/disconnect row for one streaming service
 │   ├── OnboardingStep.tsx      One-question-per-screen scaffold: progress dots, title, footer
@@ -301,8 +301,9 @@ neither. Drops arrive on refresh and on focus rather than through realtime, beca
 follow" is not something a realtime filter can express.
 
 `app/song/[id].tsx` is where a shared song lands. It carries the art, one button for your own
-service with the others as a quiet line under it, the sender's note, and reactions, so opening a
-share finally goes somewhere in the app rather than bouncing straight out to a streaming app. It
+service, and the other services as a quiet line under it, so opening a share finally goes somewhere
+in the app rather than bouncing straight out to a streaming app. The sender, their note and
+reactions live on the feed card, which is how you got here. It
 and `app/playlist/[id].tsx` share their frame through `components/ShareDetail.tsx`.
 
 ---

@@ -12,7 +12,7 @@ import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { serviceLabel } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
 import { MusicService, SharedItem, Track } from '../../types';
-import { DetailBar, DetailHero, FromSender, Section } from '../../components/ShareDetail';
+import { DetailBar, DetailHero, Section } from '../../components/ShareDetail';
 import { Button, EmptyState, Skeleton, Txt, useToast } from '../../components/ui';
 
 /**
@@ -193,8 +193,6 @@ export default function PlaylistScreen() {
                 </View>
               ) : null}
             </View>
-
-            <FromSender item={item} onOpenProfile={(u) => router.push(`/user/${u}`)} />
 
             <Section title="Tracks" right={String(total)} />
           </>
