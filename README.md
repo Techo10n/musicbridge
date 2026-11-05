@@ -505,6 +505,21 @@ Unique constraint on `(follower_id, following_id)` and check `(follower_id <> fo
 | `conversion_status` | text (added in migration 003) |
 | `tracks_processed` | int (added in migration 003) |
 
+### `public.shared_item_reactions`
+
+Migration 017. One emoji per person per share; any emoji, from the system picker. Readable by anyone
+who can see the share, writable only by the reactor.
+
+| Column | Type |
+|---|---|
+| `id` | uuid |
+| `item_id` | uuid FK → shared_items (cascade) |
+| `user_id` | uuid FK → users (cascade) |
+| `emoji` | text, 1–32 code points |
+| `created_at` | timestamptz |
+
+Unique on (`item_id`, `user_id`); `useReactions` upserts on that pair.
+
 ---
 
 ## Environment Variables

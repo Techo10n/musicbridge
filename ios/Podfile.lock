@@ -13,6 +13,29 @@ PODS:
     - RecaptchaInterop (~> 101.0)
   - AppleMusicNative (1.0.0):
     - ExpoModulesCore
+  - EmojiPopup (0.3.3):
+    - hermes-engine
+    - MCEmojiPicker (= 1.2.3)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - EXApplication (57.0.3):
     - ExpoModulesCore
   - EXConstants (57.0.19):
@@ -332,6 +355,7 @@ PODS:
   - libwebp/sharpyuv (1.5.0)
   - libwebp/webp (1.5.0):
     - libwebp/sharpyuv
+  - MCEmojiPicker (1.2.3)
   - PromisesObjC (2.4.1)
   - PromisesSwift (2.4.1):
     - PromisesObjC (= 2.4.1)
@@ -2529,6 +2553,7 @@ PODS:
 
 DEPENDENCIES:
   - AppleMusicNative (from `../modules/apple-music/ios`)
+  - EmojiPopup (from `../node_modules/react-native-emoji-popup`)
   - EXApplication (from `../node_modules/expo-application/ios`)
   - EXConstants (from `../node_modules/expo-constants/ios`)
   - EXJSONUtils (from `../node_modules/expo-json-utils/ios`)
@@ -2663,6 +2688,7 @@ SPEC REPOS:
     - libavif
     - libdav1d
     - libwebp
+    - MCEmojiPicker
     - PromisesObjC
     - PromisesSwift
     - RecaptchaInterop
@@ -2676,6 +2702,8 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   AppleMusicNative:
     :path: "../modules/apple-music/ios"
+  EmojiPopup:
+    :path: "../node_modules/react-native-emoji-popup"
   EXApplication:
     :path: "../node_modules/expo-application/ios"
   EXConstants:
@@ -2924,6 +2952,7 @@ SPEC CHECKSUMS:
   AppAuth: ef4da5a3fc2e10b90c09a0a94a9baeaedc0341d5
   AppCheckCore: be8fce5469f68d7f6a29aa94b25f097409ff7fdc
   AppleMusicNative: d3fd91cc8f338826bd1d84d85c2e97e6b9352d37
+  EmojiPopup: d339cf38d5d622e1399d3338ee0721f5e81a4cb7
   EXApplication: a727f05eb8592f0bc764f6ab8d51eacc158652ec
   EXConstants: 2dc4473aff5574eccaccb9f3eefe6d95247e5d38
   EXJSONUtils: a49e3ef80dff762108e5690c7b2f360675dcf7f6
@@ -2971,6 +3000,7 @@ SPEC CHECKSUMS:
   libavif: 5f8e715bea24debec477006f21ef9e95432e254d
   libdav1d: 23581a4d8ec811ff171ed5e2e05cd27bad64c39f
   libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
+  MCEmojiPicker: 6650cfa8d79fc8d71bf77dbed6166f946cee9c96
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
   PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
   RCTDeprecation: 96f68ebf33f8762466b01d57d6e873c4f30efb07

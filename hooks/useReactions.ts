@@ -31,10 +31,12 @@ export function useReactions(itemIds: string[]) {
     const ids = itemIdsKey ? itemIdsKey.split(',') : [];
     if (!ids.length || !user) return;
     try {
-      const { data } = await supabase
+      // supabase-js returns errors rather than throwing them; surface them.
+      const { data, error } = await supabase
         .from('shared_item_reactions')
         .select('*')
         .in('item_id', ids);
+      if (error) throw error;
 
       if (!data) return;
 
@@ -85,10 +87,11 @@ export function useReactions(itemIds: string[]) {
         return { ...prev, [itemId]: cur };
       });
       try {
-        await supabase.from('shared_item_reactions')
+        const { error } = await supabase.from('shared_item_reactions')
           .delete()
           .eq('item_id', itemId)
           .eq('user_id', user.id);
+        if (error) throw error;
       } catch (err) {
         console.error('[useReactions] delete failed:', err);
         latestMyReactions.current = previousMyReactions;
@@ -113,11 +116,12 @@ export function useReactions(itemIds: string[]) {
     });
 
     try {
-      await supabase.from('shared_item_reactions').upsert({
+      const { error } = await supabase.from('shared_item_reactions').upsert({
         item_id: itemId,
         user_id: user.id,
         emoji,
       }, { onConflict: 'item_id,user_id' });
+      if (error) throw error;
     } catch (err) {
       console.error('[useReactions] upsert failed:', err);
       latestMyReactions.current = previousMyReactions;
