@@ -12,9 +12,8 @@ import * as YouTubeMusic from '../../lib/youtubeMusic';
 import { serviceLabel } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
 import { MusicService, SharedItem, Track } from '../../types';
-import {
-  AppBar, Avatar, Button, CoverArt, EmptyState, ServiceChip, Skeleton, Txt, useToast,
-} from '../../components/ui';
+import { DetailBar, DetailHero, FromSender, Section } from '../../components/ShareDetail';
+import { Button, EmptyState, Skeleton, Txt, useToast } from '../../components/ui';
 
 /**
  * A shared playlist, and the machinery that puts it on your own service.
@@ -108,14 +107,16 @@ export default function PlaylistScreen() {
     convert({ itemId: item.id, title: item.title, total, service });
   };
 
+  const close = () => router.back();
+
   if (loading) {
     return (
       <SafeAreaView style={s.root} edges={['top']}>
-        <AppBar onBack={() => router.back()} title="" />
+        <DetailBar onClose={close} />
         <View style={s.loading}>
-          <Skeleton width={170} height={170} radius={16} />
-          <Skeleton width={190} height={20} />
-          <Skeleton width={120} height={14} />
+          <Skeleton width={200} height={200} radius={8} />
+          <Skeleton width={180} height={24} />
+          <Skeleton width={120} height={16} />
         </View>
       </SafeAreaView>
     );
@@ -124,12 +125,12 @@ export default function PlaylistScreen() {
   if (!item) {
     return (
       <SafeAreaView style={s.root} edges={['top']}>
-        <AppBar onBack={() => router.back()} title="" />
+        <DetailBar onClose={close} />
         <EmptyState
           icon="alert-circle-outline"
           title="This playlist is gone"
           body="The share may have been deleted."
-          action={{ label: 'Go back', onPress: () => router.back() }}
+          action={{ label: 'Go back', onPress: close }}
         />
       </SafeAreaView>
     );
@@ -139,10 +140,21 @@ export default function PlaylistScreen() {
   const done = run?.state === 'done' || alreadyAdded;
   const failed = run?.state === 'failed';
   const senderService = (item.sender?.primary_service ?? null) as MusicService | null;
+  const yours = service ? serviceLabel(service) : 'your service';
+  const pct = running && run.total ? Math.round((run.processed / run.total) * 100) : 0;
+
+  // One action whose label and caption follow the conversion, rather than a
+  // stack of status blocks that each appear and disappear.
+  const caption = !service ? 'Connect a music service in Settings to add this.'
+    : failed ? conversionErrorMessage(run.failure, service, yours)
+    : running ? 'This keeps going if you leave.'
+    : done ? (run?.matched != null ? `${run.matched} of ${total} songs added` : 'Already in your library')
+    : senderService && senderService !== service ? `Shared from ${serviceLabel(senderService)}`
+    : null;
 
   return (
     <SafeAreaView style={s.root} edges={['top']}>
-      <AppBar onBack={() => router.back()} title="" />
+      <DetailBar onClose={close} />
 
       <FlatList
         data={tracks}
@@ -150,95 +162,42 @@ export default function PlaylistScreen() {
         contentContainerStyle={s.list}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          <View style={s.hero}>
-            <CoverArt uri={item.cover_image_url} size={170} radius={16} />
-            <Txt variant="title1" align="center">{item.title}</Txt>
-            <Txt variant="callout" color="text3" align="center">
-              {`${total} ${total === 1 ? 'track' : 'tracks'}`}
-            </Txt>
+          <>
+            <DetailHero
+              cover={item.cover_image_url}
+              title={item.title}
+              subtitle={`Playlist · ${total} ${total === 1 ? 'track' : 'tracks'}`}
+            />
 
-            {item.sender ? (
-              <TouchableOpacity
-                style={s.sender}
-                onPress={() => router.push(`/user/${item.sender!.username}`)}
-                accessibilityRole="button"
-              >
-                <Avatar name={item.sender.display_name} avatarUrl={item.sender.avatar_url} size={24} />
-                <Txt variant="caption" color="text3">{`From ${item.sender.display_name}`}</Txt>
-              </TouchableOpacity>
-            ) : null}
-
-            {senderService && service ? (
-              <View style={s.flow}>
-                <ServiceChip service={senderService} short />
-                <Ionicons name="arrow-forward" size={14} color={colors.text3} />
-                <ServiceChip service={service} short suffix="yours" />
-              </View>
-            ) : null}
-
-            {item.message ? (
-              <View style={s.note}>
-                <Txt variant="callout" color="text2">{`“${item.message}”`}</Txt>
-              </View>
-            ) : null}
-
-            {running ? (
-              <View style={s.progressBlock}>
-                <View style={s.progressHead}>
-                  <Txt variant="bodyStrong">Matching tracks</Txt>
-                  <Txt variant="caption" color="text3">{`${run.processed} / ${run.total}`}</Txt>
+            <View style={s.action}>
+              {!service ? null : running ? (
+                <View
+                  style={s.progress}
+                  accessibilityRole="progressbar"
+                  accessibilityValue={{ min: 0, max: run.total, now: run.processed }}
+                >
+                  <View style={[s.progressFill, { width: `${pct}%` }]} />
+                  <Txt variant="bodyStrong">{`Matching ${run.processed} of ${run.total}`}</Txt>
                 </View>
-                <View style={s.progressTrack}>
-                  <View style={[s.progressFill, { width: `${run.total ? Math.round((run.processed / run.total) * 100) : 0}%` }]} />
+              ) : failed ? (
+                <Button label="Try again" icon="refresh" fullWidth onPress={() => { dismiss(item.id); start(); }} />
+              ) : done ? (
+                playlistId ? <Button label={`Open in ${yours}`} icon="open-outline" fullWidth onPress={openPlaylist} /> : null
+              ) : (
+                <Button label={`Add to ${yours}`} icon="add" fullWidth disabled={total === 0} onPress={start} />
+              )}
+              {caption ? (
+                <View style={s.captionRow}>
+                  {done ? <Ionicons name="checkmark-circle" size={14} color={colors.success} /> : null}
+                  <Txt variant="caption" color={failed ? 'danger' : 'text3'} align="center">{caption}</Txt>
                 </View>
-                <Txt variant="caption" color="text3">
-                  This keeps going if you leave. A pill at the bottom tracks it.
-                </Txt>
-              </View>
-            ) : null}
+              ) : null}
+            </View>
 
-            {failed ? (
-              <View style={s.failBlock}>
-                <Txt variant="callout" color="danger" align="center">
-                  {conversionErrorMessage(run.failure, service, service ? serviceLabel(service) : 'your service')}
-                </Txt>
-                <Button label="Try again" onPress={() => { dismiss(item.id); start(); }} />
-              </View>
-            ) : null}
+            <FromSender item={item} onOpenProfile={(u) => router.push(`/user/${u}`)} />
 
-            {done ? (
-              <View style={s.doneBlock}>
-                <View style={s.doneRow}>
-                  <Ionicons name="checkmark-circle" size={20} color={colors.success} />
-                  <Txt variant="bodyStrong">
-                    {run?.matched != null ? `${run.matched} of ${total} added` : 'Already in your library'}
-                  </Txt>
-                </View>
-                {playlistId ? (
-                  <Button label={`Open in ${service ? serviceLabel(service) : 'your service'}`} icon="open-outline" onPress={openPlaylist} />
-                ) : null}
-              </View>
-            ) : null}
-
-            {!running && !done && service ? (
-              <Button
-                label={`Add to ${serviceLabel(service)}`}
-                icon="add"
-                fullWidth
-                disabled={total === 0}
-                onPress={start}
-                style={s.addBtn}
-              />
-            ) : null}
-
-            {!service ? (
-              <Txt variant="caption" color="text3" align="center">
-                Connect a music service in Settings to add this.
-              </Txt>
-            ) : null}
-
-            <Txt variant="micro" color="text3" style={s.tracksLabel}>Tracks</Txt>
-          </View>
+            <Section title="Tracks" right={String(total)} />
+          </>
         }
         ListFooterComponent={
           done && run && run.unmatched.length > 0 ? (
@@ -251,14 +210,14 @@ export default function PlaylistScreen() {
                 />
                 <Txt variant="captionStrong" color="text2">
                   {run.quotaExhausted
-                    ? `Daily search limit reached — ${run.unmatched.length} left`
+                    ? `Daily search limit reached. ${run.unmatched.length} left`
                     : `${run.unmatched.length} ${run.unmatched.length === 1 ? 'song' : 'songs'} could not be added`}
                 </Txt>
               </View>
               <Txt variant="caption" color="text3" style={s.missedHint}>
                 {run.quotaExhausted
-                  ? `${service ? serviceLabel(service) : 'That service'} caps how many songs can be looked up per day. Open this again tomorrow to add the rest.`
-                  : `No confident match on ${service ? serviceLabel(service) : 'your service'}. A close-but-wrong song is worse than a missing one, so these were skipped.`}
+                  ? `${yours} caps how many songs can be looked up per day. Open this again tomorrow to add the rest.`
+                  : `No confident match on ${yours}. A close-but-wrong song is worse than a missing one, so these were skipped.`}
               </Txt>
               {(showAllMissed ? run.unmatched : run.unmatched.slice(0, 4)).map((t, i) => (
                 <View key={`${t.title}-${i}`} style={s.missedRow}>
@@ -281,13 +240,13 @@ export default function PlaylistScreen() {
         }
         renderItem={({ item: track, index }) => (
           <View style={s.trackRow}>
-            <Txt variant="caption" color="text4" style={s.trackNum}>{String(index + 1).padStart(2, '0')}</Txt>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Txt variant="callout" numberOfLines={1}>{track.title}</Txt>
+            <Txt variant="callout" color="text4" style={s.trackNum}>{String(index + 1)}</Txt>
+            <View style={s.trackText}>
+              <Txt variant="body" numberOfLines={1}>{track.title}</Txt>
               <Txt variant="caption" color="text3" numberOfLines={1}>{track.artist}</Txt>
             </View>
             {running && index < run.processed ? (
-              <Txt variant="caption" color="text4">Checked</Txt>
+              <Ionicons name="checkmark" size={16} color={colors.text4} />
             ) : running && index === run.processed ? (
               <Txt variant="caption" color="accent">Searching</Txt>
             ) : null}
@@ -300,31 +259,24 @@ export default function PlaylistScreen() {
 
 const useStyles = makeStyles(({ colors, radius, spacing }) => ({
   root: { flex: 1, backgroundColor: colors.bg },
-  loading: { alignItems: 'center', gap: spacing.lg, paddingTop: spacing.xxl },
+  loading: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.sm },
   list: { paddingBottom: 130 },
-  hero: { alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
-  sender: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
-  flow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
-  note: {
-    alignSelf: 'stretch', backgroundColor: colors.surfaceAlt, borderRadius: radius.md,
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, marginTop: spacing.sm,
+  action: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl, gap: spacing.md },
+  captionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs },
+  // Sized like a Button so the bar takes the button's place without a jump.
+  progress: {
+    minHeight: 48, borderRadius: radius.pill, overflow: 'hidden',
+    backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center',
   },
-  addBtn: { alignSelf: 'stretch', marginTop: spacing.md },
-  progressBlock: { alignSelf: 'stretch', gap: spacing.sm, marginTop: spacing.lg },
-  progressHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  progressTrack: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceAlt, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 3, backgroundColor: colors.accent },
-  failBlock: { alignSelf: 'stretch', alignItems: 'center', gap: spacing.md, marginTop: spacing.lg },
-  doneBlock: { alignSelf: 'stretch', alignItems: 'center', gap: spacing.md, marginTop: spacing.lg },
-  doneRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  tracksLabel: { alignSelf: 'flex-start', marginTop: spacing.xl },
+  progressFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: colors.accentSoft },
   trackRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     paddingHorizontal: spacing.xl, paddingVertical: spacing.sm + 2,
   },
-  trackNum: { width: 24, textAlign: 'right' },
+  trackNum: { width: 22 },
+  trackText: { flex: 1, minWidth: 0, gap: 1 },
   missed: {
-    marginHorizontal: spacing.lg, marginTop: spacing.lg,
+    marginHorizontal: spacing.xl, marginTop: spacing.lg,
     backgroundColor: colors.surface, borderRadius: radius.md,
     borderWidth: 1, borderColor: colors.line,
     padding: spacing.lg, gap: spacing.sm,

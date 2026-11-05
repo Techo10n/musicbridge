@@ -63,7 +63,9 @@ musicbridge/
 │   │   ├── people.tsx          Invite link and suggested follows; skippable
 │   │   └── permissions.tsx     Notifications checklist; skippable
 │   ├── song/
-│   │   └── [id].tsx            A shared song: art, note, reactions, and every way to open it
+│   │   └── [id].tsx            A shared song: art, one open button, sender and note, reactions
+│   ├── playlist/
+│   │   └── [id].tsx            A shared playlist: one button that adds, tracks progress, then opens
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar; the centre button opens the share composer
 │       ├── home.tsx            Feed: a "new for you" strip of unopened shares, then direct shares
@@ -94,11 +96,9 @@ musicbridge/
 │   │   ├── CodeInput.tsx       Six boxes over one field, so paste and autofill work
 │   │   ├── ServiceBadge.tsx    ServiceDot / ServiceChip, brand-colored
 │   │   └── core.tsx            Avatar, Chip, SectionTitle, Wordmark, AppBar, IconBtn, CoverArt, TasteBar
-│   ├── PlaylistModal.tsx       Playlist detail + conversion UI; preserves in-flight progress/success and shows "Already In Library" when reopened later
-│   ├── ShareModal.tsx          Search + share-to-friend modal
-│   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
 │   ├── ShareComposer.tsx       Pick something, pick who, send. The only way a share is composed.
+│   ├── ShareDetail.tsx         The shared frame of the song and playlist sheets: bar, hero, sections, sender
 │   ├── InviteSheet.tsx         Share or copy your profile link
 │   ├── MusicServiceButton.tsx  Connect/disconnect row for one streaming service
 │   ├── OnboardingStep.tsx      One-question-per-screen scaffold: progress dots, title, footer
@@ -300,9 +300,10 @@ the drops one uses the partial index from migration 015, where an or-filter acro
 neither. Drops arrive on refresh and on focus rather than through realtime, because "from someone I
 follow" is not something a realtime filter can express.
 
-`app/song/[id].tsx` is where a shared song lands. It carries the art, the sender's note, reactions,
-and one button per service, so opening a share finally goes somewhere in the app rather than
-bouncing straight out to a streaming app.
+`app/song/[id].tsx` is where a shared song lands. It carries the art, one button for your own
+service with the others as a quiet line under it, the sender's note, and reactions, so opening a
+share finally goes somewhere in the app rather than bouncing straight out to a streaming app. It
+and `app/playlist/[id].tsx` share their frame through `components/ShareDetail.tsx`.
 
 ---
 
