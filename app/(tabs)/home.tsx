@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { useSharedItems } from '../../hooks/useSharedItems';
 import { useReactions } from '../../hooks/useReactions';
+import { useCoverColor } from '../../hooks/useCoverColor';
 import { ReactionBar } from '../../components/ReactionBar';
 import { FirstShareCard } from '../../components/FirstShareCard';
 import {
@@ -78,6 +79,8 @@ function FeedCard({
 }) {
   const s = useStyles();
   const { colors } = useTheme();
+  // The stage takes the cover's own color, so each card carries its record's mood.
+  const stageBg = { backgroundColor: useCoverColor(item.cover_image_url) ?? colors.surfaceAlt };
 
   const isDrop = item.recipient_id === null;
   const isPlaylist = item.type === 'playlist';
@@ -92,19 +95,19 @@ function FeedCard({
   return (
     <View style={s.card}>
       <TouchableOpacity
-        style={s.stage}
+        style={[s.stage, stageBg]}
         onPress={() => onOpen(item)}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={`${item.title} from ${sender}`}
       >
-        <View style={s.cover}>
+        <View style={[s.cover, stageBg]}>
           <CoverArt uri={item.cover_image_url} size={COVER} radius={6} />
         </View>
         <View style={s.stageAvatar}>
           <Avatar name={sender} avatarUrl={item.sender?.avatar_url ?? null} size={34} />
           {item.sender?.primary_service ? (
-            <View style={s.serviceBadge}>
+            <View style={[s.serviceBadge, stageBg]}>
               <ServiceDot service={item.sender.primary_service} size={10} />
             </View>
           ) : null}

@@ -68,8 +68,9 @@ musicbridge/
 │       ├── _layout.tsx         Tab bar; the centre button opens the share composer
 │       ├── home.tsx            Feed: a "new for you" strip of unopened shares, then direct shares
 │       │                       and public drops from people you follow. Each card centres the art on
-│       │                       a tinted stage with the sender pinned to its corner, and reads
-│       │                       underneath as one left-aligned line. Friends / For you tabs.
+│       │                       a stage tinted with the cover's own color, the sender pinned to its
+│       │                       corner, and reads underneath as one left-aligned line. Friends / For
+│       │                       you tabs.
 │       ├── friends.tsx         People, in friends language: Friends / Requests / Suggested, an
 │       │                       add-a-friend card, and a taste match that says "not enough in
 │       │                       common yet" rather than inventing a number
@@ -105,6 +106,7 @@ musicbridge/
 │   └── UserProfileModal.tsx    Another user's profile, taste match, and send-a-song entry point
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
+│   ├── useCoverColor.ts        A cover's most prominent color, for the feed card stage
 │   ├── useFollows.ts           Following/follower graph, search, and suggested users
 │   ├── useSharedItems.ts       Inbox fetch + realtime insert/update refresh
 │   ├── useLibrary.ts           Playlists, saved tracks, followed artists; bounded/lazy playlist-track loading
