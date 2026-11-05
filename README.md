@@ -66,9 +66,10 @@ musicbridge/
 │   │   └── [id].tsx            A shared song: art, note, reactions, and every way to open it
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar; the centre button opens the share composer
-│       ├── home.tsx            Feed with the album art as the hero: a "new for you" strip of
-│       │                       unopened shares, then direct shares and public drops from people you
-│       │                       follow, with reactions always visible. Friends / For you tabs.
+│       ├── home.tsx            Feed: a "new for you" strip of unopened shares, then direct shares
+│       │                       and public drops from people you follow. Each card centres the art on
+│       │                       a tinted stage with the sender pinned to its corner, and reads
+│       │                       underneath as one left-aligned line. Friends / For you tabs.
 │       ├── friends.tsx         People, in friends language: Friends / Requests / Suggested, an
 │       │                       add-a-friend card, and a taste match that says "not enough in
 │       │                       common yet" rather than inventing a number

@@ -169,6 +169,14 @@ export const elevation = {
     shadowRadius: 8,
     elevation: 2,
   },
+  /** Lifts cover art off a tinted stage, so a sleeve reads as an object. */
+  cover: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 6,
+  },
   sheet: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -12 },

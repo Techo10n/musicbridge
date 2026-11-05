@@ -21,10 +21,8 @@ const loadWith = (
     if (googleIds[key]) process.env[key] = googleIds[key];
     else delete process.env[key];
   }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const RN = require('react-native');
   Object.defineProperty(RN.Platform, 'OS', { get: () => platform, configurable: true });
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require('../lib/authProviders') as typeof import('../lib/authProviders');
 };
 
@@ -93,7 +91,6 @@ describe('otpLength', () => {
     jest.resetModules();
     if (value === undefined) delete process.env.EXPO_PUBLIC_OTP_LENGTH;
     else process.env.EXPO_PUBLIC_OTP_LENGTH = value;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     return (require('../lib/authProviders') as typeof import('../lib/authProviders')).otpLength();
   };
 
@@ -124,7 +121,6 @@ describe('otpCodePhrase', () => {
     jest.resetModules();
     if (value === undefined) delete process.env.EXPO_PUBLIC_OTP_LENGTH;
     else process.env.EXPO_PUBLIC_OTP_LENGTH = value;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     return (require('../lib/authProviders') as typeof import('../lib/authProviders')).otpCodePhrase();
   };
 

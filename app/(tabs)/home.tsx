@@ -9,7 +9,7 @@ import { useReactions } from '../../hooks/useReactions';
 import { ReactionBar } from '../../components/ReactionBar';
 import { FirstShareCard } from '../../components/FirstShareCard';
 import {
-  AppBar, Avatar, CoverArt, EmptyState, IconBtn, SegmentedTabs, Txt,
+  AppBar, Avatar, CoverArt, EmptyState, IconBtn, SegmentedTabs, ServiceDot, Txt,
 } from '../../components/ui';
 import { serviceLabel } from '../../lib/services';
 import { makeStyles, useTheme } from '../../lib/theme';
@@ -60,6 +60,12 @@ function NewForYou({ items, onOpen }: { items: SharedItem[]; onOpen: (item: Shar
 
 // ─── Feed card ────────────────────────────────────────────────────────────────
 
+/**
+ * The art sits centred on a tinted stage, with the sender pinned to its corner;
+ * who-did-what reads underneath as one left-aligned sentence. The stage is kept
+ * short so a card is never taller than half the screen and the action stays
+ * in view.
+ */
 function FeedCard({
   item, onOpen, counts, myReaction, onReact, viewerService,
 }: {
@@ -75,64 +81,71 @@ function FeedCard({
 
   const isDrop = item.recipient_id === null;
   const isPlaylist = item.type === 'playlist';
+  const sender = item.sender?.display_name ?? 'Someone';
+  const service = viewerService ? serviceLabel(viewerService) : null;
   const action = isPlaylist
-    ? `Add to ${viewerService ? serviceLabel(viewerService) : 'your library'}`
-    : `Open in ${viewerService ? serviceLabel(viewerService) : 'your service'}`;
+    ? `Add to ${service ?? 'your library'}`
+    : `Open in ${service ?? 'your service'}`;
+  const verb = isDrop ? 'Dropped' : 'Sent you';
+  const detail = isPlaylist ? `Playlist · ${item.tracks_count ?? 0} tracks` : item.artist;
 
   return (
     <View style={s.card}>
-      <View style={s.cardHead}>
-        <Avatar name={item.sender?.display_name ?? '?'} avatarUrl={item.sender?.avatar_url ?? null} size={30} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Txt variant="captionStrong" numberOfLines={1}>{item.sender?.display_name ?? 'Someone'}</Txt>
-          <Txt variant="micro" color="text3">
-            {`${isDrop ? 'dropped this' : isPlaylist ? 'sent a playlist' : 'sent a song'} · ${timeAgo(item.created_at)}`}
-          </Txt>
+      <TouchableOpacity
+        style={s.stage}
+        onPress={() => onOpen(item)}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.title} from ${sender}`}
+      >
+        <View style={s.cover}>
+          <CoverArt uri={item.cover_image_url} size={COVER} radius={6} />
+        </View>
+        <View style={s.stageAvatar}>
+          <Avatar name={sender} avatarUrl={item.sender?.avatar_url ?? null} size={34} />
+          {item.sender?.primary_service ? (
+            <View style={s.serviceBadge}>
+              <ServiceDot service={item.sender.primary_service} size={10} />
+            </View>
+          ) : null}
         </View>
         {isDrop ? (
           <View style={s.dropTag}>
             <Ionicons name="radio-outline" size={12} color={colors.accent} />
-            <Txt variant="micro" color="accent">Everyone</Txt>
+            <Txt variant="captionStrong" color="accent">Everyone</Txt>
           </View>
         ) : null}
-      </View>
-
-      {/* Art beside the title rather than above it. Full-bleed art pushed the
-          title and the one real action below the fold, and at that size a
-          left-aligned square read as a mistake rather than a choice. */}
-      <TouchableOpacity
-        style={s.cardBody}
-        onPress={() => onOpen(item)}
-        activeOpacity={0.8}
-        accessibilityRole="button"
-      >
-        <CoverArt uri={item.cover_image_url} size={84} radius={12} />
-        <View style={s.cardText}>
-          <Txt variant="bodyStrong" numberOfLines={2}>{item.title}</Txt>
-          <Txt variant="caption" color="text3" numberOfLines={1}>
-            {isPlaylist ? `${item.tracks_count ?? 0} tracks` : item.artist}
-          </Txt>
-          {item.message ? (
-            <Txt variant="caption" color="text2" numberOfLines={2} style={s.note}>{`“${item.message}”`}</Txt>
-          ) : null}
-        </View>
       </TouchableOpacity>
 
-      <View style={s.cardFoot}>
-        <ReactionBar
-          counts={counts}
-          mine={myReaction}
-          onReact={onReact}
-          collapsed
-        />
-        <TouchableOpacity style={s.play} onPress={() => onOpen(item)} activeOpacity={0.85} accessibilityRole="button">
-          <Ionicons name={isPlaylist ? 'add' : 'open-outline'} size={14} color={colors.accentInk} />
-          <Txt variant="captionStrong" style={{ color: colors.accentInk }} numberOfLines={1}>{action}</Txt>
-        </TouchableOpacity>
+      <View style={s.body}>
+        <Txt variant="caption" color="text3" numberOfLines={1}>{`${sender} · ${timeAgo(item.created_at)}`}</Txt>
+        <Txt variant="body" color="text2" numberOfLines={2} style={s.line}>
+          {`${verb} `}
+          <Txt variant="bodyStrong">{item.title}</Txt>
+        </Txt>
+        {detail ? <Txt variant="caption" color="text3" numberOfLines={1}>{detail}</Txt> : null}
+        {item.message ? (
+          <Txt variant="callout" color="text2" numberOfLines={3} style={s.note}>{`“${item.message}”`}</Txt>
+        ) : null}
+
+        <View style={s.foot}>
+          <ReactionBar counts={counts} mine={myReaction} onReact={onReact} collapsed />
+          <TouchableOpacity
+            style={s.action}
+            onPress={() => onOpen(item)}
+            hitSlop={8}
+            accessibilityRole="button"
+          >
+            <Txt variant="captionStrong" color="accent" numberOfLines={1}>{action}</Txt>
+            <Ionicons name="arrow-forward" size={13} color={colors.accent} />
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
 }
+
+const COVER = 128;
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -222,7 +235,7 @@ export default function Home() {
   );
 }
 
-const useStyles = makeStyles(({ colors, radius, spacing }) => ({
+const useStyles = makeStyles(({ colors, radius, spacing, elevation }) => ({
   root: { flex: 1, backgroundColor: colors.bg },
   list: { paddingBottom: 110 },
 
@@ -238,21 +251,34 @@ const useStyles = makeStyles(({ colors, radius, spacing }) => ({
   stripTitle: { marginTop: spacing.sm },
 
   // Card
-  card: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, gap: spacing.sm + 2 },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2 },
+  card: {
+    marginHorizontal: spacing.lg, marginTop: spacing.lg,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.line, overflow: 'hidden',
+  },
+  stage: {
+    height: COVER + spacing.xxxl * 1.5,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  cover: { borderRadius: 6, backgroundColor: colors.surfaceAlt, ...elevation.cover },
+  stageAvatar: { position: 'absolute', left: spacing.md, top: spacing.md },
+  serviceBadge: {
+    position: 'absolute', right: -2, bottom: -2,
+    padding: 2, borderRadius: 7, backgroundColor: colors.surfaceAlt,
+  },
   dropTag: {
+    position: 'absolute', right: spacing.md, top: spacing.md,
     flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
-    backgroundColor: colors.accentSoft, borderRadius: radius.pill,
+    backgroundColor: colors.surface, borderRadius: radius.pill,
     paddingHorizontal: spacing.sm + 2, paddingVertical: spacing.xs,
   },
-  cardBody: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
-  cardText: { flex: 1, minWidth: 0, gap: 2, paddingTop: 2 },
-  note: { marginTop: spacing.xs, fontStyle: 'italic' },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-  play: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.xs + 2,
-    backgroundColor: colors.accent, borderRadius: radius.pill,
-    paddingHorizontal: spacing.md + 2, paddingVertical: spacing.sm + 1,
-    maxWidth: 170,
+  body: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md, gap: 2 },
+  line: { marginTop: 2 },
+  note: { marginTop: spacing.sm },
+  foot: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    gap: spacing.sm, marginTop: spacing.md,
   },
+  action: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexShrink: 1 },
 }));
