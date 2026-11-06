@@ -85,6 +85,9 @@ export function Wordmark({ size = 24 }: { size?: number }) {
   return (
     <Txt
       accessibilityRole="header"
+      // Negative tracking makes iOS measure the word a hair narrower than it
+      // draws, so the last letter wrapped onto a clipped second line.
+      numberOfLines={1}
       style={{ fontFamily: fonts.displayBold, fontSize: size, lineHeight: size * 1.15, letterSpacing: -size * 0.03, color: colors.text }}
     >
       museaic

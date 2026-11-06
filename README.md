@@ -63,12 +63,16 @@ musicbridge/
 │   │   ├── people.tsx          Invite link and suggested follows; skippable
 │   │   └── permissions.tsx     Notifications checklist; skippable
 │   ├── song/
-│   │   └── [id].tsx            A shared song: art, note, reactions, and every way to open it
+│   │   └── [id].tsx            A shared song: art, title, and one open button
+│   ├── playlist/
+│   │   └── [id].tsx            A shared playlist: one button that adds, tracks progress, then opens
 │   └── (tabs)/
 │       ├── _layout.tsx         Tab bar; the centre button opens the share composer
-│       ├── home.tsx            Feed with the album art as the hero: a "new for you" strip of
-│       │                       unopened shares, then direct shares and public drops from people you
-│       │                       follow, with reactions always visible. Friends / For you tabs.
+│       ├── home.tsx            Feed: a "new for you" strip of unopened shares, then direct shares
+│       │                       and public drops from people you follow. Each card centres the art on
+│       │                       a stage tinted with the cover's own color, the sender pinned to its
+│       │                       corner, and reads underneath as one left-aligned line. Friends / For
+│       │                       you tabs.
 │       ├── friends.tsx         People, in friends language: Friends / Requests / Suggested, an
 │       │                       add-a-friend card, and a taste match that says "not enough in
 │       │                       common yet" rather than inventing a number
@@ -92,11 +96,9 @@ musicbridge/
 │   │   ├── CodeInput.tsx       Six boxes over one field, so paste and autofill work
 │   │   ├── ServiceBadge.tsx    ServiceDot / ServiceChip, brand-colored
 │   │   └── core.tsx            Avatar, Chip, SectionTitle, Wordmark, AppBar, IconBtn, CoverArt, TasteBar
-│   ├── PlaylistModal.tsx       Playlist detail + conversion UI; preserves in-flight progress/success and shows "Already In Library" when reopened later
-│   ├── ShareModal.tsx          Search + share-to-friend modal
-│   ├── FriendPickerModal.tsx   Reusable friend picker with optional message; refreshes mutual follows on open
 │   ├── LibraryPlaylistDetailModal.tsx   Playlist tracks + inline share picker; refreshes mutual follows on share
 │   ├── ShareComposer.tsx       Pick something, pick who, send. The only way a share is composed.
+│   ├── ShareDetail.tsx         The shared frame of the song and playlist sheets: bar, hero, section
 │   ├── InviteSheet.tsx         Share or copy your profile link
 │   ├── MusicServiceButton.tsx  Connect/disconnect row for one streaming service
 │   ├── OnboardingStep.tsx      One-question-per-screen scaffold: progress dots, title, footer
@@ -104,6 +106,7 @@ musicbridge/
 │   └── UserProfileModal.tsx    Another user's profile, taste match, and send-a-song entry point
 ├── hooks/
 │   ├── useAuth.tsx             AuthContext + hook
+│   ├── useCoverColor.ts        A cover's most prominent color, for the feed card stage
 │   ├── useFollows.ts           Following/follower graph, search, and suggested users
 │   ├── useSharedItems.ts       Inbox fetch + realtime insert/update refresh
 │   ├── useLibrary.ts           Playlists, saved tracks, followed artists; bounded/lazy playlist-track loading
@@ -297,9 +300,11 @@ the drops one uses the partial index from migration 015, where an or-filter acro
 neither. Drops arrive on refresh and on focus rather than through realtime, because "from someone I
 follow" is not something a realtime filter can express.
 
-`app/song/[id].tsx` is where a shared song lands. It carries the art, the sender's note, reactions,
-and one button per service, so opening a share finally goes somewhere in the app rather than
-bouncing straight out to a streaming app.
+`app/song/[id].tsx` is where a shared song lands. It carries the art, one button for your own
+service, and the other services as a quiet line under it, so opening a share finally goes somewhere
+in the app rather than bouncing straight out to a streaming app. The sender, their note and
+reactions live on the feed card, which is how you got here. It
+and `app/playlist/[id].tsx` share their frame through `components/ShareDetail.tsx`.
 
 ---
 
@@ -499,6 +504,21 @@ Unique constraint on `(follower_id, following_id)` and check `(follower_id <> fo
 | `opened` | boolean |
 | `conversion_status` | text (added in migration 003) |
 | `tracks_processed` | int (added in migration 003) |
+
+### `public.shared_item_reactions`
+
+Migration 017. One emoji per person per share; any emoji, from the system picker. Readable by anyone
+who can see the share, writable only by the reactor.
+
+| Column | Type |
+|---|---|
+| `id` | uuid |
+| `item_id` | uuid FK → shared_items (cascade) |
+| `user_id` | uuid FK → users (cascade) |
+| `emoji` | text, 1–32 code points |
+| `created_at` | timestamptz |
+
+Unique on (`item_id`, `user_id`); `useReactions` upserts on that pair.
 
 ---
 

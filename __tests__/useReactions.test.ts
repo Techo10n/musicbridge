@@ -99,4 +99,24 @@ describe('useReactions', () => {
 
     consoleError.mockRestore();
   });
+
+  // supabase-js reports a failed write in its result rather than throwing.
+  it('rolls back when the upsert returns an error instead of throwing', async () => {
+    const { useReactions } = require('../hooks/useReactions');
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockUpsert.mockResolvedValueOnce({ error: { message: 'relation "shared_item_reactions" does not exist' } });
+
+    const { result } = renderHook(() => useReactions(['item-1']));
+    await waitFor(() => expect(mockIn).toHaveBeenCalled());
+
+    await act(async () => {
+      await result.current.react('item-1', '🪩');
+    });
+
+    expect(result.current.myReactions).toEqual({});
+    expect(result.current.reactions['item-1'] ?? {}).toEqual({});
+    expect(consoleError).toHaveBeenCalledWith('[useReactions] upsert failed:', expect.anything());
+
+    consoleError.mockRestore();
+  });
 });

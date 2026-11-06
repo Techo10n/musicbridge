@@ -17,4 +17,10 @@ module.exports = defineConfig([
       'no-empty': ['warn', { allowEmptyCatch: false }],
     },
   },
+  {
+    // Tests require() modules inside jest.isolateModules and after jest.doMock,
+    // where a static import would load them too early to see the mock.
+    files: ['__tests__/**', 'test/**'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
 ]);

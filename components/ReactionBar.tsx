@@ -1,82 +1,60 @@
-import { useState } from 'react';
-import { TouchableOpacity, View } from 'react-native';
+import { View } from 'react-native';
+import { EmojiPopup } from 'react-native-emoji-popup';
 import { Ionicons } from '@expo/vector-icons';
 import { makeStyles, useTheme } from '../lib/theme';
 import { Txt } from './ui';
-
-/** The four reactions, in one place rather than once per screen. */
-export const REACTIONS = ['🔥', '❤️', '🤯', '😮'] as const;
 
 export interface ReactionBarProps {
   counts: Record<string, number>;
   /** The viewer's own reaction, if they have one. */
   mine: string | undefined;
   onReact: (emoji: string) => void;
-  /**
-   * Collapsed shows a single button that expands on tap. The feed uses it
-   * because a permanent row of four competed with the card's one real action;
-   * the song screen has the room to show them all.
-   */
-  collapsed?: boolean;
 }
 
-export function ReactionBar({ counts, mine, onReact, collapsed }: ReactionBarProps) {
+/**
+ * One button showing how a share landed: its top reactions and the total.
+ * Tapping it opens the system emoji picker, so any emoji is a reaction.
+ * Picking your current one again removes it (see useReactions).
+ */
+export function ReactionBar({ counts, mine, onReact }: ReactionBarProps) {
   const s = useStyles();
   const { colors } = useTheme();
-  const [open, setOpen] = useState(false);
-
-  const pick = (emoji: string) => {
-    setOpen(false);
-    onReact(emoji);
-  };
-
-  if (collapsed && !open) {
-    const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-    return (
-      <TouchableOpacity
-        style={[s.reaction, mine ? s.reactionMine : null]}
-        onPress={() => setOpen(true)}
-        accessibilityRole="button"
-        accessibilityLabel={mine ? `Your reaction ${mine}. Change it` : 'Add a reaction'}
-        testID="reaction-toggle"
-      >
-        {mine
-          ? <Txt variant="callout">{mine}</Txt>
-          : <Ionicons name="happy-outline" size={16} color={colors.text3} />}
-        {total > 0 ? <Txt variant="caption" color="text3">{String(total)}</Txt> : null}
-      </TouchableOpacity>
-    );
-  }
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  const top = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([emoji]) => emoji)
+    .join('');
 
   return (
-    <View style={s.row}>
-      {REACTIONS.map((emoji) => {
-        const count = counts[emoji] ?? 0;
-        return (
-          <TouchableOpacity
-            key={emoji}
-            style={[s.reaction, mine === emoji && s.reactionMine]}
-            onPress={() => pick(emoji)}
-            accessibilityRole="button"
-            accessibilityLabel={`React ${emoji}`}
-          >
-            <Txt variant="callout">{emoji}</Txt>
-            {count > 0 ? <Txt variant="caption" color="text3">{String(count)}</Txt> : null}
-          </TouchableOpacity>
-        );
-      })}
+    // The native view owns the tap; a touchable inside it would swallow it.
+    <View style={s.wrap}>
+      <EmojiPopup onEmojiSelected={onReact}>
+        <View
+          style={[s.button, mine && s.buttonMine]}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={mine ? `Your reaction ${mine}. Change it` : 'Add a reaction'}
+        >
+          {top
+            ? <Txt variant="callout">{top}</Txt>
+            : <Ionicons name="happy-outline" size={16} color={colors.text3} />}
+          {total > 0 ? <Txt variant="caption" color="text3">{String(total)}</Txt> : null}
+        </View>
+      </EmojiPopup>
     </View>
   );
 }
 
 const useStyles = makeStyles(({ colors, radius, spacing }) => ({
-  row: { flexDirection: 'row', gap: spacing.xs + 2, alignItems: 'center' },
-  reaction: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    paddingHorizontal: spacing.sm, height: 30,
+  wrap: { alignSelf: 'flex-start' },
+  button: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
+    minWidth: 34, height: 34, paddingHorizontal: spacing.sm + 2,
     borderRadius: radius.pill,
     backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.line,
   },
-  reactionMine: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  buttonMine: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
 }));

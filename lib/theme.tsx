@@ -169,6 +169,14 @@ export const elevation = {
     shadowRadius: 8,
     elevation: 2,
   },
+  /** Lifts cover art off a tinted stage, so a sleeve reads as an object. */
+  cover: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 6,
+  },
   sheet: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -12 },
@@ -204,6 +212,23 @@ const themes: Record<Scheme, Theme> = {
 
 export function getTheme(scheme: Scheme): Theme {
   return themes[scheme];
+}
+
+/**
+ * Blend hex color `a` into `b`, `t` being a's share (0–1). Used to pull colors
+ * sampled from cover art toward the palette. Anything that isn't #rgb or
+ * #rrggbb yields `b` unchanged.
+ */
+export function mixHex(a: string, b: string, t: number): string {
+  const rgb = (hex: string) => {
+    const h = hex.replace('#', '');
+    const full = h.length === 3 ? h.replace(/./g, '$&$&') : h;
+    return /^[0-9a-f]{6}$/i.test(full) ? [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)) : null;
+  };
+  const x = rgb(a);
+  const y = rgb(b);
+  if (!x || !y) return b;
+  return '#' + x.map((v, i) => Math.round(v * t + y[i] * (1 - t)).toString(16).padStart(2, '0')).join('');
 }
 
 export function serviceColor(colors: Palette, service: MusicService | string | null | undefined): string {

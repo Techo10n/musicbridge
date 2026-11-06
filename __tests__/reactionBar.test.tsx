@@ -1,6 +1,16 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
-import { ReactionBar, REACTIONS } from '../components/ReactionBar';
+import { ReactionBar } from '../components/ReactionBar';
 import { ThemeProvider } from '../lib/theme';
+
+// The system picker is a native view; stand in a plain one that forwards its event.
+jest.mock('react-native-emoji-popup', () => {
+  const { View } = jest.requireActual('react-native');
+  return {
+    EmojiPopup: ({ children, onEmojiSelected }: { children: React.ReactNode; onEmojiSelected: (e: string) => void }) => (
+      <View testID="emoji-popup" onEmojiSelected={onEmojiSelected}>{children}</View>
+    ),
+  };
+});
 
 const setup = (props: Partial<React.ComponentProps<typeof ReactionBar>> = {}) => {
   const onReact = jest.fn();
@@ -12,49 +22,26 @@ const setup = (props: Partial<React.ComponentProps<typeof ReactionBar>> = {}) =>
   return onReact;
 };
 
-describe('ReactionBar, expanded', () => {
-  it('shows every reaction at once', () => {
+describe('ReactionBar', () => {
+  it('offers to add a reaction when there are none', () => {
     setup();
-    for (const emoji of REACTIONS) expect(screen.getByText(emoji)).toBeTruthy();
+    expect(screen.getByLabelText('Add a reaction')).toBeTruthy();
   });
 
-  it('reports a tap', () => {
+  it('shows the top three reactions, most first, and the total', () => {
+    setup({ counts: { '😮': 1, '🔥': 4, '🫠': 2, '❤️': 3 } });
+    expect(screen.getByText('🔥❤️🫠')).toBeTruthy();
+    expect(screen.getByText('10')).toBeTruthy();
+  });
+
+  it('says when one of them is yours', () => {
+    setup({ counts: { '🫠': 1 }, mine: '🫠' });
+    expect(screen.getByLabelText('Your reaction 🫠. Change it')).toBeTruthy();
+  });
+
+  it('reports whatever the system picker returns, not just a fixed set', () => {
     const onReact = setup();
-    fireEvent.press(screen.getByText(REACTIONS[0]));
-    expect(onReact).toHaveBeenCalledWith(REACTIONS[0]);
-  });
-
-  it('shows a count only where there is one', () => {
-    setup({ counts: { [REACTIONS[0]]: 3 } });
-    expect(screen.getByText('3')).toBeTruthy();
-    expect(screen.queryByText('0')).toBeNull();
-  });
-});
-
-describe('ReactionBar, collapsed', () => {
-  it('offers one button instead of a row', () => {
-    setup({ collapsed: true });
-    expect(screen.getByTestId('reaction-toggle')).toBeTruthy();
-    expect(screen.queryByText(REACTIONS[1])).toBeNull();
-  });
-
-  it('shows the total so the card still says how it landed', () => {
-    setup({ collapsed: true, counts: { [REACTIONS[0]]: 2, [REACTIONS[1]]: 3 } });
-    expect(screen.getByText('5')).toBeTruthy();
-  });
-
-  it('wears your own reaction rather than a generic icon', () => {
-    setup({ collapsed: true, mine: REACTIONS[2] });
-    expect(screen.getByText(REACTIONS[2])).toBeTruthy();
-  });
-
-  it('expands to the full set on tap, and collapses once you pick', () => {
-    const onReact = setup({ collapsed: true });
-    fireEvent.press(screen.getByTestId('reaction-toggle'));
-    for (const emoji of REACTIONS) expect(screen.getByText(emoji)).toBeTruthy();
-
-    fireEvent.press(screen.getByText(REACTIONS[1]));
-    expect(onReact).toHaveBeenCalledWith(REACTIONS[1]);
-    expect(screen.queryByText(REACTIONS[3])).toBeNull();
+    fireEvent(screen.getByTestId('emoji-popup'), 'emojiSelected', '🪩');
+    expect(onReact).toHaveBeenCalledWith('🪩');
   });
 });
